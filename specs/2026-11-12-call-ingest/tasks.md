@@ -27,13 +27,16 @@
          → 79 tests total, all pass
 - [x] 13. Celery beat schedule (ingest 2 min, recordings 5 min, reconcile 02:00, sync-agents 03:00); run the stack
          → 4 containers up; first scheduled ingest succeeded in 1 s
-- [~] 14. Backfill 7 days on this PC; hand-check 20 calls; 1 real test call each: answered, abandoned in queue
+- [x] 14. Backfill 7 days on this PC; hand-check 20 calls; 1 real test call each: answered, abandoned in queue
          → backfill: 894 team calls / 1,636 legs, re-run adds 0; 408/408 recordings OK (695 MB); reconcile 2026-11-11: 181/181 calls, 0 missing → OK.
-           Waiting for user: hand-check 20 calls + 3 test calls
-- [ ] 15. Verify the acceptance criteria
+           Real test calls by user 2026-11-12: 19:19:59 answered by 119 (talk 76 s, recording ok, in DB < 2 min) ✅;
+           19:23:43 hung up in queue 6401 after 10 s → abandoned_queue ✅. 19:30:02 queue no answer 39 s → abandoned_queue ✅. Hand-check: user spot-checked 2/20, accepted
+- [x] 15. Verify the acceptance criteria
+         → all 8 ticked in spec.md (86 tests, reconcile 2026-11-11 OK)
 - [x] 16. Review with 3 subagents (bugs, security, accuracy); fix confirmed findings
          → 3 reviewers: 13 findings, all confirmed, 0 critical/high. Fixed 11 (page cap on long backfill, disk errors,
            recordings right after ingest, reconcile expects recordings for answered customer calls, PBX-down doesn't use up
            retries, per-call lock, employee names removed from fixtures, doc fixes). 2 deferred to Phase 6 by user (PBX
            certificate trust, pinned versions). 86 tests pass. Note: old fixture with names remains in local git history (not pushed).
-- [ ] 17. Spec status → done; tick roadmap items; update "Current position"; update docs/pbx-discovery.md (CDR leg shapes)
+- [x] 17. Spec status → done; tick roadmap items; update "Current position"; update docs/pbx-discovery.md (CDR leg shapes)
+         → done 2026-11-12; merged into local main (no remote)

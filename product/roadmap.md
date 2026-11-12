@@ -2,15 +2,11 @@
 
 > Status: `[x]` done · `[~]` in progress · `[ ]` not started
 
-**Current position (2026-11-12, later):** **Phase 1 started**: call-ingest spec **approved** (team = 104, 119, 116; team calls only),
-implementation in progress ([spec](../specs/2026-11-12-call-ingest/spec.md)). Phase 0 leftovers (events test, Listen, server) continue in parallel.
-Previous: Phase 0 in progress. Yeastar API connected over LAN
-(`https://192.168.50.151:8088`); call logs + recording download work (details: [docs/pbx-discovery.md](../docs/pbx-discovery.md),
-tasks: [spec tasks](../specs/2026-11-12-pbx-discovery/tasks.md)).
-**Next:** (1) user names the 3 agent extensions + supervisor · (2) live-events test during one test call
-(`tools/pbx_probe.py events`; WebSocket subscribe already OK) · (3) silent listen debugging, **paused by user**, see Phase 0 item ·
-then Phase 0 review & close → **Phase 1 (call ingest)**: write its spec next session.
-**Waiting on others:** server purchase. (Feature Code access now granted.)
+**Current position (2026-11-12, evening):** Phase 1 call ingest **done** ([spec](../specs/2026-11-12-call-ingest/spec.md)): team calls (104, 119, 116, queue 6401) flow into Postgres every 2 min with status,
+times and recordings; Docker stack runs on the analytics PC. 7-day result: 894 team calls; 264 callers hung up in queue 6401 vs 232 answered.
+**Next:** Phase 1 item 5, **basic web UI** (login, call list with filters, play recording): write its spec.
+Then the Phase 1 "Done when": 7 consecutive days of nightly reconcile = OK.
+**Phase 0 leftovers (parallel):** live-events test, silent listen (paused), supervisor extension (503 or 114?), server purchase, legal recording announcement.
 
 ## Phase 0: PBX discovery & server (week 1)
 
@@ -29,7 +25,7 @@ real test call's CDR row + recording file has been pulled to the server by hand.
 - [x] Remove old public-IP rule `66.212.118.128` from API IP Restriction (user) → done 2026-11-12, API login still OK
 - [ ] Legal recording announcement for customers (Saudi PDPL consent); recording already on
 - [ ] Buy & install server (Ubuntu 24.04, NVIDIA driver, Docker, GPU in containers) — specs in tech-stack.md
-- [ ] Repo skeleton: Docker Compose (Postgres, Redis, API, worker), CI tests, `.env` config
+- [x] Repo skeleton: Docker Compose (Postgres, Redis, worker, beat), `.env` config (done in call-ingest spec; API container comes with the web UI; CI later)
 
 ## Phase 1: Call ingest, duration & unanswered calls (MVP data)
 
@@ -37,10 +33,10 @@ real test call's CDR row + recording file has been pulled to the server by hand.
 **Done when:** for 7 consecutive days, our call counts match the PBX's own report 100%,
 and each call has ring/talk/hold time + status (answered / no-answer / abandoned / busy).
 
-- [ ] `PbxAdapter` interface + adapter for our PBX brand (CDR poll; live events → Phase 5) ([spec](../specs/2026-11-12-call-ingest/spec.md)) (idea: user)
-- [ ] Call data model: call, call legs, agent, caller number, timings, status, recording path (idea: user)
-- [ ] Unanswered-call classification (no-answer, abandoned in queue, busy, rang-agent-not-picked) (idea: user)
-- [ ] Recording fetch + link to call; nightly reconciliation job (finds missing calls/recordings) (idea: user)
+- [x] `PbxAdapter` interface + adapter for our PBX brand (CDR poll; live events → Phase 5) ([spec](../specs/2026-11-12-call-ingest/spec.md)) (idea: user)
+- [x] Call data model: call, call legs, agent, caller number, timings, status, recording path (hold time not in CDR → later) (idea: user)
+- [x] Unanswered-call classification (no-answer, abandoned in queue, busy, voicemail; "rang agent not picked" for queue calls needs live events → Phase 5) (idea: user)
+- [x] Recording fetch + link to call; nightly reconciliation job (finds missing calls/recordings) (idea: user)
 - [ ] Basic web UI: login, call list with filters (date, agent, status), play recording (idea: user)
 
 ## Phase 2: Transcription (Saudi Arabic)

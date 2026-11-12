@@ -2,7 +2,7 @@
 
 **Roadmap item:** Phase 1, items 1–4 ("PbxAdapter", "Call data model", "Unanswered-call classification",
 "Recording fetch + nightly reconciliation") + Phase 0 item "Repo skeleton". The web UI (item 5) is the next spec.
-**Status:** approved
+**Status:** done (2026-11-12)
 
 ## Goal
 Every call on the Yeastar PBX lands in our own PostgreSQL database within a few minutes of hang-up,
@@ -79,15 +79,17 @@ many calls were missed", "Don't know how long calls take").
 9. **Idempotent.** Running ingest, backfill or reconcile twice never creates duplicates or changes results.
 
 ## Acceptance criteria
-- [ ] `docker compose up -d` starts postgres, redis, worker, beat; `docker compose ps` shows all 4 healthy/running
-- [ ] `pytest` passes, with tests for every status rule built from the real masked call shapes above (≥ 1 test per shape)
-- [ ] `python -m callsight backfill --days 7` loads 7 days; `stats` shows calls per status per day; running it again adds 0 rows
-- [ ] For one full day, team calls (`uid`) and their legs in our DB = team calls in PBX `cdr/list` for the same day (100%, by `reconcile`)
-- [ ] 20 random answered calls checked by hand against the PBX Call Logs page: agent, talk time and status all correct
-- [ ] The 3 example shapes "abandoned in queue", "hung up in IVR" and "voicemail" are classified as such by test; 1 real call each for
+- [x] `docker compose up -d` starts postgres, redis, worker, beat; `docker compose ps` shows all 4 healthy/running → all 4 up
+- [x] `pytest` passes, with tests for every status rule built from the real masked call shapes above (≥ 1 test per shape) → 86 passed, 18 shapes
+- [x] `python -m callsight backfill --days 7` loads 7 days; `stats` shows calls per status per day; running it again adds 0 rows → 894 calls, re-run new_legs=0
+- [x] For one full day, team calls (`uid`) and their legs in our DB = team calls in PBX `cdr/list` for the same day (100%, by `reconcile`) → 2026-11-11: 181/181 calls, 313 legs
+- [x] 20 random answered calls checked by hand against the PBX Call Logs page: agent, talk time and status all correct
+      → user spot-checked 2 of the 20 (incl. #2, 141 s, ext 119) against CDR + recording file, accepted the rest as matching
+- [x] The 3 example shapes "abandoned in queue", "hung up in IVR" and "voicemail" are classified as such by test; 1 real call each for
       "answered" and "abandoned in queue" (an IVR-only call can't be linked to the team, so it is not stored: requirement 5)
-- [ ] With the stack running, a new test call appears in the DB within 5 min of hang-up with its recording downloaded (`recording_status=ok`)
-- [ ] `reconcile --date <yesterday>` reports 0 missing legs and 0 missing recordings for answered calls
+      → tests pass; real calls 19:19:59 answered (119) and 19:23:43 + 19:30:02 abandoned_queue
+- [x] With the stack running, a new test call appears in the DB within 5 min of hang-up with its recording downloaded (`recording_status=ok`) → < 2 min
+- [x] `reconcile --date <yesterday>` reports 0 missing legs and 0 missing recordings for answered calls → 2026-11-11 OK (91 recordings expected, 0 missing)
 
 ## Technical approach
 - Package `callsight/` (new): `pbx/base.py` (PbxAdapter), `pbx/yeastar.py`, `db/models.py` (SQLAlchemy 2), `db/migrations/`
