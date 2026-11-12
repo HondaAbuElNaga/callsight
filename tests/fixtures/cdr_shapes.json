@@ -26,7 +26,7 @@
     "id": 1050887,
     "time": "11/12/2026 04:24:23 PM",
     "call_from": "0500000000",
-    "call_to": "محمود ابو المعاطي مبيعات<302>",
+    "call_to": "Ext 302<302>",
     "timestamp": 1794489863,
     "uid": "uid-000",
     "src_trunk": "SSTLI",
@@ -41,7 +41,7 @@
     "call_from_number": "0500000000",
     "call_from_name": "",
     "call_to_number": "302",
-    "call_to_name": "محمود ابو المعاطي مبيعات"
+    "call_to_name": "Ext 302"
    },
    {
     "id": 1050888,
@@ -92,7 +92,7 @@
     "id": 1050884,
     "time": "11/12/2026 04:27:46 PM",
     "call_from": "0500000001",
-    "call_to": "خدمة العملاء محمود هشام<119>",
+    "call_to": "Ext 119<119>",
     "timestamp": 1794490066,
     "uid": "uid-001",
     "src_trunk": "SSTLI",
@@ -107,7 +107,7 @@
     "call_from_number": "0500000001",
     "call_from_name": "",
     "call_to_number": "119",
-    "call_to_name": "خدمة العملاء محمود هشام"
+    "call_to_name": "Ext 119"
    },
    {
     "id": 1050885,
@@ -158,7 +158,7 @@
     "id": 1050866,
     "time": "11/12/2026 04:16:39 PM",
     "call_from": "0500000002",
-    "call_to": "خدمة العملاء محمود هشام<119>",
+    "call_to": "Ext 119<119>",
     "timestamp": 1794489399,
     "uid": "uid-002",
     "src_trunk": "SSTLI",
@@ -173,7 +173,7 @@
     "call_from_number": "0500000002",
     "call_from_name": "",
     "call_to_number": "119",
-    "call_to_name": "خدمة العملاء محمود هشام"
+    "call_to_name": "Ext 119"
    },
    {
     "id": 1050867,
@@ -204,8 +204,8 @@
    {
     "id": 1050859,
     "time": "11/12/2026 04:14:44 PM",
-    "call_from": "103 103<103>",
-    "call_to": "خدمة العملاء محمود هشام<119>",
+    "call_from": "Ext 103<103>",
+    "call_to": "Ext 119<119>",
     "timestamp": 1794489284,
     "uid": "uid-003",
     "duration": 30,
@@ -214,15 +214,15 @@
     "call_type": "Internal",
     "reason": "dst forwarded    ",
     "call_from_number": "103",
-    "call_from_name": "103 103",
+    "call_from_name": "Ext 103",
     "call_to_number": "119",
-    "call_to_name": "خدمة العملاء محمود هشام"
+    "call_to_name": "Ext 119"
    },
    {
     "id": 1050860,
     "time": "11/12/2026 04:15:14 PM",
-    "call_from": "103 103<103>",
-    "call_to": "Voicemail خدمة العملاء محمود هشام<119>",
+    "call_from": "Ext 103<103>",
+    "call_to": "Voicemail Ext 119<119>",
     "timestamp": 1794489314,
     "uid": "uid-003",
     "duration": 40,
@@ -231,9 +231,9 @@
     "call_type": "Internal",
     "reason": "src hangup    ",
     "call_from_number": "103",
-    "call_from_name": "103 103",
+    "call_from_name": "Ext 103",
     "call_to_number": "119",
-    "call_to_name": "خدمة العملاء محمود هشام"
+    "call_to_name": "Ext 119"
    }
   ]
  },
@@ -244,7 +244,7 @@
    {
     "id": 1050858,
     "time": "11/12/2026 04:15:10 PM",
-    "call_from": "مروان حسني - مبيعات<114>",
+    "call_from": "Ext 114<114>",
     "call_to": "51119",
     "timestamp": 1794489310,
     "uid": "uid-004",
@@ -256,9 +256,9 @@
     "dod_number": "+966110000000",
     "reason": "src hangup    ",
     "call_from_number": "114",
-    "call_from_name": "مروان حسني - مبيعات",
+    "call_from_name": "Ext 114",
     "call_to_number": "51119",
-    "call_to_name": ""
+    "call_to_name": "Ext 51119"
    }
   ]
  },
@@ -269,7 +269,7 @@
    {
     "id": 1050856,
     "time": "11/12/2026 04:13:16 PM",
-    "call_from": "400 400<400>",
+    "call_from": "Ext 400<400>",
     "call_to": "0500000003",
     "timestamp": 1794489196,
     "uid": "uid-005",
@@ -281,7 +281,7 @@
     "dod_number": "+966110000000",
     "reason": "dst hangup    ",
     "call_from_number": "400",
-    "call_from_name": "400 400",
+    "call_from_name": "Ext 400",
     "call_to_number": "0500000003",
     "call_to_name": ""
    }
@@ -294,7 +294,7 @@
    {
     "id": 1050851,
     "time": "11/12/2026 04:11:16 PM",
-    "call_from": "400 400<400>",
+    "call_from": "Ext 400<400>",
     "call_to": "0500000004",
     "timestamp": 1794489076,
     "uid": "uid-006",
@@ -308,7 +308,7 @@
     "record_file": "20261112000000-uid-006.wav",
     "reason": "dst hangup    ",
     "call_from_number": "400",
-    "call_from_name": "400 400",
+    "call_from_name": "Ext 400",
     "call_to_number": "0500000004",
     "call_to_name": ""
    }
@@ -321,8 +321,8 @@
    {
     "id": 1050850,
     "time": "11/12/2026 03:52:25 PM",
-    "call_from": "محمود هنداوي مشرف فرع حي الواحة<401>",
-    "call_to": "محمود ابو المعاطي مبيعات<302>",
+    "call_from": "Ext 401<401>",
+    "call_to": "Ext 302<302>",
     "timestamp": 1794487945,
     "uid": "uid-007",
     "duration": 1163,
@@ -333,9 +333,9 @@
     "record_file": "20261112000000-uid-007.wav",
     "reason": "src hangup    ",
     "call_from_number": "401",
-    "call_from_name": "محمود هنداوي مشرف فرع حي الواحة",
+    "call_from_name": "Ext 401",
     "call_to_number": "302",
-    "call_to_name": "محمود ابو المعاطي مبيعات"
+    "call_to_name": "Ext 302"
    }
   ]
  },
@@ -346,7 +346,7 @@
    {
     "id": 1050847,
     "time": "11/12/2026 04:10:47 PM",
-    "call_from": "400 400<400>",
+    "call_from": "Ext 400<400>",
     "call_to": "0500000005",
     "timestamp": 1794489047,
     "uid": "uid-008",
@@ -360,7 +360,7 @@
     "record_file": "20261112000000-uid-008.wav",
     "reason": "src hangup    ",
     "call_from_number": "400",
-    "call_from_name": "400 400",
+    "call_from_name": "Ext 400",
     "call_to_number": "0500000005",
     "call_to_name": ""
    }
@@ -461,8 +461,8 @@
    {
     "id": 1050816,
     "time": "11/12/2026 03:56:15 PM",
-    "call_from": "صلاح دويدار حفر الباطن حي الواحة<402>",
-    "call_to": "محمود هنداوي مشرف فرع حي الواحة<401>",
+    "call_from": "Ext 402<402>",
+    "call_to": "Ext 401<401>",
     "timestamp": 1794488175,
     "uid": "uid-011",
     "duration": 22,
@@ -471,9 +471,9 @@
     "call_type": "Internal",
     "reason": "src hangup    ",
     "call_from_number": "402",
-    "call_from_name": "صلاح دويدار حفر الباطن حي الواحة",
+    "call_from_name": "Ext 402",
     "call_to_number": "401",
-    "call_to_name": "محمود هنداوي مشرف فرع حي الواحة"
+    "call_to_name": "Ext 401"
    }
   ]
  },
@@ -485,7 +485,7 @@
     "id": 1050812,
     "time": "11/12/2026 03:54:40 PM",
     "call_from": "0500000007",
-    "call_to": "محمود مكي مبيعات<803>",
+    "call_to": "Ext 803<803>",
     "timestamp": 1794488080,
     "uid": "uid-012",
     "src_trunk": "TG400",
@@ -498,13 +498,13 @@
     "call_from_number": "0500000007",
     "call_from_name": "",
     "call_to_number": "803",
-    "call_to_name": "محمود مكي مبيعات"
+    "call_to_name": "Ext 803"
    },
    {
     "id": 1050813,
     "time": "11/12/2026 03:55:10 PM",
     "call_from": "0500000007",
-    "call_to": "Voicemail محمود مكي مبيعات<803>",
+    "call_to": "Voicemail Ext 803<803>",
     "timestamp": 1794488110,
     "uid": "uid-012",
     "src_trunk": "TG400",
@@ -517,7 +517,7 @@
     "call_from_number": "0500000007",
     "call_from_name": "",
     "call_to_number": "803",
-    "call_to_name": "محمود مكي مبيعات"
+    "call_to_name": "Ext 803"
    }
   ]
  },
@@ -528,8 +528,8 @@
    {
     "id": 1050801,
     "time": "11/12/2026 03:43:35 PM",
-    "call_from": "103 103<103>",
-    "call_to": "خدمة العملاء محمود هشام<119>",
+    "call_from": "Ext 103<103>",
+    "call_to": "Ext 119<119>",
     "timestamp": 1794487415,
     "uid": "uid-013",
     "duration": 54,
@@ -540,9 +540,9 @@
     "record_file": "20261112000000-uid-013.wav",
     "reason": "dst hangup    ",
     "call_from_number": "103",
-    "call_from_name": "103 103",
+    "call_from_name": "Ext 103",
     "call_to_number": "119",
-    "call_to_name": "خدمة العملاء محمود هشام"
+    "call_to_name": "Ext 119"
    }
   ]
  },
@@ -553,8 +553,8 @@
    {
     "id": 1050800,
     "time": "11/12/2026 03:35:28 PM",
-    "call_from": "103 103<103>",
-    "call_to": "خدمة العملاء محمود هشام<119>",
+    "call_from": "Ext 103<103>",
+    "call_to": "Ext 119<119>",
     "timestamp": 1794486928,
     "uid": "uid-014",
     "duration": 80,
@@ -565,9 +565,9 @@
     "record_file": "20261112000000-uid-014.wav",
     "reason": "dst hangup    ",
     "call_from_number": "103",
-    "call_from_name": "103 103",
+    "call_from_name": "Ext 103",
     "call_to_number": "119",
-    "call_to_name": "خدمة العملاء محمود هشام"
+    "call_to_name": "Ext 119"
    }
   ]
  },
@@ -578,7 +578,7 @@
    {
     "id": 1050799,
     "time": "11/12/2026 03:36:01 PM",
-    "call_from": "مروان حسني - مبيعات<114>",
+    "call_from": "Ext 114<114>",
     "call_to": "51119",
     "timestamp": 1794486961,
     "uid": "uid-015",
@@ -590,9 +590,9 @@
     "dod_number": "+966110000000",
     "reason": "src hangup    ",
     "call_from_number": "114",
-    "call_from_name": "مروان حسني - مبيعات",
+    "call_from_name": "Ext 114",
     "call_to_number": "51119",
-    "call_to_name": ""
+    "call_to_name": "Ext 51119"
    }
   ]
  },
@@ -623,7 +623,7 @@
     "id": 1050797,
     "time": "11/12/2026 03:23:15 PM",
     "call_from": "0500000008",
-    "call_to": "103 103<103>",
+    "call_to": "Ext 103<103>",
     "timestamp": 1794486195,
     "uid": "uid-016",
     "src_trunk": "SSTLI",
@@ -638,7 +638,7 @@
     "call_from_number": "0500000008",
     "call_from_name": "",
     "call_to_number": "103",
-    "call_to_name": "103 103"
+    "call_to_name": "Ext 103"
    },
    {
     "id": 1050798,
@@ -669,7 +669,7 @@
    {
     "id": 1050757,
     "time": "11/12/2026 03:07:50 PM",
-    "call_from": "400 400<400>",
+    "call_from": "Ext 400<400>",
     "call_to": "0500000009",
     "timestamp": 1794485270,
     "uid": "uid-017",
@@ -681,7 +681,7 @@
     "dod_number": "+966110000000",
     "reason": "dst hangup    ",
     "call_from_number": "400",
-    "call_from_name": "400 400",
+    "call_from_name": "Ext 400",
     "call_to_number": "0500000009",
     "call_to_name": ""
    }
@@ -694,7 +694,7 @@
    {
     "id": 1050736,
     "time": "11/12/2026 02:58:29 PM",
-    "call_from": "400 400<400>",
+    "call_from": "Ext 400<400>",
     "call_to": "0500000010",
     "timestamp": 1794484709,
     "uid": "uid-018",
@@ -706,7 +706,7 @@
     "dod_number": "+966110000000",
     "reason": "dst extension_busy_no_forward    ",
     "call_from_number": "400",
-    "call_from_name": "400 400",
+    "call_from_name": "Ext 400",
     "call_to_number": "0500000010",
     "call_to_name": ""
    }
@@ -719,7 +719,7 @@
    {
     "id": 1050733,
     "time": "11/12/2026 02:41:18 PM",
-    "call_from": "متابعه المبيعات 116<116>",
+    "call_from": "Ext 116<116>",
     "call_to": "0500000011",
     "timestamp": 1794483678,
     "uid": "uid-019",
@@ -731,7 +731,7 @@
     "dod_number": "+966110000000",
     "reason": "dst hangup    ",
     "call_from_number": "116",
-    "call_from_name": "متابعه المبيعات 116",
+    "call_from_name": "Ext 116",
     "call_to_number": "0500000011",
     "call_to_name": ""
    }
@@ -769,7 +769,7 @@
    {
     "id": 1050729,
     "time": "11/12/2026 02:28:54 PM",
-    "call_from": "متابعه المبيعات 116<116>",
+    "call_from": "Ext 116<116>",
     "call_to": "0500000013",
     "timestamp": 1794482934,
     "uid": "uid-021",
@@ -783,7 +783,7 @@
     "record_file": "20261112000000-uid-021.wav",
     "reason": "src hangup    ",
     "call_from_number": "116",
-    "call_from_name": "متابعه المبيعات 116",
+    "call_from_name": "Ext 116",
     "call_to_number": "0500000013",
     "call_to_name": ""
    }
@@ -796,7 +796,7 @@
    {
     "id": 1050728,
     "time": "11/12/2026 02:27:54 PM",
-    "call_from": "متابعه المبيعات 116<116>",
+    "call_from": "Ext 116<116>",
     "call_to": "0500000014",
     "timestamp": 1794482874,
     "uid": "uid-022",
@@ -810,7 +810,7 @@
     "record_file": "20261112000000-uid-022.wav",
     "reason": "dst hangup    ",
     "call_from_number": "116",
-    "call_from_name": "متابعه المبيعات 116",
+    "call_from_name": "Ext 116",
     "call_to_number": "0500000014",
     "call_to_name": ""
    }
@@ -823,7 +823,7 @@
    {
     "id": 1050724,
     "time": "11/12/2026 02:26:08 PM",
-    "call_from": "متابعه المبيعات 116<116>",
+    "call_from": "Ext 116<116>",
     "call_to": "0500000015",
     "timestamp": 1794482768,
     "uid": "uid-023",
@@ -835,7 +835,7 @@
     "dod_number": "+966110000000",
     "reason": "dst hangup    ",
     "call_from_number": "116",
-    "call_from_name": "متابعه المبيعات 116",
+    "call_from_name": "Ext 116",
     "call_to_number": "0500000015",
     "call_to_name": ""
    }
@@ -848,7 +848,7 @@
    {
     "id": 1050722,
     "time": "11/12/2026 02:24:30 PM",
-    "call_from": "متابعه المبيعات 116<116>",
+    "call_from": "Ext 116<116>",
     "call_to": "0500000016",
     "timestamp": 1794482670,
     "uid": "uid-024",
@@ -860,7 +860,7 @@
     "dod_number": "+966110000000",
     "reason": "dst extension_busy_no_forward    ",
     "call_from_number": "116",
-    "call_from_name": "متابعه المبيعات 116",
+    "call_from_name": "Ext 116",
     "call_to_number": "0500000016",
     "call_to_name": ""
    }
@@ -873,7 +873,7 @@
    {
     "id": 1050721,
     "time": "11/12/2026 02:24:08 PM",
-    "call_from": "متابعه المبيعات 116<116>",
+    "call_from": "Ext 116<116>",
     "call_to": "0500000017",
     "timestamp": 1794482648,
     "uid": "uid-025",
@@ -885,7 +885,7 @@
     "dod_number": "+966110000000",
     "reason": "dst extension_busy_no_forward    ",
     "call_from_number": "116",
-    "call_from_name": "متابعه المبيعات 116",
+    "call_from_name": "Ext 116",
     "call_to_number": "0500000017",
     "call_to_name": ""
    }
@@ -898,8 +898,8 @@
    {
     "id": 1050706,
     "time": "11/12/2026 02:08:31 PM",
-    "call_from": "محمد القاسمي محاسب<107>",
-    "call_to": "805 المدير/ه الاداري/ه حي الشاطئ<805>",
+    "call_from": "Ext 107<107>",
+    "call_to": "Ext 805<805>",
     "timestamp": 1794481711,
     "uid": "uid-026",
     "duration": 29,
@@ -910,9 +910,9 @@
     "record_file": "20261112000000-uid-026.wav",
     "reason": "dst hangup    ",
     "call_from_number": "107",
-    "call_from_name": "محمد القاسمي محاسب",
+    "call_from_name": "Ext 107",
     "call_to_number": "805",
-    "call_to_name": "805 المدير/ه الاداري/ه حي الشاطئ"
+    "call_to_name": "Ext 805"
    }
   ]
  },
@@ -923,17 +923,17 @@
    {
     "id": 1050701,
     "time": "11/12/2026 02:08:28 PM",
-    "call_from": "محمد القاسمي محاسب<107>",
-    "call_to": "805 المدير/ه الاداري/ه حي الشاطئ<805>",
+    "call_from": "Ext 107<107>",
+    "call_to": "Ext 805<805>",
     "timestamp": 1794481708,
     "uid": "uid-027",
     "disposition": "NO ANSWER",
     "call_type": "Internal",
     "reason": "src hangup    ",
     "call_from_number": "107",
-    "call_from_name": "محمد القاسمي محاسب",
+    "call_from_name": "Ext 107",
     "call_to_number": "805",
-    "call_to_name": "805 المدير/ه الاداري/ه حي الشاطئ"
+    "call_to_name": "Ext 805"
    }
   ]
  },
@@ -944,23 +944,23 @@
    {
     "id": 1050697,
     "time": "11/12/2026 02:07:37 PM",
-    "call_from": "محمد القاسمي محاسب<107>",
-    "call_to": "800 استقبال الشاطئ الغربي<800>",
+    "call_from": "Ext 107<107>",
+    "call_to": "Ext 800<800>",
     "timestamp": 1794481657,
     "uid": "uid-028",
     "disposition": "NO ANSWER",
     "call_type": "Internal",
     "reason": "dst forwarded    ",
     "call_from_number": "107",
-    "call_from_name": "محمد القاسمي محاسب",
+    "call_from_name": "Ext 107",
     "call_to_number": "800",
-    "call_to_name": "800 استقبال الشاطئ الغربي"
+    "call_to_name": "Ext 800"
    },
    {
     "id": 1050698,
     "time": "11/12/2026 02:07:37 PM",
-    "call_from": "محمد القاسمي محاسب<107>",
-    "call_to": "Voicemail 800 استقبال الشاطئ الغربي<800>",
+    "call_from": "Ext 107<107>",
+    "call_to": "Voicemail Ext 800<800>",
     "timestamp": 1794481657,
     "uid": "uid-028",
     "duration": 1,
@@ -969,9 +969,9 @@
     "call_type": "Internal",
     "reason": "src hangup    ",
     "call_from_number": "107",
-    "call_from_name": "محمد القاسمي محاسب",
+    "call_from_name": "Ext 107",
     "call_to_number": "800",
-    "call_to_name": "800 استقبال الشاطئ الغربي"
+    "call_to_name": "Ext 800"
    }
   ]
  },
@@ -1008,7 +1008,7 @@
     "id": 1050636,
     "time": "11/12/2026 01:21:17 PM",
     "call_from": "0500000019",
-    "call_to": "محمود مكي مبيعات<803>",
+    "call_to": "Ext 803<803>",
     "timestamp": 1794478877,
     "uid": "uid-030",
     "src_trunk": "TG400",
@@ -1023,7 +1023,7 @@
     "call_from_number": "0500000019",
     "call_from_name": "",
     "call_to_number": "803",
-    "call_to_name": "محمود مكي مبيعات"
+    "call_to_name": "Ext 803"
    }
   ]
  },
@@ -1034,8 +1034,8 @@
    {
     "id": 1050633,
     "time": "11/12/2026 01:19:53 PM",
-    "call_from": "125<125>",
-    "call_to": "ادارة الموارد بشرية<109>",
+    "call_from": "Ext 125<125>",
+    "call_to": "Ext 109<109>",
     "timestamp": 1794478793,
     "uid": "uid-031",
     "duration": 30,
@@ -1044,15 +1044,15 @@
     "call_type": "Internal",
     "reason": "dst forwarded    ",
     "call_from_number": "125",
-    "call_from_name": "125",
+    "call_from_name": "Ext 125",
     "call_to_number": "109",
-    "call_to_name": "ادارة الموارد بشرية"
+    "call_to_name": "Ext 109"
    },
    {
     "id": 1050634,
     "time": "11/12/2026 01:20:23 PM",
-    "call_from": "125<125>",
-    "call_to": "Voicemail ادارة الموارد بشرية<109>",
+    "call_from": "Ext 125<125>",
+    "call_to": "Voicemail Ext 109<109>",
     "timestamp": 1794478823,
     "uid": "uid-031",
     "duration": 11,
@@ -1061,9 +1061,9 @@
     "call_type": "Internal",
     "reason": "src hangup    ",
     "call_from_number": "125",
-    "call_from_name": "125",
+    "call_from_name": "Ext 125",
     "call_to_number": "109",
-    "call_to_name": "ادارة الموارد بشرية"
+    "call_to_name": "Ext 109"
    }
   ]
  },
@@ -1075,7 +1075,7 @@
     "id": 1050539,
     "time": "11/12/2026 12:37:12 PM",
     "call_from": "0500000020",
-    "call_to": "محمود مكي مبيعات<803>",
+    "call_to": "Ext 803<803>",
     "timestamp": 1794476232,
     "uid": "uid-032",
     "src_trunk": "TG400",
@@ -1088,13 +1088,13 @@
     "call_from_number": "0500000020",
     "call_from_name": "",
     "call_to_number": "803",
-    "call_to_name": "محمود مكي مبيعات"
+    "call_to_name": "Ext 803"
    },
    {
     "id": 1050540,
     "time": "11/12/2026 12:37:42 PM",
     "call_from": "0500000020",
-    "call_to": "Voicemail محمود مكي مبيعات<803>",
+    "call_to": "Voicemail Ext 803<803>",
     "timestamp": 1794476262,
     "uid": "uid-032",
     "src_trunk": "TG400",
@@ -1107,7 +1107,7 @@
     "call_from_number": "0500000020",
     "call_from_name": "",
     "call_to_number": "803",
-    "call_to_name": "محمود مكي مبيعات"
+    "call_to_name": "Ext 803"
    }
   ]
  },
@@ -1119,7 +1119,7 @@
     "id": 1050422,
     "time": "11/12/2026 11:34:24 AM",
     "call_from": "0500000021",
-    "call_to": "محمود مكي مبيعات<803>",
+    "call_to": "Ext 803<803>",
     "timestamp": 1794472464,
     "uid": "uid-033",
     "src_trunk": "TG400",
@@ -1132,7 +1132,7 @@
     "call_from_number": "0500000021",
     "call_from_name": "",
     "call_to_number": "803",
-    "call_to_name": "محمود مكي مبيعات"
+    "call_to_name": "Ext 803"
    }
   ]
  },
@@ -1144,7 +1144,7 @@
     "id": 1050306,
     "time": "11/12/2026 10:45:55 AM",
     "call_from": "0500000022",
-    "call_to": "محمود مكي مبيعات<803>",
+    "call_to": "Ext 803<803>",
     "timestamp": 1794469555,
     "uid": "uid-034",
     "src_trunk": "TG400",
@@ -1157,7 +1157,7 @@
     "call_from_number": "0500000022",
     "call_from_name": "",
     "call_to_number": "803",
-    "call_to_name": "محمود مكي مبيعات"
+    "call_to_name": "Ext 803"
    }
   ]
  },
@@ -1180,7 +1180,7 @@
     "call_from_number": "0500000023",
     "call_from_name": "",
     "call_to_number": "6200",
-    "call_to_name": ""
+    "call_to_name": "Ext 6200"
    }
   ]
  },
@@ -1191,7 +1191,7 @@
    {
     "id": 1049980,
     "time": "11/11/2026 09:23:19 PM",
-    "call_from": "605<605>",
+    "call_from": "Ext 605<605>",
     "call_to": "0500000024",
     "timestamp": 1794421399,
     "uid": "uid-036",
@@ -1203,7 +1203,7 @@
     "dod_number": "+966110000000",
     "reason": "dst extension_busy_no_forward    ",
     "call_from_number": "605",
-    "call_from_name": "605",
+    "call_from_name": "Ext 605",
     "call_to_number": "0500000024",
     "call_to_name": ""
    }
@@ -1216,8 +1216,8 @@
    {
     "id": 1049952,
     "time": "11/11/2026 08:37:24 PM",
-    "call_from": "خدمة العملاء محمود هشام<119>",
-    "call_to": "عبده الزعويلي فرع خميس مشيط حي الظرفه<601>",
+    "call_from": "Ext 119<119>",
+    "call_to": "Ext 601<601>",
     "timestamp": 1794418644,
     "uid": "uid-037",
     "duration": 30,
@@ -1226,15 +1226,15 @@
     "call_type": "Internal",
     "reason": "dst forwarded    ",
     "call_from_number": "119",
-    "call_from_name": "خدمة العملاء محمود هشام",
+    "call_from_name": "Ext 119",
     "call_to_number": "601",
-    "call_to_name": "عبده الزعويلي فرع خميس مشيط حي الظرفه"
+    "call_to_name": "Ext 601"
    },
    {
     "id": 1049953,
     "time": "11/11/2026 08:37:54 PM",
-    "call_from": "خدمة العملاء محمود هشام<119>",
-    "call_to": "Voicemail عبده الزعويلي فرع خميس مشيط حي الظرفه<601>",
+    "call_from": "Ext 119<119>",
+    "call_to": "Voicemail Ext 601<601>",
     "timestamp": 1794418674,
     "uid": "uid-037",
     "duration": 8,
@@ -1243,9 +1243,9 @@
     "call_type": "Internal",
     "reason": "src hangup    ",
     "call_from_number": "119",
-    "call_from_name": "خدمة العملاء محمود هشام",
+    "call_from_name": "Ext 119",
     "call_to_number": "601",
-    "call_to_name": "عبده الزعويلي فرع خميس مشيط حي الظرفه"
+    "call_to_name": "Ext 601"
    }
   ]
  },
@@ -1295,7 +1295,7 @@
     "id": 1049932,
     "time": "11/11/2026 07:51:38 PM",
     "call_from": "0500000025",
-    "call_to": "محمود ابو المعاطي مبيعات<302>",
+    "call_to": "Ext 302<302>",
     "timestamp": 1794415898,
     "uid": "uid-038",
     "src_trunk": "SSTLI",
@@ -1309,7 +1309,7 @@
     "call_from_number": "0500000025",
     "call_from_name": "",
     "call_to_number": "302",
-    "call_to_name": "محمود ابو المعاطي مبيعات"
+    "call_to_name": "Ext 302"
    }
   ]
  },
@@ -1403,7 +1403,7 @@
     "id": 1048481,
     "time": "11/11/2026 07:47:29 AM",
     "call_from": "0500000027",
-    "call_to": "د. حسام مشرف<503>",
+    "call_to": "Ext 503<503>",
     "timestamp": 1794372449,
     "uid": "uid-040",
     "src_trunk": "SSTLI",
@@ -1418,7 +1418,7 @@
     "call_from_number": "0500000027",
     "call_from_name": "",
     "call_to_number": "503",
-    "call_to_name": "د. حسام مشرف"
+    "call_to_name": "Ext 503"
    },
    {
     "id": 1048482,
@@ -1469,7 +1469,7 @@
     "id": 1048291,
     "time": "11/10/2026 08:17:26 PM",
     "call_from": "0500000028",
-    "call_to": "خدمة العملاء محمود هشام<119>",
+    "call_to": "Ext 119<119>",
     "timestamp": 1794331046,
     "uid": "uid-041",
     "src_trunk": "SSTLI",
@@ -1484,7 +1484,7 @@
     "call_from_number": "0500000028",
     "call_from_name": "",
     "call_to_number": "119",
-    "call_to_name": "خدمة العملاء محمود هشام"
+    "call_to_name": "Ext 119"
    },
    {
     "id": 1048292,
@@ -1510,7 +1510,7 @@
     "id": 1048293,
     "time": "11/10/2026 08:24:12 PM",
     "call_from": "0500000028",
-    "call_to": "مروان حسني - مبيعات<114>",
+    "call_to": "Ext 114<114>",
     "timestamp": 1794331452,
     "uid": "uid-041",
     "src_trunk": "SSTLI",
@@ -1520,11 +1520,11 @@
     "call_type": "Inbound",
     "did_number": "+966110000000",
     "record_file": "20261112000000-uid-041.wav",
-    "reason": "خدمة العملاء محمود هشام<119> attended_transfer_answer , src hangup ",
+    "reason": "Ext 119<119> attended_transfer_answer , src hangup ",
     "call_from_number": "0500000028",
     "call_from_name": "",
     "call_to_number": "114",
-    "call_to_name": "مروان حسني - مبيعات"
+    "call_to_name": "Ext 114"
    }
   ]
  },
@@ -1579,7 +1579,7 @@
    {
     "id": 1047632,
     "time": "11/10/2026 03:15:18 PM",
-    "call_from": "متابعه المبيعات 116<116>",
+    "call_from": "Ext 116<116>",
     "call_to": "055",
     "timestamp": 1794312918,
     "uid": "uid-043",
@@ -1589,9 +1589,9 @@
     "dod_number": "+966110000000",
     "reason": "dst hangup    ",
     "call_from_number": "116",
-    "call_from_name": "متابعه المبيعات 116",
+    "call_from_name": "Ext 116",
     "call_to_number": "055",
-    "call_to_name": ""
+    "call_to_name": "Ext 055"
    }
   ]
  },
@@ -1767,7 +1767,7 @@
     "id": 1046494,
     "time": "11/09/2026 09:13:00 PM",
     "call_from": "0500000032",
-    "call_to": "د. حسام مشرف<503>",
+    "call_to": "Ext 503<503>",
     "timestamp": 1794247980,
     "uid": "uid-046",
     "src_trunk": "SSTLI",
@@ -1782,7 +1782,7 @@
     "call_from_number": "0500000032",
     "call_from_name": "",
     "call_to_number": "503",
-    "call_to_name": "د. حسام مشرف"
+    "call_to_name": "Ext 503"
    },
    {
     "id": 1046495,
@@ -1814,7 +1814,7 @@
     "id": 1046466,
     "time": "11/09/2026 08:15:17 PM",
     "call_from": "0500000033",
-    "call_to": "محمود مكي مبيعات<803>",
+    "call_to": "Ext 803<803>",
     "timestamp": 1794244517,
     "uid": "uid-047",
     "src_trunk": "TG400",
@@ -1827,13 +1827,13 @@
     "call_from_number": "0500000033",
     "call_from_name": "",
     "call_to_number": "803",
-    "call_to_name": "محمود مكي مبيعات"
+    "call_to_name": "Ext 803"
    },
    {
     "id": 1046467,
     "time": "11/09/2026 08:15:33 PM",
     "call_from": "0500000033",
-    "call_to": "Voicemail محمود مكي مبيعات<803>",
+    "call_to": "Voicemail Ext 803<803>",
     "timestamp": 1794244533,
     "uid": "uid-047",
     "src_trunk": "TG400",
@@ -1846,7 +1846,7 @@
     "call_from_number": "0500000033",
     "call_from_name": "",
     "call_to_number": "803",
-    "call_to_name": "محمود مكي مبيعات"
+    "call_to_name": "Ext 803"
    }
   ]
  },
@@ -1896,7 +1896,7 @@
     "id": 1046310,
     "time": "11/09/2026 07:10:41 PM",
     "call_from": "0500000034",
-    "call_to": "خدمة العملاء محمود هشام<119>",
+    "call_to": "Ext 119<119>",
     "timestamp": 1794240641,
     "uid": "uid-048",
     "src_trunk": "SSTLI",
@@ -1911,7 +1911,7 @@
     "call_from_number": "0500000034",
     "call_from_name": "",
     "call_to_number": "119",
-    "call_to_name": "خدمة العملاء محمود هشام"
+    "call_to_name": "Ext 119"
    },
    {
     "id": 1046311,

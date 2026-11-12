@@ -18,7 +18,7 @@ from callsight.config import RIYADH
 from callsight.db.models import Agent, Base, Call, CallLeg, Queue, ReconcileRun
 from callsight.ingest import service
 from callsight.ingest.classify import ABANDONED_QUEUE, ANSWERED, TeamConfig, leg_kind
-from callsight.pbx.base import PbxAdapter, PbxError
+from callsight.pbx.base import PbxAdapter, PbxError, TokenLimit
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 URL = os.getenv("TEST_DATABASE_URL")
@@ -253,3 +253,57 @@ def test_day_stats_counts_match(session):
     for d in _days_with_team_calls():
         total += sum(r[3] for r in service.day_stats(session, d))
     assert total == len(TEAM_UIDS)
+
+
+# ---------- review fixes ----------
+
+def test_pbx_down_does_not_use_up_recording_attempts(session, tmp_path):
+    service.ingest_rows(session, ALL_ROWS, TEAM); session.commit()
+
+    class Down(FakePbx):
+        def download_recording(self, file, dest):
+            self.downloads += 1
+            raise TokenLimit("limit")
+    pbx = Down(ALL_ROWS)
+    for _ in range(4):
+        with pytest.raises(TokenLimit):
+            service.fetch_recordings(session, pbx, tmp_path, limit=500)
+    assert pbx.downloads == 4                                  # batch stops at the first call each time
+    assert session.scalar(select(func.max(Call.recording_attempts))) == 0
+    assert session.scalar(select(func.count()).select_from(Call).where(Call.recording_status == "missing")) == 0
+
+
+def test_disk_error_counts_attempt_and_batch_continues(session, tmp_path):
+    service.ingest_rows(session, ALL_ROWS, TEAM); session.commit()
+    first = session.scalars(select(Call).where(Call.recording_file.is_not(None)).order_by(Call.start_time)).first()
+
+    class DiskFull(FakePbx):
+        def download_recording(self, file, dest):
+            if file == first.recording_file:
+                raise OSError(28, "No space left on device")
+            return super().download_recording(file, dest)
+    ok, failed = service.fetch_recordings(session, DiskFull(ALL_ROWS), tmp_path, limit=500)
+    assert failed == 1 and ok > 0
+    session.refresh(first)
+    assert first.recording_status == "error" and first.recording_attempts == 1
+
+
+def test_reconcile_flags_answered_customer_call_without_recording_file(session, tmp_path):
+    day, _ = max(_days_with_team_calls().items(), key=lambda kv: kv[1])
+    pbx = FakePbx(ALL_ROWS)
+    service.reconcile_day(session, pbx, TEAM, tmp_path, day)
+    start, end = service.day_bounds(day)
+    call = session.scalars(select(Call).where(Call.status == "answered", Call.direction != "internal",
+                                              Call.start_time >= start, Call.start_time < end)).first()
+    if call is None:
+        pytest.skip("no answered customer call on that day in fixtures")
+    call.recording_file, call.recording_status = None, "none"; session.commit()
+    run = service.reconcile_day(session, pbx, TEAM, tmp_path, day)
+    assert run.missing_recordings_after == 1 and not run.ok
+
+
+def test_internal_answered_call_needs_no_recording(session, tmp_path):
+    legs = next(c["legs"] for c in FIX if c["team"] and c["shape"] == "Internal: EXT:ANSWERED")
+    day = datetime.fromtimestamp(int(legs[0]["timestamp"]), tz=RIYADH).date()
+    run = service.reconcile_day(session, FakePbx(legs), TEAM, tmp_path, day)
+    assert run.pbx_team_calls == 1 and run.recordings_expected == 0 and run.ok

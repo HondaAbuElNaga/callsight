@@ -13,13 +13,13 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from ..config import RIYADH
 from ..db.models import Agent, Call, CallLeg, IngestState, Queue, ReconcileRun
-from ..pbx.base import PbxAdapter, PbxError
+from ..pbx.base import PbxAdapter, PbxError, PbxUnavailable
 from ..pbx.yeastar import safe_recording_name
 from .classify import TeamConfig, classify, is_team_call, leg_kind, to_number
 
@@ -72,6 +72,8 @@ def ingest_rows(session: Session, rows: Iterable[dict], team: TeamConfig) -> Ing
             res.rows += 1
 
     for uid, new_legs in by_uid.items():
+        # Serialise work on one call across processes (worker + CLI): read legs only after the lock.
+        session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:uid))"), {"uid": uid})
         old = {leg.id: leg.raw for leg in session.scalars(select(CallLeg).where(CallLeg.uid == uid))}
         legs = {**old, **new_legs}
         if not is_team_call(legs.values(), team):
@@ -169,7 +171,9 @@ def fetch_one_recording(session: Session, pbx: PbxAdapter, audio_dir: Path, call
             raise PbxError(f"bad WAV: {exc}") from exc
         call.recording_path, call.recording_status = rel.as_posix(), "ok"
         return True
-    except PbxError as exc:
+    except PbxUnavailable:
+        raise                      # PBX down / token limit: not this file's fault, don't count a try
+    except (PbxError, OSError) as exc:
         call.recording_attempts += 1
         call.recording_status = "missing" if call.recording_attempts >= MAX_RECORDING_ATTEMPTS else "error"
         log.warning("recording for call %s failed (%s/%s): %s", call.id, call.recording_attempts,
@@ -217,11 +221,14 @@ def reconcile_day(session: Session, pbx: PbxAdapter, team: TeamConfig, audio_dir
         session.commit()
     after = missing_legs()
 
-    rec_q = select(Call).where(Call.uid.in_(team_uids), Call.recording_file.is_not(None)) if team_uids else None
-    expected = session.scalars(rec_q).all() if rec_q is not None else []
+    # Every answered customer call (inbound/outbound) should have a recording. Internal calls between
+    # colleagues are not recorded by the PBX, so they are not expected.
+    expected = session.scalars(select(Call).where(
+        Call.uid.in_(team_uids), Call.status == "answered", Call.direction != "internal")).all() if team_uids else []
     rec_before = [c for c in expected if c.recording_status != "ok"]
     for c in rec_before:                       # one more try, even for calls that hit the retry limit
-        fetch_one_recording(session, pbx, audio_dir, c)
+        if c.recording_file:
+            fetch_one_recording(session, pbx, audio_dir, c)
     rec_after = sum(1 for c in expected if c.recording_status != "ok")
     db_calls = session.scalar(select(func.count()).select_from(Call).where(Call.uid.in_(team_uids))) if team_uids else 0
 

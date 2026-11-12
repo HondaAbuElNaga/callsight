@@ -97,5 +97,7 @@ the supervisor's phone and connects silently to the chosen call (customer + agen
 - [ ] Roles & permissions (admin / supervisor / agent sees own calls only)
 - [ ] Rules editor UI: manager edits bad-word lists, thresholds, KPI targets without code (source: [Azure-Samples/tayra](https://github.com/Azure-Samples/tayra))
 - [ ] Backups (DB + audio), retention policy for recordings, disk alerts
+- [ ] Trust the PBX's own self-signed certificate (`YEASTAR_CA_FILE`) instead of `YEASTAR_VERIFY_SSL=false` (review 2026-11-12)
+- [ ] Pin exact dependency versions with hashes (pip-tools) (review 2026-11-12)
 - [ ] Monitoring: queue lengths, worker health, GPU usage
 - [ ] Scale-out guide: extra workers / second GPU box; add new agents/queues by config

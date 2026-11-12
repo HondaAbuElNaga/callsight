@@ -10,11 +10,16 @@ class PbxError(RuntimeError):
     """Any PBX API failure."""
 
 
-class AuthError(PbxError):
+class PbxUnavailable(PbxError):
+    """The whole PBX can't be used right now (down, login refused, token limit).
+    Jobs stop the batch on this instead of blaming single calls/recordings."""
+
+
+class AuthError(PbxUnavailable):
     """Login refused by the PBX."""
 
 
-class TokenLimit(PbxError):
+class TokenLimit(PbxUnavailable):
     """PBX refuses new tokens because too many are open (Yeastar: max 8). Not a credentials problem."""
 
 

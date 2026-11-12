@@ -46,7 +46,7 @@ many calls were missed", "Don't know how long calls take").
   - Transcription and scores (Phase 2/3). Any write to the PBX.
 
 ## Requirements
-1. **Adapter.** `PbxAdapter` (abstract) with `fetch_cdr_since(last_id) -> list[CdrRow]`, `fetch_cdr_range(start, end)`,
+1. **Adapter.** `PbxAdapter` (abstract) with `fetch_cdr_since(last_id) -> list[CdrRow]`, `fetch_cdr_between(start, end)`,
    `download_recording(file, dest) -> Path`, `list_queues()`, `list_extensions()`. `YeastarAdapter` implements it with
    token refresh (token lives 30 min), retries with back-off on network errors, and **stops after 3 failed logins**
    (Yeastar auto-blocks the IP on repeated bad auth).
@@ -72,8 +72,8 @@ many calls were missed", "Don't know how long calls take").
    (decided per `uid` over all its legs). Calls that end in the IVR menu (no queue, no agent) can't be linked to the team and are skipped.
 6. **Recordings.** For every call with a `record_file`, the file is downloaded once to `AUDIO_DIR/YYYY/MM/DD/<file>`,
    checked to be a valid WAV, and `recording_status` set to `ok` / `missing` / `error` (retried up to 3 times).
-7. **Reconciliation.** For a given day: PBX CDR ids in that day vs our `call_leg` ids, and answered calls without a
-   recording. Missing rows are fetched and ingested; the run is saved in `reconcile_run` (counts, missing before, missing after).
+7. **Reconciliation.** For a given day: PBX CDR ids in that day vs our `call_leg` ids, and answered customer calls
+   (inbound/outbound) without a downloaded recording. Internal calls are not recorded by the PBX, so they are not expected. Missing rows are fetched and ingested; the run is saved in `reconcile_run` (counts, missing before, missing after).
 8. **Config & secrets** only from `.env` (existing Yeastar keys + `DATABASE_URL`, `REDIS_URL`, `AUDIO_DIR`). Phone numbers
    are never written to logs in full (reuse `mask_phone`).
 9. **Idempotent.** Running ingest, backfill or reconcile twice never creates duplicates or changes results.
@@ -84,15 +84,16 @@ many calls were missed", "Don't know how long calls take").
 - [ ] `python -m callsight backfill --days 7` loads 7 days; `stats` shows calls per status per day; running it again adds 0 rows
 - [ ] For one full day, team calls (`uid`) and their legs in our DB = team calls in PBX `cdr/list` for the same day (100%, by `reconcile`)
 - [ ] 20 random answered calls checked by hand against the PBX Call Logs page: agent, talk time and status all correct
-- [ ] The 3 example shapes "abandoned in queue", "hung up in IVR" and "voicemail" are classified as such (by test + 1 real call each)
+- [ ] The 3 example shapes "abandoned in queue", "hung up in IVR" and "voicemail" are classified as such by test; 1 real call each for
+      "answered" and "abandoned in queue" (an IVR-only call can't be linked to the team, so it is not stored: requirement 5)
 - [ ] With the stack running, a new test call appears in the DB within 5 min of hang-up with its recording downloaded (`recording_status=ok`)
 - [ ] `reconcile --date <yesterday>` reports 0 missing legs and 0 missing recordings for answered calls
 
 ## Technical approach
 - Package `callsight/` (new): `pbx/base.py` (PbxAdapter), `pbx/yeastar.py`, `db/models.py` (SQLAlchemy 2), `db/migrations/`
-  (Alembic), `ingest/classify.py` (pure functions: legs → call fields; most tests live here), `ingest/jobs.py`
-  (Celery tasks: `ingest_new`, `fetch_recordings`, `reconcile_day`, `sync_agents`), `cli.py`, `config.py`.
-- `tools/pbx_probe.py` stays as the discovery tool; its `YeastarClient` logic moves into `pbx/yeastar.py` (probe imports it).
+  (Alembic), `ingest/classify.py` (pure functions: legs → call fields; most tests live here), `ingest/service.py` (the logic), `jobs.py`
+  (Celery tasks: `ingest_new` → triggers `fetch_recordings`, `reconcile_yesterday`, `sync_agents`), `cli.py`, `config.py`.
+- `tools/pbx_probe.py` stays a standalone discovery tool (own client and tests); the app uses `pbx/yeastar.py`.
 - Ingest cursor: `ingest_state.last_cdr_id`; each run pages `cdr/list` (id desc) until it is 300 ids **below** that id (overlap),
   so a call whose legs were split across two runs is still seen whole (team filter is per `uid`); upserts make the overlap harmless. A call is
   re-classified whenever a leg arrives; nightly reconcile catches late/missed legs.

@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 import httpx
 
-from .base import AuthBlocked, AuthError, PbxAdapter, PbxError, TokenLimit
+from .base import AuthBlocked, AuthError, PbxAdapter, PbxError, PbxUnavailable, TokenLimit
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ class YeastarAdapter(PbxAdapter):
                 last = exc
             if attempt < self.retries - 1:
                 self._sleep(2 ** attempt)
-        raise PbxError(f"PBX unreachable after {self.retries} tries: {last}")
+        raise PbxUnavailable(f"PBX unreachable after {self.retries} tries: {last}")
 
     def _json(self, resp: httpx.Response, what: str) -> dict:
         try:
@@ -129,15 +129,17 @@ class YeastarAdapter(PbxAdapter):
 
     # ---------- CDR ----------
 
-    def _pages(self):
-        for page in range(1, self.max_pages + 1):
+    def _pages(self, max_pages: int | None = None):
+        """Newest-first pages of cdr/list. max_pages=None: until the caller stops or the PBX runs out."""
+        limit = self.max_pages if max_pages is None else max_pages
+        for page in range(1, limit + 1):
             batch = self.get("cdr/list", page=page, page_size=PAGE_SIZE, sort_by="id", order_by="desc").get("data") or []
             if not batch:
                 return
             yield batch
             if len(batch) < PAGE_SIZE:
                 return
-        raise PbxError(f"cdr/list: more than {self.max_pages} pages; narrow the range")
+        raise PbxError(f"cdr/list: more than {limit} pages; narrow the range")
 
     def fetch_cdr_since(self, last_id: int, overlap: int = 300) -> list[dict]:
         floor = max(0, last_id - overlap)
@@ -151,7 +153,10 @@ class YeastarAdapter(PbxAdapter):
     def fetch_cdr_between(self, start: datetime, end: datetime) -> list[dict]:
         lo, hi = int(start.timestamp()), int(end.timestamp())
         rows: list[dict] = []
-        for batch in self._pages():
+        # Stops on the timestamp check below, so the page cap only guards against a PBX that never
+        # returns older rows: allow ~2,000 rows/day for the requested range.
+        days = max(1, (int(datetime.now().timestamp()) - lo) // 86400 + 1)
+        for batch in self._pages(max_pages=max(self.max_pages, 20 * days)):
             rows.extend(r for r in batch if lo <= int(r.get("timestamp") or 0) < hi)
             # ids grow with write time; once a whole page is older than `start` (with a 1 h margin for
             # long calls written late), stop.
@@ -167,9 +172,9 @@ class YeastarAdapter(PbxAdapter):
         url_path = info.get("download_resource_url") or ""
         if not url_path.startswith("/"):
             raise PbxError("recording/download: no download URL")
-        dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_name(dest.name + ".part")
         try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
             with self.http.stream("GET", f"{self.base_url}{url_path}",
                                   params={"access_token": self.access_token}) as r:
                 if r.status_code != 200:
@@ -180,6 +185,8 @@ class YeastarAdapter(PbxAdapter):
             tmp.replace(dest)
         except httpx.HTTPError as exc:
             raise PbxError(f"recording download failed: {exc}") from exc
+        except OSError as exc:              # disk full, no permission on the audio folder, ...
+            raise PbxError(f"cannot write recording to disk: {exc}") from exc
         finally:
             tmp.unlink(missing_ok=True)
         return dest

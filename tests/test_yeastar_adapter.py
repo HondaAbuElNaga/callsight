@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 
-from callsight.pbx.base import AuthBlocked, AuthError, PbxError, TokenLimit
+from callsight.pbx.base import AuthBlocked, AuthError, PbxError, PbxUnavailable, TokenLimit
 from callsight.pbx.yeastar import YeastarAdapter, safe_recording_name
 
 
@@ -175,3 +175,31 @@ def test_queues_parsed():
     a, _ = make(FakePbx())
     q = a.list_queues()[0]
     assert q["number"] == "6401" and [x["ext"] for x in q["agents"]] == ["104", "119"]
+
+
+def test_long_date_range_is_not_cut_by_page_cap():
+    """Review fix: backfill of many days must not fail on the default page cap."""
+    fake = FakePbx(n_rows=1000)
+    a = YeastarAdapter("https://pbx:8088", "id", "secret", sleep=lambda s: None, max_pages=3,
+                       http=httpx.Client(transport=httpx.MockTransport(fake.handler)))
+    start = datetime.fromtimestamp(fake.t0, tz=timezone.utc)
+    end = datetime.fromtimestamp(fake.t0 + 60 * 2000, tz=timezone.utc)
+    assert len(a.fetch_cdr_between(start, end)) == 1000      # 10 pages > cap of 3
+
+
+def test_disk_error_becomes_pbx_error(tmp_path):
+    """Review fix: disk full / no permission must not crash the recordings job."""
+    a, _ = make(FakePbx())
+    blocker = tmp_path / "afile"
+    blocker.write_text("x")
+    with pytest.raises(PbxError) as e:
+        a.download_recording("ok.wav", blocker / "sub" / "rec.wav")   # parent is a file -> OSError
+    assert not isinstance(e.value, TokenLimit)
+
+
+def test_pbx_down_is_unavailable_error():
+    fake = FakePbx()
+    fake.fail_transport = 99
+    a, _ = make(fake)
+    with pytest.raises(PbxUnavailable):
+        a.list_queues()

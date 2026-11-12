@@ -36,6 +36,8 @@ def ingest_new() -> dict:
     with wiring.session_factory()() as s:
         r = service.run_ingest(s, wiring.pbx(), wiring.teams())
     log.info("ingest: %s", r)
+    if r.calls:
+        fetch_recordings.delay()   # recording ready within one ingest cycle (~2 min), not the next 5-min tick
     return vars(r)
 
 
