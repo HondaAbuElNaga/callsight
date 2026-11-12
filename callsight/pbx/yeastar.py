@@ -5,6 +5,7 @@ failed logins get the IP auto-blocked, so we stop after `max_login_failures` fai
 """
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -12,11 +13,14 @@ from typing import Any, Callable
 
 import httpx
 
-from .base import AuthBlocked, AuthError, PbxAdapter, PbxError
+from .base import AuthBlocked, AuthError, PbxAdapter, PbxError, TokenLimit
+
+log = logging.getLogger(__name__)
 
 USER_AGENT = "OpenAPI"
 API_PATH = "/openapi/v1.0"
 TOKEN_MAX_AGE = 25 * 60          # refresh before the 30 min expiry
+TOKEN_LIMIT_ERRCODE = 60002      # "MAX LIMITATION EXCEEDED": more than 8 valid tokens for this API app
 PAGE_SIZE = 100
 
 
@@ -81,6 +85,10 @@ class YeastarAdapter(PbxAdapter):
                               "and the PBX API IP allow-list, then restart")
         data = self._json(self._request("POST", self._url("get_token"),
                                         json={"username": self._id, "password": self._secret}), "get_token")
+        if data.get("errcode") == TOKEN_LIMIT_ERRCODE:
+            # Not a wrong password: the PBX allows max 8 valid tokens per API app (30 min each).
+            raise TokenLimit("PBX token limit reached (max 8 open API logins). Wait 30 minutes; "
+                             "check no other program uses the same API Client ID.")
         if data.get("errcode") != 0:
             self.login_failures += 1
             raise AuthError(f"get_token refused: errcode={data.get('errcode')} errmsg={data.get('errmsg')}")
@@ -200,7 +208,9 @@ class YeastarAdapter(PbxAdapter):
     def close(self) -> None:
         if self.access_token:
             try:
-                self.http.get(self._url("del_token"), params={"access_token": self.access_token})
-            except httpx.HTTPError:
-                pass
-            self.access_token = None
+                data = self.http.get(self._url("del_token"), params={"access_token": self.access_token}).json()
+                if data.get("errcode") != 0:
+                    log.warning("del_token failed: errcode=%s errmsg=%s", data.get("errcode"), data.get("errmsg"))
+            except (httpx.HTTPError, ValueError) as exc:
+                log.warning("del_token failed: %s", exc)
+            self.access_token = self.refresh_token = None

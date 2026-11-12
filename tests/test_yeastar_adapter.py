@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 
-from callsight.pbx.base import AuthBlocked, AuthError, PbxError
+from callsight.pbx.base import AuthBlocked, AuthError, PbxError, TokenLimit
 from callsight.pbx.yeastar import YeastarAdapter, safe_recording_name
 
 
@@ -116,6 +116,31 @@ def test_stops_after_three_failed_logins():
     with pytest.raises(AuthBlocked):
         a.list_queues()
     assert fake.logins == 3                # 4th attempt never reaches the PBX
+
+
+def test_token_limit_is_not_counted_as_wrong_password():
+    fake = FakePbx()
+    a, _ = make(fake)
+    real = fake.handler
+
+    def limited(request):
+        if request.url.path.endswith("/get_token"):
+            fake.logins += 1
+            return httpx.Response(200, json={"errcode": 60002, "errmsg": "MAX LIMITATION EXCEEDED"})
+        return real(request)
+    a.http = httpx.Client(transport=httpx.MockTransport(limited))
+    for _ in range(5):
+        with pytest.raises(TokenLimit):
+            a.list_queues()
+    assert a.login_failures == 0           # never escalates to AuthBlocked
+
+
+def test_close_revokes_token():
+    fake = FakePbx()
+    a, _ = make(fake)
+    a.list_queues()
+    a.close()
+    assert a.access_token is None and a.refresh_token is None
 
 
 def test_network_errors_are_retried():

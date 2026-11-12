@@ -14,6 +14,10 @@ class AuthError(PbxError):
     """Login refused by the PBX."""
 
 
+class TokenLimit(PbxError):
+    """PBX refuses new tokens because too many are open (Yeastar: max 8). Not a credentials problem."""
+
+
 class AuthBlocked(AuthError):
     """Too many failed logins in a row; we stop trying so the PBX doesn't block our IP."""
 
