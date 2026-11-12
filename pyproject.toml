@@ -1,0 +1,8 @@
+[project]
+name = "callsight"
+version = "0.1.0"
+description = "Local call analytics for a Yeastar P-Series PBX"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
