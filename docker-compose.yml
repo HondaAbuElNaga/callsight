@@ -1,0 +1,62 @@
+# Dev stack on the analytics PC (later: the server). Start: docker compose up -d --build
+name: callsight
+
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+psycopg://callsight:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/callsight
+    REDIS_URL: redis://redis:6379/0
+    AUDIO_DIR: /data/audio
+    TEAMS_FILE: /app/config/teams.yaml
+  volumes:
+    - ${AUDIO_HOST_DIR:-./data/audio}:/data/audio
+    - ./config:/app/config:ro
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: callsight
+      POSTGRES_USER: callsight
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"     # this PC only, for the CLI and tests
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U callsight -d callsight"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  worker:
+    <<: *app
+    command: sh -c "alembic upgrade head && celery -A callsight.jobs worker -Q ingest --concurrency=1 -l info"
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A callsight.jobs inspect ping -d celery@$$HOSTNAME --timeout 5 || exit 1"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+
+  beat:
+    <<: *app
+    command: celery -A callsight.jobs beat -l info --schedule /tmp/celerybeat-schedule
+
+volumes:
+  pgdata:

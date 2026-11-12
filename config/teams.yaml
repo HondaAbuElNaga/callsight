@@ -1,0 +1,9 @@
+# Which phone-system extensions are "the team". Only calls that touch these are saved.
+# After adding an extension: run  python -m callsight backfill --days 7  to load its older calls.
+teams:
+  customer_service:
+    extensions: ["104", "119"]
+    queues: ["6401"]        # customer service queue: callers who hang up while waiting here count as missed
+  after_sales:
+    extensions: ["116"]
+    queues: []
