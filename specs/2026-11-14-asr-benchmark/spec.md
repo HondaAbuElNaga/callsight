@@ -82,3 +82,6 @@ This PC: NVIDIA RTX 5050 Laptop, **8 GB** GPU memory, 16 GB RAM, Docker GPU acce
 3. Clips: 30 × 60 s.
 4. Audar-ASR is included in the test; its licence is checked before any production use.
 5. New tools approved (bench container only). WER/CER are computed with our own small edit-distance code (no `jiwer` needed).
+6. Typing rules (shown on the page): type every word as spoken in dialect, both speakers in order, no corrections;
+   leave out words that can't be heard (no "[unclear]" tag, it would count as wrong words); numbers as digits.
+   Known effect: a model that writes numbers as words gets those counted as errors; reported separately if it matters.

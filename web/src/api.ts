@@ -45,6 +45,17 @@ export interface Filters {
   q: string;
 }
 
+export interface GoldClip {
+  id: number;
+  call_id: number;
+  seconds: number;
+  has_text: boolean;
+  typed_at: string | null;
+  agent_ext: string | null;
+  direction: string | null;
+  reference_text?: string;
+}
+
 export class Unauthorized extends Error {}
 
 async function get<T>(url: string): Promise<T> {
@@ -76,6 +87,20 @@ export const api = {
     });
     if (r.ok) return { ok: true };
     return { ok: false, message: "اسم المستخدم أو كلمة المرور غير صحيحة، أو الحساب موقوف 15 دقيقة بعد 5 محاولات خاطئة" };
+  },
+  goldset: () => get<GoldClip[]>("/api/goldset"),
+  goldClip: (id: number) => get<GoldClip>(`/api/goldset/${id}`),
+  goldAudioUrl: (id: number) => `/api/goldset/${id}/audio`,
+  async saveGoldText(id: number, text: string): Promise<GoldClip> {
+    const r = await fetch(`/api/goldset/${id}`, {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (r.status === 401) throw new Unauthorized();
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json() as Promise<GoldClip>;
   },
   logout: () => fetch("/api/logout", { method: "POST", credentials: "same-origin" }),
 };

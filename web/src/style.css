@@ -128,3 +128,20 @@ tbody tr:last-child td { border-bottom: none; }
   .filter-actions { width: 100%; }
   .player { flex-wrap: wrap; }
 }
+
+/* ---------- gold set typing ---------- */
+.gold { display: grid; grid-template-columns: 240px 1fr; gap: 16px; align-items: start; }
+.gold-list { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px; max-height: calc(100vh - 120px); overflow-y: auto; }
+.gold-list button { display: flex; width: 100%; justify-content: space-between; border: none; background: none; padding: 7px 10px; border-radius: 6px; }
+.gold-list button.on { background: #eef4fb; font-weight: 600; }
+.gold-list .done { color: var(--ok); }
+.gold-progress { height: 6px; background: var(--line); border-radius: 3px; margin: 4px 10px 10px; overflow: hidden; }
+.gold-progress div { height: 100%; background: var(--ok); }
+.gold-editor { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 12px; }
+.gold-editor h2 { margin: 0; font-size: 18px; }
+.gold-editor audio { width: 100%; }
+.gold-editor textarea { font: inherit; font-size: 18px; line-height: 1.8; min-height: 260px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); resize: vertical; }
+.gold-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.gold-help { margin: 0; padding-inline-start: 18px; color: var(--muted); font-size: 14px; }
+.saved { color: var(--ok); }
+@media (max-width: 760px) { .gold { grid-template-columns: 1fr; } .gold-list { max-height: 220px; } }

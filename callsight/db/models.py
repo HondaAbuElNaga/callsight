@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import (BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text,
+from sqlalchemy import (BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text,
                         func)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -131,3 +131,17 @@ class RecordingPlay(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
     call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
     played_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class GoldClip(Base):
+    """A 60 s piece of a real call with the text typed by a person (ASR gold set)."""
+    __tablename__ = "gold_clip"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), unique=True)
+    start_seconds: Mapped[float] = mapped_column(Float)
+    seconds: Mapped[float] = mapped_column(Float)
+    file: Mapped[str] = mapped_column(String(300))          # relative to AUDIO_DIR
+    reference_text: Mapped[str | None] = mapped_column(Text)
+    typed_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    typed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

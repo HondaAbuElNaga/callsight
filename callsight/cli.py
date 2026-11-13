@@ -10,6 +10,7 @@
                          new web login; asks for the password, or with --generate prints a random one
   set-password NAME [--generate]   new password (ends that user's open logins)
   disable-user NAME      block a web login
+  goldset pick [--n 30 --seconds 60 --seed 1]   choose + cut the ASR gold-set clips (once)
 """
 from __future__ import annotations
 
@@ -45,7 +46,12 @@ def main(argv: list[str] | None = None) -> int:
     sp = sub.add_parser("set-password"); sp.add_argument("username")
     sp.add_argument("--generate", action="store_true", help="random password, printed once")
     du = sub.add_parser("disable-user"); du.add_argument("username")
+    g = sub.add_parser("goldset"); g.add_argument("action", choices=("pick",))
+    g.add_argument("--n", type=int, default=30); g.add_argument("--seconds", type=float, default=60.0)
+    g.add_argument("--seed", type=int, default=1)
     a = p.parse_args(argv)
+    if a.cmd == "goldset":
+        return _goldset(a)
     if a.cmd in ("create-user", "set-password", "disable-user"):
         return _users(a)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -118,4 +124,21 @@ def _users(a: argparse.Namespace) -> int:
     except ValueError as exc:
         print("ERROR:", exc, file=sys.stderr)
         return 1
+    return 0
+
+
+def _goldset(a: argparse.Namespace) -> int:
+    from collections import Counter
+    from .asr.goldset import pick
+    from .db.models import Call
+    team = wiring.teams()
+    try:
+        with wiring.session_factory()() as s:
+            clips = pick(s, wiring.settings().audio_dir, sorted(team.ext_team), n=a.n, seconds=a.seconds, seed=a.seed)
+            calls = [s.get(Call, c.call_id) for c in clips]
+    except ValueError as exc:
+        print("ERROR:", exc, file=sys.stderr)
+        return 1
+    print(f"{len(clips)} clips cut into {wiring.settings().audio_dir / 'goldset'}")
+    print("per agent:", dict(Counter(c.agent_ext for c in calls)), "| per direction:", dict(Counter(c.direction for c in calls)))
     return 0
