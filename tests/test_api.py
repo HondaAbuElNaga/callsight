@@ -121,7 +121,8 @@ def test_lockout_after_five_wrong_passwords(env):
     for _ in range(5):
         assert login(client, "wrong-password-1").status_code == 401
     r = login(client)                          # right password, but locked
-    assert r.status_code == 429 and r.json()["locked"]
+    assert r.status_code == 401
+    assert r.json()["detail"] == login(client, user="ghost").json()["detail"]   # no hint which users exist
     with Session() as s:                       # after 15 minutes it works again
         u = s.scalars(select(AppUser)).one()
         u.locked_until = datetime.now(timezone.utc) - timedelta(seconds=1); s.commit()
@@ -147,9 +148,30 @@ def test_forged_or_expired_token_rejected(env):
         assert client.get("/api/me").status_code == 401
 
 
-def test_short_secret_refused():
+@pytest.mark.parametrize("secret", ["short", "change-me", "change-me-to-a-long-random-text-of-48-characters"])
+def test_weak_or_example_secret_refused(secret):
     with pytest.raises(RuntimeError):
-        create_app(lambda: None, ApiConfig(secret="short", audio_dir=Path(".")))
+        create_app(lambda: None, ApiConfig(secret=secret, audio_dir=Path(".")))
+
+
+def test_parallel_wrong_passwords_still_lock(env):
+    """Review fix: concurrent attempts must not lose counts (row lock)."""
+    from concurrent.futures import ThreadPoolExecutor
+    client, Session, _ = env
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(lambda _: login(client, "wrong-password-x"), range(8)))
+    with Session() as s:
+        u = s.scalars(select(AppUser)).one()
+        assert u.locked_until is not None and u.locked_until > datetime.now(timezone.utc)
+
+
+def test_logout_ends_copied_cookie(env):
+    client, _, _ = env
+    login(client)
+    copied = client.cookies.get(auth.COOKIE_NAME)
+    client.post("/api/logout")
+    client.cookies.set(auth.COOKIE_NAME, copied)
+    assert client.get("/api/me").status_code == 401
 
 
 def test_weak_password_refused(env):
@@ -262,7 +284,32 @@ def test_recording_plays_with_range_and_is_audited(env):
     assert part.status_code == 206 and len(part.content) == 100
     start = client.get(f"/api/calls/{cid}/recording", headers={"Range": "bytes=0-"})
     assert start.status_code == 206
-    with Session() as s:   # full play + play from start = 2 rows; the seek doesn't count
+    with Session() as s:   # play + seeks within 10 minutes = one audit row
+        assert s.scalar(select(func.count()).select_from(RecordingPlay)) == 1
+
+
+def test_any_range_request_is_audited(env):
+    """Review fix: 'bytes=1-' must not skip the audit."""
+    client, Session, _ = env
+    login(client)
+    with Session() as s:
+        cid = s.scalar(select(Call.id).where(Call.recording_status == "ok"))
+    assert client.get(f"/api/calls/{cid}/recording", headers={"Range": "bytes=1-"}).status_code == 206
+    with Session() as s:
+        assert s.scalar(select(func.count()).select_from(RecordingPlay).where(RecordingPlay.call_id == cid)) == 1
+
+
+def test_new_play_after_audit_window_is_logged_again(env):
+    client, Session, _ = env
+    login(client)
+    with Session() as s:
+        cid = s.scalar(select(Call.id).where(Call.recording_status == "ok"))
+    client.get(f"/api/calls/{cid}/recording")
+    with Session() as s:
+        row = s.scalars(select(RecordingPlay)).one()
+        row.played_at = datetime.now(timezone.utc) - timedelta(minutes=11); s.commit()
+    client.get(f"/api/calls/{cid}/recording")
+    with Session() as s:
         assert s.scalar(select(func.count()).select_from(RecordingPlay)) == 2
 
 

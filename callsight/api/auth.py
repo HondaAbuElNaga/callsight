@@ -24,10 +24,13 @@ _ph = PasswordHasher()
 _DUMMY_HASH = _ph.hash("timing-equaliser-not-a-password")
 
 
+LOGIN_FAILED = "wrong username or password, or account locked for 15 minutes after 5 wrong tries"
+
+
 class LoginError(Exception):
-    def __init__(self, message: str, locked: bool = False):
-        super().__init__(message)
-        self.locked = locked
+    """One message for every failure, so the answer never tells which usernames exist."""
+    def __init__(self):
+        super().__init__(LOGIN_FAILED)
 
 
 def hash_password(password: str) -> str:
@@ -49,20 +52,25 @@ def _verify(hash_: str, password: str) -> bool:
 
 
 def authenticate(session: Session, username: str, password: str, now: datetime | None = None) -> AppUser:
-    """Returns the user or raises LoginError. Same message for unknown user and wrong password."""
+    """Returns the user or raises LoginError (same message and similar time for every failure)."""
     now = now or datetime.now(timezone.utc)
-    user = session.scalars(select(AppUser).where(AppUser.username == username.strip().lower())).first()
+    # Row lock: parallel wrong-password requests are counted one after the other (no lost updates).
+    user = session.scalars(select(AppUser).where(AppUser.username == username.strip().lower())
+                           .with_for_update()).first()
     if user is None or not user.active:
         _verify(_DUMMY_HASH, password)          # same time as a real check
-        raise LoginError("wrong username or password")
+        session.rollback()
+        raise LoginError()
     if user.locked_until and user.locked_until > now:
-        raise LoginError("account locked for a few minutes after too many wrong passwords", locked=True)
+        _verify(_DUMMY_HASH, password)
+        session.rollback()
+        raise LoginError()
     if not _verify(user.password_hash, password):
         user.failed_logins += 1
         if user.failed_logins >= MAX_FAILED:
             user.locked_until, user.failed_logins = now + timedelta(minutes=LOCK_MINUTES), 0
         session.commit()
-        raise LoginError("wrong username or password")
+        raise LoginError()
     user.failed_logins, user.locked_until = 0, None
     if _ph.check_needs_rehash(user.password_hash):
         user.password_hash = _ph.hash(password)
@@ -111,6 +119,12 @@ def set_password(session: Session, username: str, password: str) -> None:
     user.password_hash = hash_password(password)
     user.token_version += 1
     user.failed_logins, user.locked_until = 0, None
+    session.commit()
+
+
+def end_sessions(session: Session, user: AppUser) -> None:
+    """Logout: every login token issued before now stops working."""
+    user.token_version += 1
     session.commit()
 
 

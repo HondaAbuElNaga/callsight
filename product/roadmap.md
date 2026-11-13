@@ -2,10 +2,11 @@
 
 > Status: `[x]` done · `[~]` in progress · `[ ]` not started
 
-**Current position (2026-11-12, evening):** Phase 1 call ingest **done** ([spec](../specs/2026-11-12-call-ingest/spec.md)): team calls (104, 119, 116, queue 6401) flow into Postgres every 2 min with status,
-times and recordings; Docker stack runs on the analytics PC. 7-day result: 894 team calls; 264 callers hung up in queue 6401 vs 232 answered.
-**Next:** Phase 1 item 5, **basic web UI**: spec approved 2026-11-13, building.
-Then the Phase 1 "Done when": 7 consecutive days of nightly reconcile = OK.
+**Current position (2026-11-14):** All Phase 1 items **built**: call ingest ([spec](../specs/2026-11-12-call-ingest/spec.md)) and
+web call list ([spec](../specs/2026-11-13-web-call-list/spec.md)), Arabic page on http://127.0.0.1:8080 (this PC only; accounts admin + supervisor 114).
+**Phase 1 "Done when" still open:** 7 consecutive days of nightly reconcile = OK. Needs the PC on the office LAN as 192.168.50.189
+(on 2026-11-13/14 it was on another network, 192.168.100.x, so ingest paused; it catches up automatically).
+**Next:** Phase 2 (transcription): first item = gold set of 30 hand-corrected calls; ASR benchmark needs a GPU (server not bought yet).
 **Phase 0 leftovers (parallel):** live-events test, silent listen (paused), server purchase, legal recording announcement.
 
 ## Phase 0: PBX discovery & server (week 1)
@@ -37,7 +38,7 @@ and each call has ring/talk/hold time + status (answered / no-answer / abandoned
 - [x] Call data model: call, call legs, agent, caller number, timings, status, recording path (hold time not in CDR → later) (idea: user)
 - [x] Unanswered-call classification (no-answer, abandoned in queue, busy, voicemail; "rang agent not picked" for queue calls needs live events → Phase 5) (idea: user)
 - [x] Recording fetch + link to call; nightly reconciliation job (finds missing calls/recordings) (idea: user)
-- [ ] Basic web UI: login, call list with filters (date, agent, status), play recording ([spec](../specs/2026-11-13-web-call-list/spec.md)) (idea: user)
+- [x] Basic web UI: login, call list with filters (date, agent, status), play recording ([spec](../specs/2026-11-13-web-call-list/spec.md)) (idea: user)
 
 ## Phase 2: Transcription (Saudi Arabic)
 

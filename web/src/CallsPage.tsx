@@ -7,11 +7,14 @@ import { DIRECTION_LABEL, LEG_LABEL, STATUS_LABEL, STATUS_ORDER, duration, forma
 
 interface Props { me: Me; onLogout: () => void; onExpired: () => void }
 
-const today = riyadhToday();
-const EMPTY: Filters = { from: today, to: today, agent: "", status: "", direction: "", q: "" };
+// A function, not a constant: the page may stay open past midnight.
+const emptyFilters = (): Filters => {
+  const today = riyadhToday();
+  return { from: today, to: today, agent: "", status: "", direction: "", q: "" };
+};
 
 export function CallsPage({ me, onLogout, onExpired }: Props) {
-  const [filters, setFilters] = useState<Filters>(EMPTY); // applied as soon as a field changes
+  const [filters, setFilters] = useState<Filters>(emptyFilters); // applied as soon as a field changes
   const [qText, setQText] = useState("");                  // number box: applied after typing stops
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CallPage | null>(null);
@@ -21,6 +24,7 @@ export function CallsPage({ me, onLogout, onExpired }: Props) {
   const [error, setError] = useState("");
   const [playing, setPlaying] = useState<CallRow | null>(null);
   const [detail, setDetail] = useState<CallDetail | null>(null);
+  const lastClicked = useRef<number | null>(null);
 
   const fail = useCallback((e: unknown) => {
     if (e instanceof Unauthorized) onExpired();
@@ -56,7 +60,8 @@ export function CallsPage({ me, onLogout, onExpired }: Props) {
 
   useEffect(() => {   // search by number 0.4 s after typing stops
     if (!qValid || qText === filters.q) return;
-    const t = setTimeout(() => set({ q: qText }), 400);
+    // functional update: keeps any filter chosen while the timer was waiting
+    const t = setTimeout(() => { setFilters((f) => ({ ...f, q: qText })); setPage(1); }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qText]);
@@ -64,7 +69,11 @@ export function CallsPage({ me, onLogout, onExpired }: Props) {
   const pages = data ? Math.max(1, Math.ceil(data.total / data.page_size)) : 1;
 
   async function openDetail(row: CallRow) {
-    try { setDetail(await api.call(row.id)); } catch (e) { fail(e); }
+    lastClicked.current = row.id;
+    try {
+      const d = await api.call(row.id);
+      if (lastClicked.current === row.id) setDetail(d);   // ignore answers for an older click
+    } catch (e) { fail(e); }
   }
 
   return (
@@ -105,7 +114,7 @@ export function CallsPage({ me, onLogout, onExpired }: Props) {
             onChange={(e) => setQText(e.target.value.trim())} />
         </label>
         <div className="filter-actions">
-          <button type="button" onClick={() => { setQText(""); apply(EMPTY); }}>مسح الفلاتر</button>
+          <button type="button" onClick={() => { setQText(""); apply(emptyFilters()); }}>مسح الفلاتر</button>
         </div>
       </form>
 

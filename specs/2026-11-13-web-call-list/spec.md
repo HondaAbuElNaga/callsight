@@ -1,7 +1,7 @@
 # Spec: Web screen, call list (login, filters, play recording)
 
 **Roadmap item:** Phase 1, "Basic web UI: login, call list with filters (date, agent, status), play recording"
-**Status:** approved
+**Status:** done (2026-11-14)
 
 ## Goal
 The supervisor (ext **114**) and the manager open a web page, log in, and see every team call with its status,
@@ -30,7 +30,8 @@ times and agent, filter it, and play the recording in the browser. This makes th
 1. **Accounts.** `python -m callsight create-user <username> --role admin|supervisor [--ext 114]` asks for the password
    twice (min 10 characters). Passwords stored as Argon2 hashes. `set-password` and `disable-user` commands too.
 2. **Login.** `POST /api/login` sets an HttpOnly, SameSite=Strict cookie holding a signed token (8 h). After 5 wrong passwords
-   for a username, that username is locked for 15 minutes. Every other `/api/*` endpoint (and recordings) returns 401 without a valid cookie.
+   for a username, that username is locked for 15 minutes (counted under a row lock; one 401 message for every failure).
+   Logout ends the token on the server too. Every other `/api/*` endpoint (and recordings) returns 401 without a valid cookie.
 3. **Call list.** `GET /api/calls` with filters `from`, `to` (Riyadh dates, inclusive), `agent` (ext; matches the answering
    or missed agent), `status`, `direction`, `q` (part of the customer number), paging (50 per page), newest first. Each row:
    time, direction, customer number, agent ext + name, status, IVR/wait/talk seconds, has-recording flag.
@@ -38,9 +39,10 @@ times and agent, filter it, and play the recording in the browser. This makes th
    the status filter, so every status box keeps its number when one status is chosen (user feedback 2026-11-14).
 5. **Detail.** `GET /api/calls/{id}` adds the legs (kind, number, disposition, times, reason) in order.
 6. **Recording.** `GET /api/calls/{id}/recording` streams the WAV with HTTP Range support (seeking in the player).
-   The file path comes only from the DB (`recording_path`) and must resolve inside `AUDIO_DIR`. Each play writes one audit row.
+   The file path comes only from the DB (`recording_path`) and must resolve inside `AUDIO_DIR`. Every request is audited:
+   one row per user + call per 10 minutes (seeks don't add rows; no Range trick skips the audit).
 7. **Agents.** `GET /api/agents` returns the team extensions with names (from the synced `agent` table) for the filter.
-8. **Web page.** Arabic RTL; status names in Arabic (تم الرد، أغلق أثناء الانتظار في الطابور، لم يتم الرد، مشغول، بريد صوتي);
+8. **Web page.** Arabic RTL; status names in Arabic (تم الرد، أغلق أثناء الانتظار، لم يتم الرد، مشغول، بريد صوتي);
    durations as m:ss; default filter = today; filters apply as soon as they change (no "show" button; the number box
    applies 0.4 s after typing stops), user feedback 2026-11-14. Works in Chrome and Edge on a 1366×768 screen.
 9. **Config.** New `.env` keys: `APP_SECRET` (random, signs the login token), `WEB_PORT`. No secret in code or the image.
@@ -54,14 +56,15 @@ times and agent, filter it, and play the recording in the browser. This makes th
 - [x] Logged in as the supervisor: the calls list for 2026-11-05 … 2026-11-11 shows the same total and per-status counts as
       `python -m callsight stats` for those days → 767 calls; answered 352, abandoned_queue 233, no_answer 128, busy 52, voicemail 2 = DB
 - [x] Filter by agent 119 + status "answered" for 2026-11-12 shows only 119's answered calls (count = DB query) → 28 = 28
-- [x] The recording of the 2026-11-12 19:19:59 test call plays in the browser and can be dragged to the middle → Range 206; user tried the page
+- [x] The recording of the 2026-11-12 19:19:59 test call plays in the browser and can be dragged to the middle → seek tested via API (Range 206); in the browser the user played 13 other recordings
+      (13 audit rows), not this exact call: playback + audit proven in real use
 - [x] The call list API answers in < 500 ms for a 7-day filter (measured with 900+ calls) → ≈ 8 ms
 - [x] User confirms the page is readable and useful (RTL, Arabic labels, times correct) → 2026-11-14 after 2 changes (instant filters, boxes keep counts)
 
 ## Technical approach
 - `callsight/api/`: `main.py` (FastAPI app, mounts the built frontend at `/`), `auth.py` (Argon2 via `argon2-cffi`,
   signed token via `PyJWT`, cookie handling, lockout), `calls.py` (query building with SQLAlchemy; filters → one shared
-  `where` used by list and summary), `recordings.py` (Starlette `FileResponse`, which supports Range).
+  `where` used by list and summary); recording streaming is in `main.py` (Starlette `FileResponse`, which supports Range).
 - DB: migration 0002 adds `app_user` (username, password_hash, role, ext, active, failed_logins, locked_until) and
   `recording_play` (user_id, call_id, played_at).
 - `web/`: Vite + React + TypeScript, no UI framework at first (plain CSS, RTL via `dir="rtl"`), Arabic font

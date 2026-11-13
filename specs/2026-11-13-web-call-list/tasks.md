@@ -22,5 +22,10 @@
          → feedback: no "عرض" button (filters apply instantly); status boxes must keep all counts → both done; user: "its good now"
 - [x] 11. Verify the acceptance criteria
          → all 7 ticked in spec.md
-- [ ] 12. Review with 3 subagents (bugs, security, accuracy); fix confirmed findings
-- [ ] 13. Spec status → done; tick roadmap item; update "Current position"; merge to main
+- [x] 12. Review with 3 subagents (bugs, security, accuracy); fix confirmed findings
+         → 3 reviewers: 15 findings (1 duplicate) = 14, all confirmed, 0 critical/high; user chose to fix all 14:
+           audit on every recording request (10-min dedupe), login counter under row lock, one login-failure message,
+           uvicorn access log off (phone numbers), logout ends token, example APP_SECRET refused, number-search keeps other
+           filters, "today" recomputed, stale detail ignored, spec/tech-stack text. 121 tests pass.
+- [x] 13. Spec status → done; tick roadmap item; update "Current position"; merge to main
+         → done 2026-11-14

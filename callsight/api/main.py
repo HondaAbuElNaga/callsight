@@ -5,7 +5,7 @@ Run: uvicorn callsight.api.main:app  (settings from .env; APP_SECRET is required
 
 import os
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Callable, Iterator
 
@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import RIYADH
@@ -21,6 +22,7 @@ from . import auth
 from .calls import DIRECTIONS, STATUSES, CallFilter, call_detail, list_calls, summary, team_agents
 
 MAX_RANGE_DAYS = 400
+AUDIT_WINDOW = timedelta(minutes=10)   # one audit row per user + call within this window
 
 
 @dataclass(frozen=True)
@@ -37,8 +39,8 @@ class LoginIn(BaseModel):
 
 
 def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAPI:
-    if len(cfg.secret) < 32:
-        raise RuntimeError("APP_SECRET must be at least 32 characters")
+    if len(cfg.secret) < 32 or cfg.secret.lower().startswith("change-me"):
+        raise RuntimeError("APP_SECRET must be a random text of at least 32 characters (not the .env.example value)")
     app = FastAPI(title="CallSight", docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.middleware("http")
@@ -95,14 +97,17 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         try:
             user = auth.authenticate(s, body.username, body.password)
         except auth.LoginError as exc:
-            return JSONResponse({"detail": str(exc), "locked": exc.locked}, status_code=429 if exc.locked else 401)
+            return JSONResponse({"detail": str(exc)}, status_code=401)
         resp = JSONResponse({"username": user.username, "role": user.role})
         resp.set_cookie(auth.COOKIE_NAME, auth.make_token(user, cfg.secret), max_age=auth.TOKEN_HOURS * 3600,
                         httponly=True, samesite="strict", secure=cfg.cookie_secure, path="/")
         return resp
 
     @app.post("/api/logout")
-    def logout() -> Response:
+    def logout(request: Request, s: DB) -> Response:
+        user = auth.user_from_token(s, request.cookies.get(auth.COOKIE_NAME), cfg.secret)
+        if user is not None:
+            auth.end_sessions(s, user)    # a copied cookie stops working too
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(auth.COOKIE_NAME, path="/")
         return resp
@@ -141,9 +146,13 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         path = (root / c.recording_path).resolve()
         if not path.is_relative_to(root) or not path.is_file():
             raise HTTPException(404, "no recording")
-        rng = request.headers.get("range", "")
-        if not rng or rng.replace(" ", "").startswith("bytes=0-"):   # one audit row per play, not per seek
-            s.add(RecordingPlay(user_id=user.id, call_id=c.id, played_at=datetime.now(timezone.utc)))
+        # Audit every access, whatever the Range header; seeks within AUDIT_WINDOW count as the same play.
+        now = datetime.now(timezone.utc)
+        recent = s.scalar(select(RecordingPlay.id).where(
+            RecordingPlay.user_id == user.id, RecordingPlay.call_id == c.id,
+            RecordingPlay.played_at > now - AUDIT_WINDOW).limit(1))
+        if recent is None:
+            s.add(RecordingPlay(user_id=user.id, call_id=c.id, played_at=now))
             s.commit()
         return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, no-store"})
 

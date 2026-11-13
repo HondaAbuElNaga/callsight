@@ -49,7 +49,8 @@ queue worker, so scaling = more workers / a second GPU box, not a rewrite.
 | Auth | Local users + roles (admin, supervisor, agent) with JWT | 🔜 | Agents see only their own calls |
 | Auth libraries | argon2-cffi (password hashing), PyJWT (signed login token in an HttpOnly cookie) | 🔜 | Added 2026-11-13 (web call list spec) |
 | Web server | uvicorn (runs the FastAPI app) | 🔜 | Added 2026-11-13; standard FastAPI server |
-| Frontend build | Node.js 22 inside the Docker build stage only (no Node on the PC) | 🔜 | Added 2026-11-13; builds the React/Vite app |
+| Frontend build | Node.js 22 inside the Docker build stage only (no Node on the PC) | ✅ | Added 2026-11-13; builds the React/Vite app |
+| Arabic font | IBM Plex Sans Arabic, bundled via `@fontsource/ibm-plex-sans-arabic` (served locally, nothing from the internet) | ✅ | Added 2026-11-13 (review finding: was missing here) |
 
 ## Infrastructure
 | Area | Choice | Status | Why |

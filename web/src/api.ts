@@ -75,8 +75,7 @@ export const api = {
       body: JSON.stringify({ username, password }),
     });
     if (r.ok) return { ok: true };
-    if (r.status === 429) return { ok: false, message: "تم إيقاف الحساب مؤقتاً بعد محاولات خاطئة. حاول بعد 15 دقيقة." };
-    return { ok: false, message: "اسم المستخدم أو كلمة المرور غير صحيحة" };
+    return { ok: false, message: "اسم المستخدم أو كلمة المرور غير صحيحة، أو الحساب موقوف 15 دقيقة بعد 5 محاولات خاطئة" };
   },
   logout: () => fetch("/api/logout", { method: "POST", credentials: "same-origin" }),
 };
