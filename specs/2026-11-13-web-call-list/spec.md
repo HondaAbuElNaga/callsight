@@ -46,15 +46,17 @@ times and agent, filter it, and play the recording in the browser. This makes th
 9. **Config.** New `.env` keys: `APP_SECRET` (random, signs the login token), `WEB_PORT`. No secret in code or the image.
 
 ## Acceptance criteria
-- [ ] `pytest` passes, including API tests: every filter, paging, summary = table counts, 401 without login, lockout after 5
+- [x] `pytest` passes, including API tests: every filter, paging, summary = table counts, 401 without login, lockout after 5
       wrong passwords, recording Range request returns 206, path outside `AUDIO_DIR` refused, audit row written per play
-- [ ] `docker compose up -d --build` starts the new `api` service; `http://<pc>:<WEB_PORT>` shows the Arabic login page
-- [ ] Logged in as the supervisor: the calls list for 2026-11-05 … 2026-11-11 shows the same total and per-status counts as
-      `python -m callsight stats` for those days
-- [ ] Filter by agent 119 + status "answered" for 2026-11-12 shows only 119's answered calls (count = DB query)
-- [ ] The recording of the 2026-11-12 19:19:59 test call plays in the browser and can be dragged to the middle
-- [ ] The call list API answers in < 500 ms for a 7-day filter (measured with 900+ calls)
-- [ ] User confirms the page is readable and useful (RTL, Arabic labels, times correct)
+      → 115 passed (29 API tests)
+- [x] `docker compose up -d --build` starts the new `api` service; `http://<pc>:<WEB_PORT>` shows the Arabic login page
+      → api healthy on 127.0.0.1:8080; not reachable via the PC's LAN address
+- [x] Logged in as the supervisor: the calls list for 2026-11-05 … 2026-11-11 shows the same total and per-status counts as
+      `python -m callsight stats` for those days → 767 calls; answered 352, abandoned_queue 233, no_answer 128, busy 52, voicemail 2 = DB
+- [x] Filter by agent 119 + status "answered" for 2026-11-12 shows only 119's answered calls (count = DB query) → 28 = 28
+- [x] The recording of the 2026-11-12 19:19:59 test call plays in the browser and can be dragged to the middle → Range 206; user tried the page
+- [x] The call list API answers in < 500 ms for a 7-day filter (measured with 900+ calls) → ≈ 8 ms
+- [x] User confirms the page is readable and useful (RTL, Arabic labels, times correct) → 2026-11-14 after 2 changes (instant filters, boxes keep counts)
 
 ## Technical approach
 - `callsight/api/`: `main.py` (FastAPI app, mounts the built frontend at `/`), `auth.py` (Argon2 via `argon2-cffi`,

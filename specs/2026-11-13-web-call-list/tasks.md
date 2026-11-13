@@ -18,7 +18,9 @@
          → multi-stage Dockerfile; api on 127.0.0.1:8080 only (not reachable from the LAN address, checked)
 - [x] 9. Create the 2 accounts; check the 7-day counts against `stats`; time the 7-day API call
          → accounts admin + supervisor (114); 11-05..11-11: API 767 calls, per-status = DB; 119 answered 11-12: 28 = DB; 7-day list ≈ 8 ms; recording Range → 206
-- [ ] 10. User tries the page (filters, play the 19:19:59 test call) and gives feedback
-- [ ] 11. Verify the acceptance criteria
+- [x] 10. User tries the page (filters, play the 19:19:59 test call) and gives feedback
+         → feedback: no "عرض" button (filters apply instantly); status boxes must keep all counts → both done; user: "its good now"
+- [x] 11. Verify the acceptance criteria
+         → all 7 ticked in spec.md
 - [ ] 12. Review with 3 subagents (bugs, security, accuracy); fix confirmed findings
 - [ ] 13. Spec status → done; tick roadmap item; update "Current position"; merge to main
