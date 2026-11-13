@@ -6,9 +6,9 @@
   reconcile --date D     check one day (YYYY-MM-DD, default yesterday) against the PBX and fill gaps
   sync-agents            refresh agents/queues from the PBX
   stats --date D         calls per direction / status / agent for one day
-  create-user NAME --role admin|supervisor [--ext 114]   new web login (asks for the password,
-                         or prints a random one when not run in a terminal)
-  set-password NAME      new password (ends that user's open logins)
+  create-user NAME --role admin|supervisor [--ext 114] [--generate]
+                         new web login; asks for the password, or with --generate prints a random one
+  set-password NAME [--generate]   new password (ends that user's open logins)
   disable-user NAME      block a web login
 """
 from __future__ import annotations
@@ -41,7 +41,9 @@ def main(argv: list[str] | None = None) -> int:
     st = sub.add_parser("stats"); st.add_argument("--date")
     cu = sub.add_parser("create-user"); cu.add_argument("username")
     cu.add_argument("--role", choices=("admin", "supervisor"), required=True); cu.add_argument("--ext")
+    cu.add_argument("--generate", action="store_true", help="random password, printed once")
     sp = sub.add_parser("set-password"); sp.add_argument("username")
+    sp.add_argument("--generate", action="store_true", help="random password, printed once")
     du = sub.add_parser("disable-user"); du.add_argument("username")
     a = p.parse_args(argv)
     if a.cmd in ("create-user", "set-password", "disable-user"):
@@ -84,10 +86,10 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _ask_password() -> tuple[str, bool]:
-    """Typed twice in a terminal; otherwise a random one that is printed once."""
+def _ask_password(generate: bool) -> tuple[str, bool]:
+    """Random (printed once) with --generate, otherwise typed twice."""
     from .api.auth import generate_password
-    if not sys.stdin.isatty():
+    if generate:
         return generate_password(), True
     while True:
         pw = getpass.getpass("New password (min 10 characters): ")
@@ -104,7 +106,7 @@ def _users(a: argparse.Namespace) -> int:
                 auth.disable_user(s, a.username)
                 print(f"user {a.username} disabled")
                 return 0
-            pw, generated = _ask_password()
+            pw, generated = _ask_password(a.generate)
             if a.cmd == "create-user":
                 auth.create_user(s, a.username, pw, a.role, a.ext)
                 print(f"user {a.username.lower()} created ({a.role})")

@@ -54,6 +54,19 @@ services:
       retries: 3
       start_period: 30s
 
+  api:
+    <<: *app
+    command: uvicorn callsight.api.main:app --host 0.0.0.0 --port 8080 --no-server-header
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8080}:8080"   # this PC only (spec decision 2)
+    depends_on:
+      worker: { condition: service_healthy }   # worker runs the DB migrations first
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   beat:
     <<: *app
     command: celery -A callsight.jobs beat -l info --schedule /tmp/celerybeat-schedule
