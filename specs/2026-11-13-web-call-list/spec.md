@@ -34,13 +34,15 @@ times and agent, filter it, and play the recording in the browser. This makes th
 3. **Call list.** `GET /api/calls` with filters `from`, `to` (Riyadh dates, inclusive), `agent` (ext; matches the answering
    or missed agent), `status`, `direction`, `q` (part of the customer number), paging (50 per page), newest first. Each row:
    time, direction, customer number, agent ext + name, status, IVR/wait/talk seconds, has-recording flag.
-4. **Summary.** `GET /api/calls/summary` with the same filters returns counts per status, so the chips always match the table.
+4. **Summary.** `GET /api/calls/summary` with the same filters returns counts per status. The page asks for it **without**
+   the status filter, so every status box keeps its number when one status is chosen (user feedback 2026-11-14).
 5. **Detail.** `GET /api/calls/{id}` adds the legs (kind, number, disposition, times, reason) in order.
 6. **Recording.** `GET /api/calls/{id}/recording` streams the WAV with HTTP Range support (seeking in the player).
    The file path comes only from the DB (`recording_path`) and must resolve inside `AUDIO_DIR`. Each play writes one audit row.
 7. **Agents.** `GET /api/agents` returns the team extensions with names (from the synced `agent` table) for the filter.
 8. **Web page.** Arabic RTL; status names in Arabic (تم الرد، أغلق أثناء الانتظار في الطابور، لم يتم الرد، مشغول، بريد صوتي);
-   durations as m:ss; default filter = today. Works in Chrome and Edge on a 1366×768 screen.
+   durations as m:ss; default filter = today; filters apply as soon as they change (no "show" button; the number box
+   applies 0.4 s after typing stops), user feedback 2026-11-14. Works in Chrome and Edge on a 1366×768 screen.
 9. **Config.** New `.env` keys: `APP_SECRET` (random, signs the login token), `WEB_PORT`. No secret in code or the image.
 
 ## Acceptance criteria

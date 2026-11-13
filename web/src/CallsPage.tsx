@@ -11,8 +11,8 @@ const today = riyadhToday();
 const EMPTY: Filters = { from: today, to: today, agent: "", status: "", direction: "", q: "" };
 
 export function CallsPage({ me, onLogout, onExpired }: Props) {
-  const [draft, setDraft] = useState<Filters>(EMPTY);   // what is typed in the filter bar
-  const [filters, setFilters] = useState<Filters>(EMPTY); // what is applied
+  const [filters, setFilters] = useState<Filters>(EMPTY); // applied as soon as a field changes
+  const [qText, setQText] = useState("");                  // number box: applied after typing stops
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CallPage | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -33,16 +33,35 @@ export function CallsPage({ me, onLogout, onExpired }: Props) {
     let alive = true;
     setLoading(true);
     setError("");
-    Promise.all([api.calls(filters, page), api.summary(filters)])
-      .then(([c, s]) => { if (alive) { setData(c); setSummary(s); } })
+    api.calls(filters, page)
+      .then((c) => alive && setData(c))
       .catch((e) => alive && fail(e))
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
   }, [filters, page, fail]);
 
-  const apply = (f: Filters) => { setFilters(f); setDraft(f); setPage(1); };
+  // The boxes on top ignore the chosen status, so every category keeps its number.
+  const { status: _ignored, ...summaryKey } = filters;
+  const summaryDeps = JSON.stringify(summaryKey);
+  useEffect(() => {
+    let alive = true;
+    api.summary({ ...filters, status: "" }).then((s) => alive && setSummary(s)).catch((e) => alive && fail(e));
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summaryDeps, fail]);
+
+  const apply = (f: Filters) => { setFilters(f); setPage(1); };
+  const set = (patch: Partial<Filters>) => apply({ ...filters, ...patch });
+  const qValid = qText === "" || /^\+?\d{1,20}$/.test(qText);
+
+  useEffect(() => {   // search by number 0.4 s after typing stops
+    if (!qValid || qText === filters.q) return;
+    const t = setTimeout(() => set({ q: qText }), 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qText]);
+
   const pages = data ? Math.max(1, Math.ceil(data.total / data.page_size)) : 1;
-  const qValid = draft.q === "" || /^\+?\d{1,20}$/.test(draft.q);
 
   async function openDetail(row: CallRow) {
     try { setDetail(await api.call(row.id)); } catch (e) { fail(e); }
@@ -58,36 +77,35 @@ export function CallsPage({ me, onLogout, onExpired }: Props) {
         </div>
       </header>
 
-      <form className="filters" onSubmit={(e) => { e.preventDefault(); if (qValid) apply(draft); }}>
-        <label>من <input type="date" value={draft.from} max={draft.to || undefined}
-          onChange={(e) => setDraft({ ...draft, from: e.target.value })} /></label>
-        <label>إلى <input type="date" value={draft.to} min={draft.from || undefined}
-          onChange={(e) => setDraft({ ...draft, to: e.target.value })} /></label>
+      <form className="filters" onSubmit={(e) => e.preventDefault()}>
+        <label>من <input type="date" value={filters.from} max={filters.to || undefined}
+          onChange={(e) => e.target.value && set({ from: e.target.value, to: e.target.value > filters.to ? e.target.value : filters.to })} /></label>
+        <label>إلى <input type="date" value={filters.to} min={filters.from || undefined}
+          onChange={(e) => e.target.value && set({ to: e.target.value, from: e.target.value < filters.from ? e.target.value : filters.from })} /></label>
         <label>الموظف
-          <select value={draft.agent} onChange={(e) => setDraft({ ...draft, agent: e.target.value })}>
+          <select value={filters.agent} onChange={(e) => set({ agent: e.target.value })}>
             <option value="">الكل</option>
             {agents.map((a) => <option key={a.ext} value={a.ext}>{a.ext} · {a.name}</option>)}
           </select>
         </label>
         <label>الحالة
-          <select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+          <select value={filters.status} onChange={(e) => set({ status: e.target.value })}>
             <option value="">الكل</option>
             {STATUS_ORDER.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
           </select>
         </label>
         <label>النوع
-          <select value={draft.direction} onChange={(e) => setDraft({ ...draft, direction: e.target.value })}>
+          <select value={filters.direction} onChange={(e) => set({ direction: e.target.value })}>
             <option value="">الكل</option>
             {Object.entries(DIRECTION_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
         </label>
         <label>رقم العميل
-          <input value={draft.q} dir="ltr" inputMode="numeric" placeholder="055…" aria-invalid={!qValid}
-            onChange={(e) => setDraft({ ...draft, q: e.target.value.trim() })} />
+          <input value={qText} dir="ltr" inputMode="numeric" placeholder="055…" aria-invalid={!qValid}
+            onChange={(e) => setQText(e.target.value.trim())} />
         </label>
         <div className="filter-actions">
-          <button type="submit" className="primary" disabled={!qValid || !draft.from || !draft.to}>عرض</button>
-          <button type="button" onClick={() => apply(EMPTY)}>اليوم</button>
+          <button type="button" onClick={() => { setQText(""); apply(EMPTY); }}>مسح الفلاتر</button>
         </div>
       </form>
 
@@ -98,7 +116,7 @@ export function CallsPage({ me, onLogout, onExpired }: Props) {
           </button>
           {STATUS_ORDER.map((s: Status) => (
             <button key={s} className={`chip st-${s} ${filters.status === s ? "on" : ""}`}
-              onClick={() => apply({ ...filters, status: filters.status === s ? "" : s })}>
+              onClick={() => set({ status: filters.status === s ? "" : s })}>
               {STATUS_LABEL[s]} <b>{summary.by_status[s] ?? 0}</b>
             </button>
           ))}
