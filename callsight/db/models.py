@@ -108,3 +108,26 @@ class ReconcileRun(Base):
     missing_recordings_before: Mapped[int] = mapped_column(Integer)
     missing_recordings_after: Mapped[int] = mapped_column(Integer)
     ok: Mapped[bool] = mapped_column(Boolean)
+
+
+class AppUser(Base):
+    __tablename__ = "app_user"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(200))
+    role: Mapped[str] = mapped_column(String(20))                 # admin / supervisor
+    ext: Mapped[str | None] = mapped_column(String(16))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    token_version: Mapped[int] = mapped_column(Integer, default=0)  # +1 on password change/disable -> old logins end
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RecordingPlay(Base):
+    """Audit: who played which recording (recordings are personal data)."""
+    __tablename__ = "recording_play"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    played_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
