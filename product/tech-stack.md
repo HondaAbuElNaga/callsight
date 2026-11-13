@@ -47,6 +47,9 @@ queue worker, so scaling = more workers / a second GPU box, not a rewrite.
 | Charts | Apache ECharts | 🔜 | Good RTL/Arabic support |
 | PDF reports | WeasyPrint (HTML → PDF) with an Arabic font (e.g. Noto Naskh / IBM Plex Sans Arabic) | 🔜 | Proper Arabic shaping and RTL |
 | Auth | Local users + roles (admin, supervisor, agent) with JWT | 🔜 | Agents see only their own calls |
+| Auth libraries | argon2-cffi (password hashing), PyJWT (signed login token in an HttpOnly cookie) | 🔜 | Added 2026-11-13 (web call list spec) |
+| Web server | uvicorn (runs the FastAPI app) | 🔜 | Added 2026-11-13; standard FastAPI server |
+| Frontend build | Node.js 22 inside the Docker build stage only (no Node on the PC) | 🔜 | Added 2026-11-13; builds the React/Vite app |
 
 ## Infrastructure
 | Area | Choice | Status | Why |
