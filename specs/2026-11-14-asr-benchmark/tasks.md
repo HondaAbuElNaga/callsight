@@ -12,7 +12,10 @@
          → API tests: supervisor 403, save/load/clear, Range audio + audit; page `web/src/GoldsetPage.tsx`; 153 tests pass
 - [x] 6. Pick + cut the 30 clips; user's team starts typing
          → 30 × 60 s clips, 10 per agent (104/116/119), 20 inbound / 10 outbound; typing open to admin
-- [ ] 7. `asr-bench` container (CUDA 12.8 PyTorch); smoke test: GPU visible, Whisper on 1 clip
+- [x] 7. `asr-bench` container (CUDA 12.8 PyTorch); smoke test: GPU visible, Whisper on 1 clip
+         → `docker/asr-bench/` (pytorch 2.8.0-cu128), compose profile `bench`, runner `callsight/asr/bench.py` (resumable
+           jsonl); `--check`: RTX 5050 capability 12.0, 8 GB, kernel test ok; Whisper large-v3 on clip_01: 60 s in 7.4 s,
+           3.2 GB peak, 65 Arabic words (3 chunks); 159 tests pass
 - [ ] 8. Model adapters: Whisper large-v3, Audar-ASR-V1-Turbo, Jais-ASR (4-bit try)
 - [ ] 9. Run all models on the 30 clips (after all texts are typed); write `docs/asr-benchmark.md`
 - [ ] 10. Verify the acceptance criteria

@@ -1,0 +1,5 @@
+# torch comes from the base image (CUDA 12.8 build)
+transformers>=4.56,<5
+accelerate>=1.10
+soxr>=0.5
+numpy>=1.26
