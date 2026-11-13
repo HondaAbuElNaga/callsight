@@ -39,6 +39,7 @@ queue worker, so scaling = more workers / a second GPU box, not a rewrite.
 | Sentiment / satisfaction model | Fine-tuned Arabic BERT (MARBERT / CAMeLBERT-DA) → 1–10 regression on the customer side of the transcript | 🔜 | "Tuned" model: start from a dialect-aware model, fine-tune on our labelled calls |
 | Bootstrap labels + summaries | Local LLM via Ollama (Arabic-capable, e.g. ALLaM / Qwen class) | 🔜 | Pre-label calls 1–10 for a human to correct, then train the BERT model; later summaries |
 | Training | Hugging Face Transformers + PyTorch | 🔜 | Fine-tuning and inference |
+| ASR benchmark container | PyTorch (CUDA 12.8 build, needed by RTX 50-series), transformers, faster-whisper, qwen-asr (Audar), bitsandbytes (4-bit Jais), soxr (8→16 kHz) | 🔜 | Added 2026-11-14 (asr-benchmark spec); only inside the `asr-bench` container |
 
 ## Frontend & reports
 | Area | Choice | Status | Why |
