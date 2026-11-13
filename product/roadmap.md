@@ -6,7 +6,7 @@
 times and recordings; Docker stack runs on the analytics PC. 7-day result: 894 team calls; 264 callers hung up in queue 6401 vs 232 answered.
 **Next:** Phase 1 item 5, **basic web UI** (login, call list with filters, play recording): write its spec.
 Then the Phase 1 "Done when": 7 consecutive days of nightly reconcile = OK.
-**Phase 0 leftovers (parallel):** live-events test, silent listen (paused), supervisor extension (503 or 114?), server purchase, legal recording announcement.
+**Phase 0 leftovers (parallel):** live-events test, silent listen (paused), server purchase, legal recording announcement.
 
 ## Phase 0: PBX discovery & server (week 1)
 
@@ -18,7 +18,7 @@ real test call's CDR row + recording file has been pulled to the server by hand.
 - [x] Find CDR + recording access: via Yeastar API (`cdr/list`, `recording/download`); recording is on; format **mono WAV 8 kHz** → diarization needed in Phase 2 (idea: user)
 - [~] API access ✅ (`tools/pbx_probe.py token/cdr/recording` work); live WebSocket events ⏳ not tested; agent/supervisor extension mapping ⏳ waiting for user; inbound calls go through IVR 6200 (idea: user)
 - [~] Silent listen: Yeastar feature code `*51`+ext / API `call/listen`. **Paused by user 2026-11-12, resume later.** State:
-  user has Feature Code access; Listen permission = monitor ext **114** (to confirm it's the supervisor); phone 114 "Key As Send" was `*` (ate the star) → told to set `#`;
+  user has Feature Code access; Listen permission = monitor ext **114** (= supervisor, confirmed by user 2026-11-13); phone 114 "Key As Send" was `*` (ate the star) → told to set `#`;
   `*51119` still declined while 119 talking. Next: check **Extension 119 → Features → Call Monitor** setting, then run
   `tools/listen_test.py 119 114 300` during a 103↔119 call (API `call/listen` returns the exact error code). WebSocket subscribe already works. (idea: user)
 - [x] Connect over LAN, not the internet remote-access address (`sstli.ras.yeastar.com` gave 70087 IP FORBIDDEN); IP Restriction allows PC `192.168.50.189` (idea: user)

@@ -7,3 +7,6 @@ teams:
   after_sales:
     extensions: ["116"]
     queues: []
+
+# Supervisors see all team calls in the web screen (and may listen live, Phase 5).
+supervisors: ["114"]
