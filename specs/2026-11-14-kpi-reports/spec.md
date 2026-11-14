@@ -1,7 +1,7 @@
 # Spec: KPI engine, dashboard and PDF reports
 
 **Roadmap items:** Phase 4, all four items (KPI engine, KPI dashboard, "Export report" PDF, scheduled reports)
-**Status:** draft
+**Status:** approved (by 2 judge agents on the user's behalf, 2026-11-14 — user may revise)
 
 ## Goal
 One click gives a correct weekly or monthly report per agent and for the team (mission: "Reports are manual" →
@@ -98,3 +98,43 @@ Internal calls are excluded everywhere. Calls with no customer number never coun
 4. **Report time:** Sunday 07:00 / 1st 07:00 Riyadh (recommended) — the PC may be off then; the job also runs at
    API start-up for any missed period ("catch-up").
 5. **New tools:** WeasyPrint (already listed 🔜), ECharts (listed 🔜), `pypdf` for the test only (new, test-only).
+
+## Decisions (2 judges, 2026-11-14; they override the table above where different)
+1. **Week** = Sunday 00:00 – Saturday 23:59:59 Riyadh. Month = calendar month; trend = previous week / previous
+   calendar month. A period that is still running is marked "جزئي" (partial).
+2. **AHT (headline, tiles, team table, PDF)** = (talk + hold when known) ÷ answered **inbound** calls (mission
+   contract). **Outbound AHT** = talk ÷ answered outbound calls, separate column, never blended. Footnotes: hold time
+   not in the CDR; transferred calls count the first answered leg only.
+3. **Repeat call (72 h)** = an answered **inbound** call in the period whose normalised customer number had **any
+   earlier team call (any direction, any status) in the 72 h before it** (look-back reaches 72 h before the period
+   start). Credited to the agent of the **most recent earlier answered call** in that window; if none was answered →
+   "unattributed" (team total only). Chain A→B→C = 2 repeats. Number normalisation: digits only, last 9 digits
+   (strips +966 / 00966 / leading 0).
+4. **Team "Calls"** = inbound, non-internal, `call.team = X`, `start_time` in the Riyadh bounds; "all teams" = sum.
+   Per-agent "Calls" = inbound answered by the agent → per-agent rows don't add up to the team total (footnote).
+   Agent rows = team extensions from `teams.yaml` only (supervisor 114 and others not listed as rows; footnote).
+5. **Per-agent unanswered ("missed rings")** comes from `call_leg`: extension legs to the agent with disposition
+   not ANSWERED, counted once per call (fixes `missed_agent_ext` holding only the first missed agent). Label:
+   "رنات فائتة (حسب سجل السنترال)". Team unanswered = inbound team calls with status no_answer / abandoned_queue /
+   abandoned_ivr / busy / voicemail (voicemail included, footnoted).
+6. **"Avg wait"** is labelled "مدة الرنين قبل الرد" (ring time before answer): `wait_seconds` is the agent's ring
+   time, not queue time.
+7. **Banner** "الأرقام غير موثقة بعد: لم تكتمل 7 مطابقات ليلية ناجحة" on the KPI page and in every PDF while fewer
+   than 7 consecutive OK `reconcile_run` days exist.
+8. **Schedule:** Sunday 07:00 (previous week) and 1st 07:00 (previous month), Celery timezone Asia/Riyadh.
+   Catch-up task runs from **beat start-up** (not API start-up), only the latest closed week + month, skips when the
+   archive row exists. `report_archive` unique key `(period_type, period_start, scope)`, upsert, file written to a
+   temp name then renamed.
+9. **Privacy:** PDFs never show full customer numbers (masked `05XX…1234` or omitted). Archive download =
+   admin/supervisor + audit row. Reports dir `/data/reports` created and owned by the app user; backup/retention in S7.
+10. **Tools:** WeasyPrint (+ apt `libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0`), ECharts (no native RTL:
+    mirror axes by hand, Arabic font set explicitly), `pypdf` test-only; all pinned exact.
+11. **PDF Arabic test:** NFKC + whitespace-stripped compare, accepting logical or visual order; numbers wrapped in
+    `<bdi dir="ltr">`; one PNG rendered for a visual check.
+12. **Indexes (migration 0004):** `(customer_number, start_time)` + normalised-number expression index; plus
+    `report_archive`, `report_download`.
+13. **Performance criteria** measured on a seeded 6,000-call month: page API < 2 s, PDF < 30 s.
+14. **Build order / cut line:** (a) kpi.py + CLI + fixture tests, (b) API + KPI page, (c) PDF, then (d) scheduled
+    jobs + catch-up, (e) archive UI + download audit. (d)/(e) may be `[~]` if time runs out.
+15. Extra fixture cases: queue call missed by 104 then answered by 119; repeat across the period boundary; repeat
+    whose earlier call was outbound; empty period; week across a month edge. API rejects agent ext not in teams.yaml.
