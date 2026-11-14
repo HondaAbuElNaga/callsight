@@ -40,7 +40,7 @@
          refused. Up/down/up checked on a scratch DB. No Listen button markup in web/ (test checks it).
 - [ ] 8. ⚠ NEEDS USER (office LAN): Call Status Monitor per trunk, `LIVE_ENABLED=true`, test call, capture payloads;
          legal steps before Listen
-- [ ] 9. Verify; review with 3 subagents; fix; spec → done/[~]; roadmap; merge (--no-ff)
+- [x] 9. Verify; review with 3 subagents; fix; spec → done/[~]; roadmap; merge (--no-ff)
          (verify done: full pytest 457 passed, 8 skipped, 0 failed on callsight_lb_test; review + merge not done
          in this run)
          → 3 reviewers: 0 critical, 0 high, 3 medium, 13 low; all fixed: WS login/role/cap closes after accept +
@@ -55,3 +55,6 @@
 Cut line (decision 10): Must = all done. Should (Listen stub + audit) = done. Cut first: agent-status row (30007/
 30008/30009/30029) = CUT; queue waiting list = best effort only (from `call_path`, plus calls with no extension
 member yet); PBX wiring of Listen = CUT (adapter refuses).
+         → merged to main before call analysis (0009 after 0007); 467 passed, 8 skipped. pg_dump
+           `callsight-before-0009-20261114-1858.dump`; live DB at 0009; default services = postgres redis beat worker api
+           (no live); POST /api/live/x/listen without login = 401. No PBX contact.
