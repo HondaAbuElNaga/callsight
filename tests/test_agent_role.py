@@ -22,6 +22,7 @@ PUBLIC = {("POST", "/api/login"), ("POST", "/api/logout")}
 AGENT_ALLOWED = {
     ("GET", "/api/me"), ("GET", "/api/agents"), ("GET", "/api/calls"), ("GET", "/api/calls/summary"),
     ("GET", "/api/calls/{call_id}"), ("GET", "/api/calls/{call_id}/recording"), ("GET", "/api/kpi"),
+    ("GET", "/api/calls/{call_id}/transcript"), ("GET", "/api/calls/{call_id}/transcript.txt"),
 }
 STAFF_ONLY = {
     ("GET", "/api/reports/pdf"), ("GET", "/api/reports"), ("GET", "/api/reports/{report_id}/pdf"),
@@ -129,7 +130,11 @@ def test_agent_allowed_routes_answer(env):
     for method, path in sorted(_api_routes(app) & AGENT_ALLOWED):
         url = path.replace("{call_id}", str(ids["own"]))
         params = today() if path.startswith("/api/calls") else None
-        assert client.request(method, url, params=params).status_code == 200, (method, path)
+        r = client.request(method, url, params=params)
+        if "/transcript" in path:   # own call, but no transcript row in this fixture: 404 "no transcript", not 403
+            assert r.status_code == 404 and r.json()["detail"] == "no transcript", (method, path)
+        else:
+            assert r.status_code == 200, (method, path)
 
 
 def test_agent_routes_need_login(env):

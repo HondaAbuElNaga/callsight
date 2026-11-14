@@ -123,7 +123,9 @@ def _save(session: Session, row: Transcript, result, revision: str | None, compu
     session.execute(delete(TranscriptSegment).where(TranscriptSegment.transcript_id == row.id))   # --force redo
     session.add_all(TranscriptSegment(transcript_id=row.id, seq=s.seq, start_seconds=s.start, end_seconds=s.end,
                                       text=s.text, flag=s.flag) for s in result.segments)
+    from ..transcripts import search_text
     row.status, row.text, row.error = "done", result.text, None
+    row.search_text = search_text(result.segments)        # dropped windows are not searchable
     row.model_revision = revision
     row.audio_seconds, row.speech_seconds = result.audio_seconds, result.speech_seconds
     row.dropped_windows, row.segmenter_version = result.dropped_windows, SEGMENTER_VERSION

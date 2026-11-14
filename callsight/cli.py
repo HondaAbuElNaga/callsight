@@ -29,6 +29,7 @@
   transcribe --days N --limit M    backfill: newest M answered calls of the last N days (max 500)
   transcribe status                queue length, done/error counts, latency hang-up -> transcript
   transcribe --retry-errors --since YYYY-MM-DD [--limit 50]   re-queue failed calls since that day (max 500)
+  transcripts reindex              rebuild the normalised search text of all done transcripts
 """
 from __future__ import annotations
 
@@ -83,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     tr.add_argument("--call", type=int); tr.add_argument("--force", action="store_true")
     tr.add_argument("--days", type=int); tr.add_argument("--limit", type=int)
     tr.add_argument("--retry-errors", action="store_true"); tr.add_argument("--since", type=date.fromisoformat)
+    ts = sub.add_parser("transcripts"); ts.add_argument("action", choices=("reindex",))
     a = p.parse_args(argv)
     if a.cmd == "backup":
         return _backup(a)
@@ -98,6 +100,8 @@ def main(argv: list[str] | None = None) -> int:
         return _transcribe(a, p)
     if a.cmd == "goldset":
         return _goldset(a)
+    if a.cmd == "transcripts":
+        return _transcripts_reindex()
     if a.cmd in ("create-user", "set-password", "disable-user", "set-ext"):
         return _users(a)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -174,6 +178,15 @@ def _users(a: argparse.Namespace) -> int:
     except ValueError as exc:
         print("ERROR:", exc, file=sys.stderr)
         return 1
+    return 0
+
+
+def _transcripts_reindex() -> int:
+    """Rebuild the normalised search text of every done transcript (after search_normalize() changes)."""
+    from .transcripts import reindex
+    with wiring.session_factory()() as s:
+        n = reindex(s)
+    print(f"{n} transcript(s) reindexed for search")
     return 0
 
 

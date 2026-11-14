@@ -16,6 +16,25 @@ export interface CallRow {
   talk_seconds: number;
   total_seconds: number;
   has_recording: boolean;
+  transcript_match: boolean;   // the row came from a transcript word search (badge only, no snippet)
+}
+
+export interface TranscriptSegment {
+  seq: number;
+  start: number;
+  end: number;
+  speaker: string | null;
+  dropped: boolean;            // silence / unclear window: no text
+  text: string;
+}
+
+export interface Transcript {
+  call_id: number;
+  status: "queued" | "running" | "done" | "error" | "skipped";
+  model: string;
+  created_at: string | null;
+  dropped_windows: number;
+  segments: TranscriptSegment[];
 }
 
 export interface Leg {
@@ -43,6 +62,7 @@ export interface Filters {
   status: string;
   direction: string;
   q: string;
+  words: string;               // transcript words: sent to the API only, never put in the page URL
 }
 
 export interface GoldClip {
@@ -115,10 +135,14 @@ export interface HealthItem { key: string; state: "ok" | "warn" | "bad" | "off";
 export interface Health { ok: boolean; problems: string[]; checked_at: string; items: HealthItem[] }
 
 export class Unauthorized extends Error {}
+export class NotFound extends Error {}
+export class BadRequest extends Error {}
 
 async function get<T>(url: string): Promise<T> {
   const r = await fetch(url, { credentials: "same-origin" });
   if (r.status === 401) throw new Unauthorized();
+  if (r.status === 404) throw new NotFound();
+  if (r.status === 422) throw new BadRequest();
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json() as Promise<T>;
 }
@@ -143,6 +167,8 @@ export const api = {
   summary: (f: Filters) => get<Summary>(`/api/calls/summary?${query(f)}`),
   call: (id: number) => get<CallDetail>(`/api/calls/${id}`),
   recordingUrl: (id: number) => `/api/calls/${id}/recording`,
+  transcript: (id: number) => get<Transcript>(`/api/calls/${id}/transcript`),
+  transcriptTxtUrl: (id: number) => `/api/calls/${id}/transcript.txt`,
   async login(username: string, password: string): Promise<{ ok: true } | { ok: false; message: string }> {
     const r = await fetch("/api/login", {
       method: "POST",

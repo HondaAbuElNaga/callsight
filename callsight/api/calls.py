@@ -4,11 +4,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy import Select, false, func, or_, select
+from sqlalchemy import Select, and_, exists, false, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
-from ..db.models import Agent, AppUser, Call, CallLeg
+from ..db.models import Agent, AppUser, Call, CallLeg, Transcript
 from ..ingest.service import day_bounds
+from ..transcripts import displayed_order
 from .auth import STAFF_ROLES
 
 STATUSES = ("answered", "abandoned_queue", "abandoned_ivr", "no_answer", "busy", "voicemail")
@@ -56,6 +57,8 @@ class CallFilter:
     status: str | None = None
     direction: str | None = None
     q: str | None = None
+    words: tuple[str, ...] = ()          # normalised transcript words (all must occur); never logged
+    asr_model: str = "whisper-large-v3"  # decides the displayed transcript when a call has several
 
     def apply(self, stmt: Select) -> Select:
         start, _ = day_bounds(self.date_from)
@@ -70,10 +73,20 @@ class CallFilter:
             stmt = stmt.where(Call.direction == self.direction)
         if self.q:
             stmt = stmt.where(Call.customer_number.contains(self.q, autoescape=True))
+        if self.words:
+            stmt = stmt.where(self._transcript_match())
         return stmt
 
+    def _transcript_match(self):
+        """One EXISTS on the displayed done transcript of the call: a call is never counted twice."""
+        t = aliased(Transcript)
+        shown = (select(Transcript.id).where(Transcript.call_id == Call.id, Transcript.status == "done")
+                 .order_by(*displayed_order(self.asr_model)).limit(1).correlate(Call).scalar_subquery())
+        return exists().where(t.call_id == Call.id, t.id == shown,
+                              and_(*(t.search_text.contains(w, autoescape=True) for w in self.words)))
 
-def _row(call: Call, agent_name: str | None) -> dict:
+
+def _row(call: Call, agent_name: str | None, transcript_match: bool = False) -> dict:
     return {
         "id": call.id,
         "start_time": call.start_time.isoformat(),
@@ -90,6 +103,7 @@ def _row(call: Call, agent_name: str | None) -> dict:
         "talk_seconds": call.talk_seconds,
         "total_seconds": call.total_seconds,
         "has_recording": call.recording_status == "ok",
+        "transcript_match": transcript_match,     # badge only: no snippet (text is shown only with an audit row)
     }
 
 
@@ -101,7 +115,7 @@ def list_calls(session: Session, f: CallFilter, page: int = 1) -> dict:
     rows = session.execute(base.order_by(Call.start_time.desc(), Call.id.desc())
                            .limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE)).all()
     return {"total": total or 0, "page": page, "page_size": PAGE_SIZE,
-            "items": [_row(c, name) for c, name in rows]}
+            "items": [_row(c, name, bool(f.words)) for c, name in rows]}
 
 
 def summary(session: Session, f: CallFilter) -> dict:

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import (BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text,
-                        UniqueConstraint, func)
+from sqlalchemy import (DDL, BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text,
+                        UniqueConstraint, event, func)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -259,6 +259,8 @@ class Transcript(Base):
     first_queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # transcript-view spec: kept segment texts after search_normalize() (callsight/transcripts.py); NULL until done
+    search_text: Mapped[str | None] = mapped_column(Text)
 
     segments: Mapped[list["TranscriptSegment"]] = relationship(
         back_populates="transcript", cascade="all, delete-orphan", order_by="TranscriptSegment.seq")
@@ -266,7 +268,13 @@ class Transcript(Base):
     __table_args__ = (
         UniqueConstraint("call_id", "model", name="uq_transcript_call_model"),
         Index("ix_transcript_status", "status"),
+        Index("ix_transcript_search_trgm", "search_text", postgresql_using="gin",
+              postgresql_ops={"search_text": "gin_trgm_ops"}),
     )
+
+
+# The trigram index needs pg_trgm; create_all (tests) makes it first. Migration 0007 does the same.
+event.listen(Transcript.__table__, "before_create", DDL("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
 
 
 class TranscriptSegment(Base):
@@ -284,3 +292,13 @@ class TranscriptSegment(Base):
     transcript: Mapped[Transcript] = relationship(back_populates="segments")
 
     __table_args__ = (UniqueConstraint("transcript_id", "seq", name="uq_transcript_segment_seq"),)
+
+
+class TranscriptAccess(Base):
+    """Audit: who opened (view) or downloaded (export) which call's transcript. Never holds transcript text."""
+    __tablename__ = "transcript_access"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))                  # view / export
+    accessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

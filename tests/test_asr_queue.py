@@ -513,7 +513,7 @@ def test_migration_0005_up_and_down(engine):
                 mod.upgrade()
         insp = inspect(engine)
         assert {"transcript", "transcript_segment"} <= set(insp.get_table_names())
-        model_cols = {c.name for c in Base.metadata.tables["transcript"].columns}
+        model_cols = {c.name for c in Base.metadata.tables["transcript"].columns} - {"search_text"}   # 0007
         assert {c["name"] for c in insp.get_columns("transcript")} == model_cols
         seg_cols = {c.name for c in Base.metadata.tables["transcript_segment"].columns}
         assert {c["name"] for c in insp.get_columns("transcript_segment")} == seg_cols

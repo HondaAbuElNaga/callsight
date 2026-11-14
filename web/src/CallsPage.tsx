@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  api, Unauthorized,
+  api, BadRequest, Unauthorized,
   type Agent, type CallDetail, type CallPage, type CallRow, type Filters, type Me, type Status, type Summary,
 } from "./api";
 import { DIRECTION_LABEL, LEG_LABEL, STATUS_LABEL, STATUS_ORDER, duration, formatDateTime, riyadhToday } from "./format";
+import { TranscriptPanel } from "./TranscriptPanel";
 
 interface Props {
   me: Me; onLogout: () => void; onExpired: () => void; onGoldset?: () => void; onKpi?: () => void; onHealth?: () => void;
@@ -12,12 +13,26 @@ interface Props {
 // A function, not a constant: the page may stay open past midnight.
 const emptyFilters = (): Filters => {
   const today = riyadhToday();
-  return { from: today, to: today, agent: "", status: "", direction: "", q: "" };
+  return { from: today, to: today, agent: "", status: "", direction: "", q: "", words: "" };
 };
+
+// Same rules as the API (it re-checks after Arabic normalisation): 1-5 words, each 2+ characters, letters/digits.
+function wordsOk(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  if (text.length > 100 || !/^[\p{L}\p{N}\p{M}\s]+$/u.test(t)) return false;
+  const w = t.split(/\s+/);
+  return w.length <= 5 && w.every((x) => x.length >= 2);
+}
+
+interface Seek { id: number; t: number; n: number }
 
 export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth }: Props) {
   const [filters, setFilters] = useState<Filters>(emptyFilters); // applied as soon as a field changes
   const [qText, setQText] = useState("");                  // number box: applied after typing stops
+  const [wordsText, setWordsText] = useState("");          // transcript words: same, never in the page URL
+  const [seek, setSeek] = useState<Seek | null>(null);
+  const [pos, setPos] = useState<{ id: number; t: number } | null>(null);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CallPage | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -27,9 +42,12 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth 
   const [playing, setPlaying] = useState<CallRow | null>(null);
   const [detail, setDetail] = useState<CallDetail | null>(null);
   const lastClicked = useRef<number | null>(null);
+  const appliedWords = useRef("");   // read by fail(): the words message only when a words search is applied
+  appliedWords.current = filters.words ?? "";
 
   const fail = useCallback((e: unknown) => {
     if (e instanceof Unauthorized) onExpired();
+    else if (e instanceof BadRequest && appliedWords.current) setError("كلمات البحث غير صالحة: من 1 إلى 5 كلمات، كل كلمة حرفان على الأقل، حروف وأرقام فقط.");
     else setError("تعذر تحميل البيانات. تأكد أن الخدمة تعمل ثم أعد المحاولة.");
   }, [onExpired]);
 
@@ -67,6 +85,26 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth 
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qText]);
+
+  const canSearchText = me.role === "admin" || me.role === "supervisor";
+  const wordsValid = wordsOk(wordsText);
+  useEffect(() => {   // transcript words 0.4 s after typing stops
+    const w = wordsText.trim().replace(/\s+/g, " ");
+    if (!wordsValid) {   // never keep showing results for words that are no longer in the box
+      if (filters.words) { setFilters((f) => ({ ...f, words: "" })); setPage(1); }
+      return;
+    }
+    if (w === filters.words) return;
+    const t = setTimeout(() => { setFilters((f) => ({ ...f, words: w })); setPage(1); }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wordsText]);
+
+  const seekTo = (call: CallDetail, t: number) => {
+    if (playing?.id !== call.id) setPlaying(call);
+    setSeek({ id: call.id, t, n: Date.now() });
+  };
+  const onTime = useCallback((id: number, t: number) => setPos({ id, t }), []);
 
   const pages = data ? Math.max(1, Math.ceil(data.total / data.page_size)) : 1;
 
@@ -118,8 +156,14 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth 
           <input value={qText} dir="ltr" inputMode="numeric" placeholder="055…" aria-invalid={!qValid}
             onChange={(e) => setQText(e.target.value.trim())} />
         </label>
+        {canSearchText && (
+          <label>كلمات في المكالمة
+            <input value={wordsText} placeholder="مثال: الفاتورة" aria-invalid={!wordsValid} maxLength={100}
+              title="من 1 إلى 5 كلمات، كل كلمة حرفان على الأقل" onChange={(e) => setWordsText(e.target.value)} />
+          </label>
+        )}
         <div className="filter-actions">
-          <button type="button" onClick={() => { setQText(""); apply(emptyFilters()); }}>مسح الفلاتر</button>
+          <button type="button" onClick={() => { setQText(""); setWordsText(""); apply(emptyFilters()); }}>مسح الفلاتر</button>
         </div>
       </form>
 
@@ -150,7 +194,10 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth 
           <tbody>
             {data?.items.map((c) => (
               <tr key={c.id} className={detail?.id === c.id ? "sel" : ""} onClick={() => openDetail(c)}>
-                <td className="nowrap">{formatDateTime(c.start_time)}</td>
+                <td className="nowrap">
+                  {formatDateTime(c.start_time)}
+                  {c.transcript_match && <span className="tag match">مطابقة في التفريغ</span>}
+                </td>
                 <td>{DIRECTION_LABEL[c.direction]}</td>
                 <td dir="ltr" className="num">{c.customer_number ?? "–"}</td>
                 <td>{c.agent_ext ? <>{c.agent_ext} <span className="muted">{c.agent_name}</span>{!c.answered_by_agent && <span className="tag">لم يرد</span>}</> : "–"}</td>
@@ -160,7 +207,7 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth 
                 <td>
                   {c.has_recording && (
                     <button className={`play ${playing?.id === c.id ? "on" : ""}`} aria-label="تشغيل التسجيل"
-                      onClick={(e) => { e.stopPropagation(); setPlaying(c); }}>▶</button>
+                      onClick={(e) => { e.stopPropagation(); setSeek(null); setPlaying(c); }}>▶</button>
                   )}
                 </td>
               </tr>
@@ -181,13 +228,20 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth 
         </div>
       )}
 
-      {detail && <DetailPanel call={detail} onClose={() => setDetail(null)} onPlay={() => setPlaying(detail)} />}
-      {playing && <Player call={playing} onClose={() => setPlaying(null)} />}
+      {detail && (
+        <DetailPanel call={detail} onClose={() => setDetail(null)} onPlay={() => { setSeek(null); setPlaying(detail); }}>
+          <TranscriptPanel key={detail.id} callId={detail.id} canSeek={detail.has_recording}
+            time={playing?.id === detail.id && pos?.id === detail.id ? pos.t : null}
+            onSeek={(t) => seekTo(detail, t)} onExpired={onExpired} />
+        </DetailPanel>
+      )}
+      {playing && <Player call={playing} seek={seek} onTime={onTime} onClose={() => { setSeek(null); setPlaying(null); }} />}
     </div>
   );
 }
 
-function DetailPanel({ call, onClose, onPlay }: { call: CallDetail; onClose: () => void; onPlay: () => void }) {
+function DetailPanel({ call, onClose, onPlay, children }:
+  { call: CallDetail; onClose: () => void; onPlay: () => void; children?: ReactNode }) {
   return (
     <aside className="detail" aria-label="تفاصيل المكالمة">
       <div className="detail-head">
@@ -205,6 +259,7 @@ function DetailPanel({ call, onClose, onPlay }: { call: CallDetail; onClose: () 
         <dt>المدة الكلية</dt><dd className="num">{duration(call.total_seconds)}</dd>
       </dl>
       {call.has_recording && <button className="primary" onClick={onPlay}>▶ تشغيل التسجيل</button>}
+      {children}
       <h3>مسار المكالمة</h3>
       <ol className="legs">
         {call.legs.map((l) => (
@@ -222,16 +277,32 @@ function DetailPanel({ call, onClose, onPlay }: { call: CallDetail; onClose: () 
   );
 }
 
-function Player({ call, onClose }: { call: CallRow; onClose: () => void }) {
+interface PlayerProps {
+  call: CallRow;
+  seek: Seek | null;                          // a transcript line was clicked
+  onTime: (callId: number, seconds: number) => void;
+  onClose: () => void;
+}
+
+function Player({ call, seek, onTime, onClose }: PlayerProps) {
   const ref = useRef<HTMLAudioElement>(null);
   useEffect(() => { ref.current?.play().catch(() => undefined); }, [call.id]);
+  useEffect(() => {
+    const a = ref.current;
+    if (!a || !seek || seek.id !== call.id) return;
+    const go = () => { a.currentTime = seek.t; a.play().catch(() => undefined); };
+    if (a.readyState >= 1) { go(); return; }
+    a.addEventListener("loadedmetadata", go, { once: true });   // player just opened: wait for the duration
+    return () => a.removeEventListener("loadedmetadata", go);
+  }, [seek, call.id]);
   return (
     <div className="player">
       <div className="player-info">
         <b>{formatDateTime(call.start_time)}</b>
         <span className="muted"> · <span dir="ltr">{call.customer_number}</span> · {call.agent_ext ?? ""} {call.agent_name ?? ""}</span>
       </div>
-      <audio ref={ref} key={call.id} controls preload="metadata" src={api.recordingUrl(call.id)} />
+      <audio ref={ref} key={call.id} controls preload="metadata" src={api.recordingUrl(call.id)}
+        onTimeUpdate={(e) => onTime(call.id, e.currentTarget.currentTime)} />
       <button className="link" onClick={onClose} aria-label="إغلاق المشغل">✕</button>
     </div>
   );
