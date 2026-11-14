@@ -86,7 +86,49 @@ class WhisperLargeV3:
         return self.processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
 
 
-MODELS = {m.name: m for m in (WhisperLargeV3,)}
+class AudarTurbo:
+    """audarai/Audar-ASR-V1-Turbo via the qwen-asr package, bf16, settings from the model card (benchmark settings)."""
+    name = "audar-asr-turbo"
+    repo = "audarai/Audar-ASR-V1-Turbo"
+    window_s = 30.0                                          # audio encoder context; longer audio chunked by us
+
+    def load(self):
+        import torch
+        from qwen_asr import Qwen3ASRModel
+        self.model = Qwen3ASRModel.from_pretrained(self.repo, dtype=torch.bfloat16, device_map="cuda:0",
+                                                   max_inference_batch_size=1, max_new_tokens=256)
+
+    def transcribe(self, audio16k) -> str:
+        result = self.model.transcribe(audio=[(audio16k, TARGET_RATE)], language=["Arabic"])[0]
+        return (result.text or "").strip()
+
+
+class JaisAsr4bit:
+    """IFM/Jais-ASR-W4A16-AWQ (official 4-bit; bf16 needs ~12 GB) via transformers 5 + compressed-tensors."""
+    name = "jais-asr-4bit"
+    repo = "IFM/Jais-ASR-W4A16-AWQ"
+    window_s = 30.0                                          # card gives no limit; same windows as the others
+
+    def load(self):
+        import torch
+        from transformers import AutoModelForCausalLM, AutoProcessor
+        self.torch = torch
+        self.processor = AutoProcessor.from_pretrained(self.repo, trust_remote_code=True)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            self.repo, trust_remote_code=True, device_map="cuda:0", dtype=torch.bfloat16).eval()
+        self.prompt = self.processor.tokenizer.apply_chat_template(
+            [{"role": "user", "content": [{"type": "audio"}]}], tokenize=False, add_generation_prompt=True)
+
+    def transcribe(self, audio16k) -> str:
+        inputs = self.processor(text=[self.prompt], audio=[audio16k], sampling_rate=[TARGET_RATE],
+                                padding=True, return_tensors="pt").to(self.model.device)
+        with self.torch.inference_mode():
+            out = self.model.generate(**inputs, do_sample=False, max_new_tokens=256)
+        r = self.processor.post_process_transcription(out, input_lengths=inputs["input_ids"].shape[1])[0]
+        return "" if getattr(r, "refused", False) else (r.text or "").strip()
+
+
+MODELS = {m.name: m for m in (WhisperLargeV3, AudarTurbo, JaisAsr4bit)}
 
 
 def to_16k(samples: array, rate: int):

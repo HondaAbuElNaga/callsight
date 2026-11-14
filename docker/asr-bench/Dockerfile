@@ -3,7 +3,8 @@
 FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HF_HOME=/models HF_HUB_DISABLE_TELEMETRY=1
-COPY docker/asr-bench/requirements.txt .
+ARG REQS=requirements.txt
+COPY docker/asr-bench/${REQS} ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY callsight/__init__.py ./callsight/__init__.py
 COPY callsight/asr ./callsight/asr

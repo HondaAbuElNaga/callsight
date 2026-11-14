@@ -1,0 +1,13 @@
+# Jais-ASR image: its remote code needs transformers 5 (model card pins 5.16.1); 4-bit weights via compressed-tensors,
+# which needs torch >= 2.10 -> take torch from PyTorch's CUDA 12.8 channel (the default wheel is CUDA 13.2, too new
+# for this PC's driver, which supports up to CUDA 13.1).
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128   # must match torch, else transformers fails to import
+torchaudio==2.11.0+cu128
+transformers==5.16.1
+accelerate>=1.12
+compressed-tensors
+soundfile
+soxr>=0.5
+numpy>=1.26
