@@ -184,4 +184,39 @@ def test_model_holder_never_unloads_while_busy():
 
 def test_model_holder_unknown_model():
     with pytest.raises(ValueError, match="ASR_MODEL"):
+        engine.check_model_name("no-such-model")
+    with pytest.raises(engine.ModelNotReady):
         engine.ModelHolder("no-such-model", start_timer=False).get()
+
+
+def test_failed_load_is_not_ready_and_backs_off():
+    tries = []
+
+    class NoCache(FakeAdapter):
+        def load(self):
+            tries.append(1)
+            raise OSError("not in the offline cache")
+    t = [0.0]
+    h = engine.ModelHolder("fake", factory=lambda n: NoCache(), clock=lambda: t[0], start_timer=False,
+                           load_retry_s=120)
+    with pytest.raises(engine.ModelNotReady, match="OSError"):
+        h.ensure_loaded()
+    for _ in range(2):
+        with pytest.raises(engine.ModelNotReady, match="recently"):
+            h.ensure_loaded()
+    assert len(tries) == 1                               # no new slow load during the back-off
+    t[0] += 121
+    with pytest.raises(engine.ModelNotReady):
+        h.ensure_loaded()
+    assert len(tries) == 2 and not h.loaded
+
+
+def test_no_overlap_merge_across_a_dropped_window():
+    a = FakeAdapter(texts=["كيف اقدر اساعدك", "اشتركوا في القناة", "اساعدك في الطلب"])
+    r = engine.transcribe_audio(a, tone(80), RATE)
+    assert r.text == "كيف اقدر اساعدك اساعدك في الطلب"     # both "اساعدك" are real speech
+
+
+def test_nul_characters_removed():
+    r = engine.transcribe_audio(FakeAdapter(texts=["مرحبا\x00 بك"]), tone(5), RATE)
+    assert r.segments[0].text == "مرحبا بك" and "\x00" not in r.text

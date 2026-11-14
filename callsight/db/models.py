@@ -165,6 +165,8 @@ class Transcript(Base):
     diarization_version: Mapped[str | None] = mapped_column(String(30))   # NULL until speaker split exists
     error: Mapped[str | None] = mapped_column(String(300))        # ids/reasons only, never transcript text
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # never rewritten by retries/reaper/--force: decides "live call" for the latency figure
+    first_queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

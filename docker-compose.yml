@@ -146,20 +146,25 @@ services:
     build:
       context: .
       dockerfile: docker/asr-worker/Dockerfile
-    env_file: .env
+    # No env_file: the worker gets only what it needs (no PBX secret, no APP_SECRET). Values come from .env.
     environment: &asr-env
       DATABASE_URL: postgresql+psycopg://callsight:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/callsight
       REDIS_URL: redis://redis:6379/0
       AUDIO_DIR: /data/audio
       TEAMS_FILE: /app/config/teams.yaml
       ASR_MODEL: ${ASR_MODEL:-whisper-large-v3}
+      ASR_START_DATE: ${ASR_START_DATE:-}
+      ASR_MIN_TALK: ${ASR_MIN_TALK:-5}
+      ASR_MAX_SECONDS: ${ASR_MAX_SECONDS:-3600}
+      ASR_BATCH: ${ASR_BATCH:-50}
+      ASR_IDLE_UNLOAD_S: ${ASR_IDLE_UNLOAD_S:-300}
       HF_HOME: /models
       HF_HUB_OFFLINE: "1"                  # models come from the cache filled by asr-bench-download
     networks: [asr-internal]
     volumes:
       - ${AUDIO_HOST_DIR:-./data/audio}:/data/audio:ro   # read-only: the worker never changes recordings
       - ./config:/app/config:ro
-      - hf-models:/models
+      - hf-models:/models:ro               # read-only: the worker never downloads or changes models
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -182,15 +187,15 @@ services:
       args:
         REQS: requirements-jais.txt
         TORCH_REQS: requirements-jais-torch.txt
-    env_file: .env
     environment:
       <<: *asr-env
       ASR_MODEL: jais-asr-4bit
+      HF_MODULES_CACHE: /tmp/hf-modules    # its remote code is copied here at load; /models is read-only
     networks: [asr-internal]
     volumes:
       - ${AUDIO_HOST_DIR:-./data/audio}:/data/audio:ro
       - ./config:/app/config:ro
-      - hf-models:/models
+      - hf-models:/models:ro
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }

@@ -40,6 +40,15 @@
            then `docker compose --profile asr stop asr-worker` and check `nvidia-smi` shows the memory freed.
 - [ ] 11. ⚠ NEEDS USER: set `ASR_START_DATE` in `.env` when you want automatic transcription; check latency on LAN
 - [ ] 12. Verify acceptance criteria; review with 3 subagents; fix; spec → done; roadmap; merge (--no-ff)
+         → [x] review part done (3 reviewers, findings verified by the orchestrator, all fixed 2026-11-14):
+           HIGH model-load failure / wrong model no longer terminal (row stays queued, no try used, holder
+           back-off, unknown ASR_MODEL refuses worker start) + `transcribe --retry-errors --since D [--limit N]`;
+           MEDIUM queue length via Redis LLEN (missing key = 0), reaper change written into spec amendments;
+           `hide_parameters=True`, guarded final save, NUL stripped; ASR config typo can't break recording download;
+           LOW overlap merge only between neighbouring windows; `first_queued_at` for latency (in 0005);
+           models mounted read-only + `HF_MODULES_CACHE` for Jais; asr services without env_file (no PBX secret;
+           Yeastar settings now only required by `app.pbx()`); tech-stack "faster-whisper" → transformers.
+           Still open: acceptance verify, spec → done, roadmap, merge.
 
 ## Assumptions (builder, 2026-11-14)
 - "n-gram repeats > 4 times" = a 1–4 word unit repeated more than 4× **in a row** (normal words like "في" recur

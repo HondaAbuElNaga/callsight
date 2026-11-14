@@ -16,6 +16,7 @@
   transcribe --call ID [--force]   queue one call for the asr worker (--force: redo done/error/skipped)
   transcribe --days N --limit M    backfill: newest M answered calls of the last N days (max 500)
   transcribe status                queue length, done/error counts, latency hang-up -> transcript
+  transcribe --retry-errors --since YYYY-MM-DD [--limit 50]   re-queue failed calls since that day (max 500)
 """
 from __future__ import annotations
 
@@ -58,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     tr = sub.add_parser("transcribe"); tr.add_argument("action", nargs="?", choices=("status",))
     tr.add_argument("--call", type=int); tr.add_argument("--force", action="store_true")
     tr.add_argument("--days", type=int); tr.add_argument("--limit", type=int)
+    tr.add_argument("--retry-errors", action="store_true"); tr.add_argument("--since", type=date.fromisoformat)
     a = p.parse_args(argv)
     if a.cmd == "transcribe":
         return _transcribe(a, p)
@@ -182,10 +184,13 @@ def _transcribe(a: argparse.Namespace, p: argparse.ArgumentParser) -> int:
     """DB + Redis only (never the PBX). Run where Redis is reachable, e.g. inside the worker container."""
     from . import jobs
     from .asr import queueing
-    modes = sum((a.action == "status", a.call is not None, a.days is not None or a.limit is not None))
+    modes = sum((a.action == "status", a.call is not None, a.retry_errors,
+                 not a.retry_errors and (a.days is not None or a.limit is not None)))
     if modes != 1:
-        p.error("transcribe: give exactly one of: status | --call ID | --days N --limit M")
-    if a.days is not None and a.limit is None or a.limit is not None and a.days is None:
+        p.error("transcribe: give exactly one of: status | --call ID | --days N --limit M | --retry-errors --since D")
+    if a.retry_errors and (a.since is None or a.days is not None):
+        p.error("transcribe: --retry-errors needs --since YYYY-MM-DD (and optional --limit)")
+    if not a.retry_errors and (a.days is not None and a.limit is None or a.limit is not None and a.days is None):
         p.error("transcribe: backfill needs both --days and --limit")
     cfg = queueing.AsrConfig.from_env()
     now = datetime.now(RIYADH)
@@ -198,6 +203,8 @@ def _transcribe(a: argparse.Namespace, p: argparse.ArgumentParser) -> int:
                 status, send = queueing.queue_call(s, cfg, a.call, a.force, now)
                 ids = [a.call] if send else []
                 print(f"call {a.call}: {status}" + ("" if send else " (nothing sent; --force to redo)"))
+            elif a.retry_errors:
+                ids = queueing.retry_errors(s, cfg, a.since, a.limit or 50, now)
             else:
                 ids = queueing.queue_recent(s, cfg, a.days, a.limit, now)
         except ValueError as exc:

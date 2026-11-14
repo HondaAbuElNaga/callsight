@@ -33,7 +33,7 @@ queue worker, so scaling = more workers / a second GPU box, not a rewrite.
 ## AI / ML (all on the local GPU)
 | Area | Choice | Status | Why |
 |---|---|---|---|
-| Speech-to-text | Candidates: **IFM Jais-ASR**, **Audar-ASR-V1-Turbo**, Whisper large-v3 (via faster-whisper) — pick by benchmark on our own calls | 🔜 | Public benchmark (echonova arabic-asr-benchmark): Saudi WER Jais-ASR 20.9%, Audar 23.8%, Whisper-large-v3 31.1% |
+| Speech-to-text | Candidates: **IFM Jais-ASR**, **Audar-ASR-V1-Turbo**, Whisper large-v3 (via Hugging Face transformers) — pick by benchmark on our own calls | 🔜 | Public benchmark (echonova arabic-asr-benchmark): Saudi WER Jais-ASR 20.9%, Audar 23.8%, Whisper-large-v3 31.1% |
 | STT serving | **Own Celery `asr` worker** in a GPU container (no speaches): loads the model named by `ASR_MODEL` once per process (adapters in `callsight/asr/models.py`), frees the GPU after `ASR_IDLE_UNLOAD_S` idle. Image per model family: `asr-worker` (Whisper/Audar, transformers 4.57.6) and `asr-worker-jais` (transformers 5, server only). Internal Docker network (no internet), `HF_HUB_OFFLINE=1` | 🔜 | Changed 2026-11-14 (transcription spec, overnight decision R2): speaches only serves faster-whisper models; Audar/Jais need our own adapters anyway, one less service |
 | Arabic text tools | CAMeL Tools (normalisation, dialect ID) | 🔜 | Standard Arabic NLP toolkit, works on Windows/Linux |
 | Sentiment / satisfaction model | Fine-tuned Arabic BERT (MARBERT / CAMeLBERT-DA) → 1–10 regression on the customer side of the transcript | 🔜 | "Tuned" model: start from a dialect-aware model, fine-tune on our labelled calls |

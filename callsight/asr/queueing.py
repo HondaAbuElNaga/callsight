@@ -28,7 +28,7 @@ QUEUE = "asr"
 MAX_TRIES = 2
 STUCK_AFTER = timedelta(minutes=30)       # soft time limit is 15 min, so a row this old has no living task
 MAX_BACKFILL = 500                        # CLI cap: ~1 night of GPU time; more = run it again
-LIVE_QUEUE_WINDOW = timedelta(hours=1)    # queued within 1 h of hang-up = a live call, not a backfill
+LIVE_QUEUE_WINDOW = timedelta(hours=1)    # first queued within 1 h of hang-up = a live call, not a backfill
 CUSTOMER_DIRECTIONS = ("inbound", "outbound")   # internal calls between colleagues are not recorded
 
 
@@ -88,7 +88,7 @@ def add_row(session: Session, call: Call, cfg: AsrConfig, now: datetime, force: 
     reason = None if force else skip_reason(call, cfg)
     stmt = (insert(Transcript)
             .values(call_id=call.id, model=cfg.model, model_revision=cfg.revision,
-                    status="skipped" if reason else "queued", error=reason, queued_at=now,
+                    status="skipped" if reason else "queued", error=reason, queued_at=now, first_queued_at=now,
                     finished_at=now if reason else None)
             .on_conflict_do_nothing(constraint="uq_transcript_call_model")
             .returning(Transcript.status))
@@ -188,6 +188,22 @@ def reap(session: Session, cfg: AsrConfig, now: datetime, queue_length: int) -> 
     return resend
 
 
+def retry_errors(session: Session, cfg: AsrConfig, since: date, limit: int, now: datetime) -> list[int]:
+    """CLI bulk recovery: `error` rows of calls since `since` (Riyadh day), newest first, capped -> queued again
+    with fresh tries. Returns call ids to send."""
+    if not 1 <= limit <= MAX_BACKFILL:
+        raise ValueError(f"--limit must be 1..{MAX_BACKFILL}")
+    start = datetime(since.year, since.month, since.day, tzinfo=RIYADH)
+    rows = session.scalars(select(Transcript).join(Call, Call.id == Transcript.call_id)
+                           .where(Transcript.model == cfg.model, Transcript.status == "error", Call.start_time >= start)
+                           .order_by(Call.start_time.desc()).limit(limit).with_for_update(of=Transcript)).all()
+    for row in rows:
+        row.status, row.tries, row.error, row.queued_at = "queued", 0, None, now
+        row.started_at = row.finished_at = None
+    session.commit()
+    return [r.call_id for r in rows]
+
+
 def latency_seconds(finished_at: datetime, call_end: datetime) -> float:
     """Hang-up -> transcript done (target: within 15 min)."""
     return (finished_at - call_end).total_seconds()
@@ -197,7 +213,7 @@ def status(session: Session, cfg: AsrConfig, queue_length: int | None, now: date
     counts = dict(session.execute(select(Transcript.status, func.count()).where(Transcript.model == cfg.model)
                                   .group_by(Transcript.status)).all())
     since = now - timedelta(days=days)
-    done = session.execute(select(Transcript.finished_at, Transcript.queued_at, Call.end_time)
+    done = session.execute(select(Transcript.finished_at, Transcript.first_queued_at, Call.end_time)
                            .join(Call, Call.id == Transcript.call_id)
                            .where(Transcript.model == cfg.model, Transcript.status == "done",
                                   Call.start_time >= since)).all()

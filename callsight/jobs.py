@@ -52,18 +52,30 @@ def send_transcribe(call_id: int, model: str, countdown: int | None = None) -> N
     celery.send_task(queueing.TASK_NAME, args=[call_id, model], queue=queueing.QUEUE, countdown=countdown)
 
 
+def redis_queue_length(channel, queue: str) -> int:
+    """LLEN of the queue's Redis lists (kombu keeps one list per priority step). A missing key = empty queue = 0
+    (a passive queue_declare would raise there and look like "broker down")."""
+    steps = getattr(channel, "priority_steps", None) or [0]
+    return sum(int(channel.client.llen(channel._q_for_pri(queue, p))) for p in steps)
+
+
 def asr_queue_length() -> int | None:
-    """Messages waiting in the asr queue (None when the broker can't be asked)."""
+    """Messages waiting in the asr queue; None only when the broker can't be reached."""
     try:
         with celery.connection_for_read() as conn:
-            return conn.default_channel.queue_declare(queue=queueing.QUEUE, passive=True).message_count
-    except Exception:                       # noqa: BLE001  queue not created yet / broker down
+            return redis_queue_length(conn.default_channel, queueing.QUEUE)
+    except Exception as exc:                # noqa: BLE001  broker down / not reachable
+        log.warning("asr queue length unknown: %s", type(exc).__name__)
         return None
 
 
 def _queue_after_recording(session, call) -> None:
-    cfg = queueing.AsrConfig.from_env()
-    queueing.after_recording(session, call, cfg, lambda cid: send_transcribe(cid, cfg.model))
+    """Never breaks the recording download (Phase 1), not even with a typo in an ASR_* setting."""
+    try:
+        cfg = queueing.AsrConfig.from_env()
+        queueing.after_recording(session, call, cfg, lambda cid: send_transcribe(cid, cfg.model))
+    except Exception as exc:                # noqa: BLE001
+        log.warning("transcript not queued for call %s: %s", call.id, type(exc).__name__)
 
 
 @celery.task

@@ -43,6 +43,16 @@ class AudioError(Exception):
     """The recording file can't be used (missing, not a WAV, empty). Terminal: no retry."""
 
 
+class ModelNotReady(Exception):
+    """The model could not be loaded (no cache offline, no CUDA, GPU busy). The worker's fault, not the call's:
+    the row goes back to `queued` without counting a try."""
+
+
+def check_model_name(name: str) -> None:
+    if name not in MODELS:
+        raise ValueError(f"unknown ASR_MODEL {name!r}; choose one of {', '.join(sorted(MODELS))}")
+
+
 @dataclass
 class Segment:
     seq: int
@@ -110,22 +120,24 @@ def transcribe_audio(adapter, audio, rate: int = TARGET_RATE, silence_rms: float
     """Run the adapter over every window of one call. Model errors propagate (the task decides retry/error)."""
     bounds = chunk_bounds(len(audio), rate, min(WINDOW_S, adapter.window_s), OVERLAP_S)
     res = Result(audio_seconds=round(len(audio) / rate, 3))
-    kept = []
+    runs: list[list[str]] = [[]]          # texts of back-to-back kept windows; a dropped window starts a new run
     for i, ((s, e), (start, end)) in enumerate(zip(bounds, display_times(bounds, rate))):
         piece = audio[s:e]
         if rms(piece) < silence_rms:
             seg = Segment(i, start, end, "", "silence")
         else:
-            text = (adapter.transcribe(piece) or "").strip()
+            text = (adapter.transcribe(piece) or "").replace("\x00", "").strip()   # Postgres refuses NUL
             flag = hallucination_flag(text, (e - s) / rate)
             seg = Segment(i, start, end, "" if flag else text, flag)
         if seg.flag:
             res.dropped_windows += 1
+            runs.append([])
         elif seg.text:
-            kept.append(seg.text)
+            runs[-1].append(seg.text)
             res.speech_seconds += end - start
         res.segments.append(seg)
-    res.text = merge_texts(kept)
+    # Overlap words are only removed between neighbouring windows: across a gap the "repeat" is real speech.
+    res.text = " ".join(m for m in (merge_texts(r) for r in runs) if m)
     res.speech_seconds = round(res.speech_seconds, 3)
     return res
 
@@ -148,8 +160,9 @@ class ModelHolder:
     (so a later Ollama job can use the 8 GB GPU; decision 8)."""
 
     def __init__(self, name: str, idle_unload_s: float = 300, factory: Callable | None = None,
-                 clock: Callable[[], float] = time.monotonic, start_timer: bool = True):
-        self.name, self.idle_unload_s, self.clock = name, idle_unload_s, clock
+                 clock: Callable[[], float] = time.monotonic, start_timer: bool = True, load_retry_s: float = 120):
+        self.name, self.idle_unload_s, self.clock, self.load_retry_s = name, idle_unload_s, clock, load_retry_s
+        self.failed_at: float | None = None
         self.factory = factory or self._from_registry
         self.adapter = None
         self.busy = False
@@ -160,8 +173,7 @@ class ModelHolder:
 
     @staticmethod
     def _from_registry(name: str):
-        if name not in MODELS:
-            raise ValueError(f"unknown ASR_MODEL {name!r}; choose one of {', '.join(sorted(MODELS))}")
+        check_model_name(name)
         return MODELS[name]()
 
     @property
@@ -174,13 +186,28 @@ class ModelHolder:
         return getattr(self.adapter, "revision", None) or (cls.revision if cls else None)
 
     def get(self):
+        """The loaded adapter. Any load failure -> ModelNotReady; after one, no new try for `load_retry_s`
+        (a queue of 50 calls must not trigger 50 slow failing loads)."""
         if self.adapter is None:
-            adapter = self.factory(self.name)
+            if self.failed_at is not None and self.clock() - self.failed_at < self.load_retry_s:
+                raise ModelNotReady(f"model {self.name} failed to load recently; next try later")
             t = time.perf_counter()
-            adapter.load()
+            try:
+                adapter = self.factory(self.name)
+                adapter.load()
+            except Exception as exc:                       # noqa: BLE001
+                self.failed_at = self.clock()
+                free_gpu()
+                raise ModelNotReady(f"model {self.name} could not be loaded ({type(exc).__name__})") from exc
+            self.failed_at = None
             log.info("asr model %s loaded in %.0f s", self.name, time.perf_counter() - t)
             self.adapter = adapter
         return self.adapter
+
+    def ensure_loaded(self) -> None:
+        with self.lock:
+            self.get()
+            self.last_used = self.clock()
 
     @contextmanager
     def use(self):

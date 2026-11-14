@@ -31,6 +31,7 @@ def upgrade() -> None:
     sa.Column('diarization_version', sa.String(length=30), nullable=True),
     sa.Column('error', sa.String(length=300), nullable=True),
     sa.Column('queued_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('first_queued_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('started_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('finished_at', sa.DateTime(timezone=True), nullable=True),
     sa.ForeignKeyConstraint(['call_id'], ['call.id'], ondelete='CASCADE'),

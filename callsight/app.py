@@ -27,5 +27,6 @@ def teams() -> TeamConfig:
 def pbx() -> YeastarAdapter:
     """One adapter per process: the token is reused and the failed-login counter survives between jobs."""
     s = settings()
+    s.require_pbx()
     return YeastarAdapter(s.yeastar_base_url, s.yeastar_client_id, s.yeastar_client_secret,
                           verify_ssl=s.yeastar_verify_ssl)

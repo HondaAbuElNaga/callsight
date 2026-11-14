@@ -238,11 +238,12 @@ def test_status_counts_and_live_latency(session):
     for minutes in (2, 6, 10):
         c = make_call(session, start=NOW - timedelta(hours=2))
         t = _row(session, c, "done", tries=1)
-        t.queued_at = c.end_time + timedelta(seconds=30)
+        t.first_queued_at = c.end_time + timedelta(seconds=30)
+        t.queued_at = NOW                                          # rewritten by a retry: must not matter
         t.finished_at = c.end_time + timedelta(minutes=minutes)
     old = make_call(session, start=NOW - timedelta(days=3))       # backfilled: not counted in latency
     t = _row(session, old, "done", tries=1)
-    t.queued_at = t.finished_at = NOW
+    t.first_queued_at = t.queued_at = t.finished_at = NOW
     _row(session, make_call(session), "error", tries=2)
     _row(session, make_call(session), "queued")
     session.commit()
@@ -368,13 +369,79 @@ def test_task_other_error_has_no_text_in_message(session, audio_dir):
     assert t.status == "error" and t.error == "model failed (ValueError)" and SECRET_TEXT not in t.error
 
 
-def test_task_for_other_model_marked_error(session, audio_dir):
+def test_task_for_other_model_left_queued_without_a_try(session, audio_dir):
     c = make_call(session, path="2026/11/20/a.wav")
     queueing.add_row(session, c, cfg(model="audar-asr-turbo"), NOW)
     session.commit()
-    r = tasks.process(session, c.id, "audar-asr-turbo", holder(FakeAdapter()), audio_dir, load=LOAD,
-                      now=lambda: NOW)
-    assert r["status"] == "error" and "whisper-large-v3" in rows(session)[0].error
+    a = FakeAdapter()
+    r = tasks.process(session, c.id, "audar-asr-turbo", holder(a), audio_dir, load=LOAD, now=lambda: NOW)
+    t = rows(session)[0]
+    assert r["wrong_model"] and t.status == "queued" and t.tries == 0 and t.error is None and a.calls == 0
+
+
+class NoModel(FakeAdapter):
+    def load(self):
+        raise OSError("not in the offline cache")
+
+
+def test_task_model_load_failure_leaves_row_queued_without_a_try(session, audio_dir):
+    c = queued_call(session)
+    h = holder(NoModel())
+    for _ in range(2):                                             # 2nd time: holder back-off, still no try
+        r = tasks.process(session, c.id, "whisper-large-v3", h, audio_dir, load=LOAD, now=lambda: NOW)
+        assert r["not_ready"]
+    t = rows(session)[0]
+    assert t.status == "queued" and t.tries == 0 and t.error is None and t.started_at is None
+
+
+def test_task_model_unloaded_and_reload_fails_gives_back_the_try(session, audio_dir, monkeypatch):
+    c = queued_call(session)
+    h = holder(FakeAdapter())
+
+    def gone():
+        raise asr_engine.ModelNotReady("gone")
+    monkeypatch.setattr(h, "use", gone)
+    r = tasks.process(session, c.id, "whisper-large-v3", h, audio_dir, load=LOAD, now=lambda: NOW)
+    t = rows(session)[0]
+    assert r["not_ready"] and t.status == "queued" and t.tries == 0
+
+
+def test_task_soft_time_limit_is_error(session, audio_dir):
+    from celery.exceptions import SoftTimeLimitExceeded
+    c = queued_call(session)
+    tasks.process(session, c.id, "whisper-large-v3", holder(FakeAdapter(fail=[SoftTimeLimitExceeded()])),
+                  audio_dir, load=LOAD, now=lambda: NOW)
+    t = rows(session)[0]
+    assert t.status == "error" and "time limit" in t.error
+
+
+def test_task_save_failure_is_error_without_text_in_logs(engine, session, audio_dir, monkeypatch, caplog):
+    """A DB error while saving (here: a too-long column value) must not put transcript text in logs/results."""
+    from callsight.db.session import make_session_factory
+    c = queued_call(session)
+    monkeypatch.setattr(asr_engine, "SEGMENTER_VERSION", "x" * 40)    # column is String(30) -> DataError
+    sf = make_session_factory(URL)
+    assert sf.kw["bind"].hide_parameters
+    with sf() as s2, caplog.at_level(logging.DEBUG):
+        r = tasks.process(s2, c.id, "whisper-large-v3", holder(FakeAdapter()), audio_dir, load=LOAD,
+                          now=lambda: NOW)
+    t = rows(session)[0]
+    assert r["status"] == "error" and t.status == "error" and t.error == "saving transcript failed (DataError)"
+    assert SECRET_TEXT not in caplog.text and SECRET_TEXT not in repr(r) and t.text is None
+    assert session.scalar(select(func.count()).select_from(TranscriptSegment)) == 0
+
+
+def test_retry_errors_capped_since_day(session):
+    old = _row(session, make_call(session, start=datetime(2026, 11, 10, tzinfo=RIYADH)), "error", tries=2)
+    errs = [_row(session, make_call(session, start=NOW - timedelta(hours=i + 1)), "error", tries=2)
+            for i in range(3)]
+    _row(session, make_call(session), "skipped")
+    ids = queueing.retry_errors(session, cfg(), date(2026, 11, 18), limit=2, now=NOW)
+    assert ids == [errs[0].call_id, errs[1].call_id]
+    st = {t.id: (t.status, t.tries) for t in rows(session)}
+    assert st[errs[0].id] == ("queued", 0) and st[errs[2].id] == ("error", 2) and st[old.id] == ("error", 2)
+    with pytest.raises(ValueError):
+        queueing.retry_errors(session, cfg(), date(2026, 11, 18), limit=queueing.MAX_BACKFILL + 1, now=NOW)
 
 
 def test_task_without_row_does_nothing(session, audio_dir):
@@ -456,3 +523,10 @@ def test_cli_backfill_call_and_status(session, engine, monkeypatch, capsys):
     with pytest.raises(SystemExit):
         cli.main(["transcribe", "status", "--call", "1"])
     assert cli.main(["transcribe", "--days", "2", "--limit", "501"]) == 1
+    session.execute(text("UPDATE transcript SET status = 'error' WHERE call_id = :i"), {"i": calls[1].id})
+    session.commit()
+    since = (now - timedelta(days=1)).date().isoformat()
+    assert cli.main(["transcribe", "--retry-errors", "--since", since]) == 0
+    assert sent[-1][0] == calls[1].id and len(sent) == 7
+    with pytest.raises(SystemExit):
+        cli.main(["transcribe", "--retry-errors"])
