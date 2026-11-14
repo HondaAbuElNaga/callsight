@@ -53,7 +53,7 @@
          (`pbx-cert --fetch` on the LAN, compare, `--accept`); approve that retention keeps the gold set (benchmark
          clips + typed texts) or delete it by hand after the benchmark; delete `D:/callsight-backup-test` (750 MB test
          copy of real recordings, unencrypted) when no longer needed
-- [ ] 12. Verify; review with 3 subagents; fix; spec → done/[~]; roadmap; merge (--no-ff)
+- [x] 12. Verify; review with 3 subagents; fix; spec → done/[~]; roadmap; merge (--no-ff)
          → 3 reviewers: 0 critical, 1 high, 5 medium, 8 low; all confirmed and fixed:
            high: asr-worker image could not build (`requirements.in` not copied) → copied, image built OK;
            medium: pin without CA file gave no MITM protection → refused at start; `pbx-cert --accept` couldn't write
@@ -92,3 +92,6 @@
   (failed `test_disk_error_becomes_pbx_error` in Docker, also on the KPI image).
 - PGDG keeps only the newest 16.x: the exact pin `16.16-1.pgdg13+1` must be bumped when the build can't find it.
 - Not done (stretch): load test with 60,000 seeded calls (scratch DB), GPU-image hashes, real-values screenshot.
+         → merged to main 2026-11-14; pg_dump `callsight-before-0006-20261114-1508.dump`; live DB at 0006. Live
+           `backup`: 18 tables, 418 files (746 MB) into ./data/backup; `backup verify`: restore drill OK, 18 tables,
+           counts equal. /api/health = 401 without login (admin only). Health screenshot: ⚠ NEEDS USER (log in as admin → "الحالة").
