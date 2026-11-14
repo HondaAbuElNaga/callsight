@@ -29,8 +29,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
        "postgresql-client-16=${PG_CLIENT_VERSION}" \
     && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/*
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Exact versions + sha256 hashes (tools/lock-deps.sh); --no-deps: nothing outside the lock can be pulled in.
+# Test images: docker build --build-arg INSTALL_DEV=true (adds pytest + pypdf, also hash-checked).
+COPY requirements.lock requirements-dev.lock ./
+ARG INSTALL_DEV=false
+RUN pip install --no-cache-dir --require-hashes --no-deps -r requirements.lock \
+    && if [ "$INSTALL_DEV" = "true" ]; then pip install --no-cache-dir --require-hashes --no-deps -r requirements-dev.lock; fi \
+    && pip check
 COPY alembic.ini pyproject.toml ./
 COPY callsight ./callsight
 COPY config ./config

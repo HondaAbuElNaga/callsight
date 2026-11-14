@@ -196,7 +196,10 @@ class YeastarAdapter(PbxAdapter):
         except OSError as exc:              # disk full, no permission on the audio folder, ...
             raise PbxError(f"cannot write recording to disk: {exc}") from exc
         finally:
-            tmp.unlink(missing_ok=True)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:                 # Linux: parent is not a folder -> ENOTDIR; the PbxError above stands
+                pass
         return dest
 
     # ---------- agents ----------
