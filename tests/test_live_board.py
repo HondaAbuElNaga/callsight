@@ -184,16 +184,31 @@ def test_login_gate_one_login_per_10_minutes():
         LoginGate(FakeRedis(down=True))()                      # Redis down = no login
 
 
-def test_token_store_reuses_tokens_younger_than_25_min():
-    r, now = FakeRedis(), [1000.0]
-    ts = TokenStore(r, clock=lambda: now[0])
+def test_token_store_reuses_tokens_younger_than_25_min(tmp_path):
+    now = [1000.0]
+    ts = TokenStore(tmp_path / "pbx_token.json", clock=lambda: now[0])
     ts.save({"access_token": "a", "refresh_token": "b", "age": 60.0})
     now[0] += 600
     got = ts.load()
     assert got["access_token"] == "a" and got["age"] == pytest.approx(660.0)
     now[0] += 25 * 60
     assert ts.load() is None
-    assert TokenStore(FakeRedis(down=True)).load() is None
+    assert TokenStore(None).load() is None and TokenStore(tmp_path / "missing.json").load() is None
+    (tmp_path / "bad.json").write_text("{not json", encoding="utf-8")
+    assert TokenStore(tmp_path / "bad.json").load() is None
+
+
+def test_token_store_is_a_private_file_not_redis(tmp_path):
+    """Every container can read Redis (asr workers too): the PBX token lives in a 0600 file of the live service."""
+    import os
+    import stat
+    f = tmp_path / "pbx_token.json"
+    TokenStore(f).save({"access_token": "a", "refresh_token": "b", "age": 0.0})
+    assert json.loads(f.read_text(encoding="utf-8"))["access_token"] == "a"
+    if os.name == "posix":
+        assert stat.S_IMODE(f.stat().st_mode) == 0o600
+    TokenStore(f).clear()
+    assert not f.exists()
 
 
 def test_ws_url_uses_https_port_and_is_never_logged(caplog):
@@ -320,7 +335,7 @@ def test_service_publishes_masked_state_from_events(caplog):
     assert RAW_CALLER not in everything and "551234567" not in everything      # masked before Redis and logs
     assert "access_token=" not in ours and "tok1" not in ours                  # URL / token never logged by us
     assert http.calls.count("del_token") == 1                                  # clean stop frees the token
-    assert SNAPSHOT_KEY not in r.data and "live:pbx_token" not in r.data
+    assert SNAPSHOT_KEY not in r.data and not any("token" in k for k in r.data)   # no PBX token in Redis
 
 
 def test_heartbeat_sent_and_dead_connection_detected():
@@ -397,11 +412,11 @@ def test_login_rate_limit_one_per_10_minutes():
     assert http.logins == 0 and conn.urls == []
 
 
-def test_restart_reuses_saved_token_without_login():
+def test_restart_reuses_saved_token_without_login(tmp_path):
     r = FakeRedis()
-    TokenStore(r).save({"access_token": "saved", "refresh_token": "ref", "age": 120.0})
+    TokenStore(tmp_path / "t.json").save({"access_token": "saved", "refresh_token": "ref", "age": 120.0})
     http = FakePbxHttp()
-    svc, conn, *_ = make_service([FakeWs([])], http=http, redis=r)
+    svc, conn, *_ = make_service([FakeWs([])], http=http, redis=r, token_file=tmp_path / "t.json")
     run(svc)
     assert http.logins == 0 and conn.urls[0].endswith("access_token=saved")
 
@@ -415,10 +430,11 @@ def test_token_rotation_refreshes_without_new_login():
     assert conn.urls[0].endswith("tok1") and conn.urls[1].endswith("tok2")
 
 
-def test_subscribe_refused_token_drops_it_and_next_login_waits_for_the_gate():
+def test_subscribe_refused_token_drops_it_and_next_login_waits_for_the_gate(tmp_path):
     bad = FakeWs([], subscribe_reply='{"errcode":10004,"errmsg":"INVALID TOKEN"}')
     r = FakeRedis()
-    svc, conn, http, *_ = make_service([bad, FakeWs([])], redis=r, stop_after_sockets=False)
+    svc, conn, http, *_ = make_service([bad, FakeWs([])], redis=r, stop_after_sockets=False,
+                                       token_file=tmp_path / "t.json")
 
     async def go():
         task = asyncio.create_task(svc.run())
@@ -427,7 +443,7 @@ def test_subscribe_refused_token_drops_it_and_next_login_waits_for_the_gate():
         await task
     asyncio.run(go())
     assert http.logins == 1 and len(conn.urls) == 1           # new login only after the 10-minute gate
-    assert svc.adapter.access_token is None and "live:pbx_token" not in r.data
+    assert svc.adapter.access_token is None and not (tmp_path / "t.json").exists()
 
 
 def test_main_does_nothing_unless_enabled(capsys, monkeypatch):
@@ -463,3 +479,70 @@ def test_compose_live_service_is_off_by_default():
     # the API gets the Origin allowlist + the Listen switch (default off)
     api_env = spec["services"]["api"]["environment"]
     assert "${LISTEN_ENABLED:-false}" in str(api_env["LISTEN_ENABLED"])
+
+
+# ---------- review fixes ----------
+
+def test_stop_during_an_open_session_runs_shutdown_at_once():
+    """SIGTERM sets stop; a recv() waiting up to the heartbeat must not delay del_token past Docker's grace."""
+    timing = Timing(heartbeat=30, idle_timeout=60, rotate_after=25 * 60, sync_grace=10, prune_every=30,
+                    blocked_poll=0.05)
+    svc, conn, http, r, _ = make_service([FakeWs([20.0])], timing=timing, stop_after_sockets=False)
+
+    async def go():
+        task = asyncio.create_task(svc.run())
+        await asyncio.sleep(0.2)                       # connected, waiting in recv()
+        assert len(conn.urls) == 1
+        t0 = asyncio.get_running_loop().time()
+        svc.stop.set()
+        await asyncio.wait_for(task, 2)
+        await svc.shutdown()
+        return asyncio.get_running_loop().time() - t0
+    took = asyncio.run(go())
+    assert took < 1.0 and http.calls.count("del_token") == 1
+
+
+def test_waits_republish_so_the_snapshot_does_not_expire():
+    timing = Timing(heartbeat=0.05, idle_timeout=0.3, rotate_after=25 * 60, sync_grace=10, prune_every=10,
+                    blocked_poll=0.05, republish_every=0.05)
+    r = FakeRedis()
+    r.set("live:login_lock", "1", ex=600)
+    r.ttls["live:login_lock"] = 1                      # a 1 s login wait (real: up to 10 min > the 90 s TTL)
+    svc, conn, *_ = make_service([], redis=r, timing=timing, stop_after_sockets=False)
+
+    async def go():
+        task = asyncio.create_task(svc.run())
+        await asyncio.sleep(0.4)
+        svc.stop.set()
+        await task
+    asyncio.run(go())
+    assert len(r.messages()) >= 4                      # first publish + re-publishes during the wait
+
+
+def test_refused_login_sets_the_block_key_again_if_redis_missed_it():
+    """A refused login while Redis hiccuped: the key was never written. Setting it later keeps pbx-unblock useful."""
+    r = FakeRedis()
+    http = FakePbxHttp(login_codes=[20004])
+    svc, conn, *_ = make_service([], http=http, redis=r, stop_after_sockets=False)
+    real_block = svc.guard.block
+    calls = []
+
+    def flaky_block(reason):
+        calls.append(reason)
+        if len(calls) > 1:
+            real_block(reason)                         # the first SET is lost (Redis hiccup)
+    svc.guard.block = flaky_block
+    svc.adapter.guard = svc.guard
+
+    async def go():
+        task = asyncio.create_task(svc.run())
+        await asyncio.sleep(0.3)
+        svc.stop.set()
+        await task
+    asyncio.run(go())
+    assert http.logins == 1 and AUTH_BLOCKED_KEY in r.data and len(calls) >= 2
+
+
+def test_queue_from_path_never_takes_part_of_a_long_number():
+    assert events._queue_from_path("queue from 0551234567 to 6401") is None
+    assert events._queue_from_path("queue 6401") == "6401"

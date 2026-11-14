@@ -1,5 +1,9 @@
 """live board (spec 2026-11-14-live-board): append-only listen_audit table. Additive only.
 
+Triggers refuse UPDATE / DELETE and a TRUNCATE of a non-empty table (unless a maintenance session
+sets callsight.audit_maintenance=on). They stop mistakes, not someone with the DB owner password:
+real tamper resistance needs an API DB role with INSERT/SELECT only (later idea).
+
 Before running on the live DB: backup first (python -m callsight backup).
 
 Revision ID: 0009
@@ -16,6 +20,13 @@ LISTEN_AUDIT_APPEND_ONLY = (
     "RAISE EXCEPTION 'listen_audit is append-only'; END; $$ LANGUAGE plpgsql",
     "CREATE TRIGGER listen_audit_no_change BEFORE UPDATE OR DELETE ON listen_audit "
     "FOR EACH ROW EXECUTE FUNCTION listen_audit_append_only()",
+    "CREATE OR REPLACE FUNCTION listen_audit_no_truncate() RETURNS trigger AS $$ BEGIN "
+    "IF EXISTS (SELECT 1 FROM listen_audit) AND "
+    "coalesce(current_setting('callsight.audit_maintenance', true), '') <> 'on' THEN "
+    "RAISE EXCEPTION 'listen_audit is append-only (TRUNCATE refused)'; END IF; RETURN NULL; END; $$ "
+    "LANGUAGE plpgsql",
+    "CREATE TRIGGER listen_audit_no_truncate BEFORE TRUNCATE ON listen_audit "
+    "FOR EACH STATEMENT EXECUTE FUNCTION listen_audit_no_truncate()",
 )
 
 revision = '0009'
@@ -47,6 +58,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS listen_audit_no_change ON listen_audit")
+    op.execute("DROP TRIGGER IF EXISTS listen_audit_no_truncate ON listen_audit")
     op.drop_index('ix_listen_audit_user_id', table_name='listen_audit')
     op.drop_table('listen_audit')
     op.execute("DROP FUNCTION IF EXISTS listen_audit_append_only()")
+    op.execute("DROP FUNCTION IF EXISTS listen_audit_no_truncate()")

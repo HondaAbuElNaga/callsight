@@ -96,7 +96,7 @@ def _queue_from_path(path: object) -> str | None:
     low = text.lower()
     if "queue" in low:
         digits = "".join(ch if ch.isdigit() else " " for ch in low.split("queue", 1)[1]).split()
-        return digits[0][:6] if digits else None
+        return _ext(digits[0]) if digits else None    # never truncate: a long run may be a caller number
     return None
 
 

@@ -4,6 +4,7 @@ Run: uvicorn callsight.api.main:app  (settings from .env; APP_SECRET is required
 """
 
 import os
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +29,7 @@ from .live import LiveConfig, NoLiveSource
 from .calls import (DIRECTIONS, STATUSES, CallFilter, call_detail, list_calls, summary, team_agents, visible_call,
                     visible_scope)
 
+LISTEN_DENIALS_PER_MIN = 10           # audited refused Listen requests per user per minute
 MAX_RANGE_DAYS = 400
 AUDIT_WINDOW = timedelta(minutes=10)   # one audit row per user + call within this window
 
@@ -394,20 +396,39 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         s.commit()                       # committed before anything else happens (before any PBX call)
         return row
 
+    listen_origins = cfg.live.origins if cfg.live else frozenset()
+    denials: dict[int, list[float]] = {}          # user id -> times of audited denials (this API process)
+
+    def deny(s: Session, user: AppUser, ip: str | None, call_id: str, result: str, code: int, detail: str):
+        """Audit a refused Listen, but at most LISTEN_DENIALS_PER_MIN rows per user per minute: a script or a
+        cross-site form must not flood the append-only table (later ones: 429, no row)."""
+        now = time.monotonic()
+        recent = [t for t in denials.get(user.id, []) if now - t < 60]
+        if len(recent) >= LISTEN_DENIALS_PER_MIN:
+            denials[user.id] = recent
+            raise HTTPException(429, "too many refused listen requests; try again in a minute")
+        denials[user.id] = [*recent, now]
+        listen_audit(s, user, ip, call_id, result)
+        raise HTTPException(code, detail)
+
     @app.post("/api/live/{call_id}/listen")
     def listen(call_id: Annotated[str, FPath(pattern=r"^[A-Za-z0-9_.\-]{1,64}$")], request: Request, user: User,
                s: DB) -> dict:
+        # client_ip: behind Docker's port mapping this is the bridge gateway, not the user's PC (user_id is the key)
         ip = request.client.host if request.client else None
+        if (request.headers.get("origin") or "").rstrip("/") not in listen_origins:
+            deny(s, user, ip, call_id, "denied_origin", 403, "request not from the CallSight page")
         if user.role not in auth.STAFF_ROLES:
-            listen_audit(s, user, ip, call_id, "denied_role")
-            raise HTTPException(403, "admin or supervisor only")
+            deny(s, user, ip, call_id, "denied_role", 403, "admin or supervisor only")
         if not cfg.listen_enabled():
-            listen_audit(s, user, ip, call_id, "denied_off")
-            raise HTTPException(403, "feature off")
+            deny(s, user, ip, call_id, "denied_off", 403, "feature off")
         if not user.ext:
-            listen_audit(s, user, ip, call_id, "denied_no_ext")
-            raise HTTPException(403, "your account has no extension to ring")
-        live = cfg.live_lookup(call_id) if cfg.live_lookup else None
+            deny(s, user, ip, call_id, "denied_no_ext", 403, "your account has no extension to ring")
+        try:
+            live = cfg.live_lookup(call_id) if cfg.live_lookup else None
+        except Exception:  # noqa: BLE001 - Redis down / bad snapshot: still audited
+            listen_audit(s, user, ip, call_id, "error")
+            raise HTTPException(503, "live data not available") from None
         agent = ((live or {}).get("agents") or [None])[0]
         if live is None or agent is None:
             listen_audit(s, user, ip, call_id, "not_found", agent)

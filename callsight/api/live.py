@@ -1,7 +1,9 @@
 """Live board push: WebSocket /api/live + the Listen stub (spec 2026-11-14-live-board, decisions 2 and 4).
 
-WebSocket rules (checked BEFORE accept): exact Origin allowlist (SameSite does not cover other localhost ports),
-login cookie, admin/supervisor only, max 3 sockets per user / 20 in total. After accept: snapshot, then deltas,
+WebSocket rules: the exact Origin allowlist is checked BEFORE accept (SameSite does not cover other localhost
+ports). Login cookie, admin/supervisor only and max 3 sockets per user / 20 in total are checked right AFTER accept,
+then the socket is closed with 4401 / 4403 / 1013: a close before accept reaches a real browser only as 1006 (uvicorn
+answers the handshake with HTTP 403), so the page could not tell "login expired" apart. Then: snapshot, then deltas,
 each with a sequence number (the browser asks for "snapshot" again on a gap); the login is re-checked every
 RECHECK seconds (logout / disabled user / 8 h expiry close the socket); a client whose bounded send queue fills
 up is dropped. One Redis subscriber per API process fans out to all sockets.
@@ -81,6 +83,7 @@ class RedisLiveSource:
         from ..live.bus import CHANNEL
         delay = 1.0
         while True:
+            pubsub = None
             try:
                 pubsub = self.redis.pubsub()
                 await pubsub.subscribe(CHANNEL)
@@ -96,6 +99,7 @@ class RedisLiveSource:
                 raise
             except Exception as exc:  # noqa: BLE001 - Redis restart: resubscribe with back-off
                 log.warning("live: Redis subscription lost (%s)", type(exc).__name__)
+                await _close_pubsub(pubsub)          # don't leak one pool connection per Redis restart
                 await asyncio.sleep(delay)
                 delay = min(30.0, delay * 2)
 
@@ -173,6 +177,7 @@ def register(app, cfg: LiveConfig, session_factory, secret: str) -> LiveHub:
             return
         token = ws.cookies.get(auth.COOKIE_NAME)
         user = await run_in_threadpool(check_login, token)
+        await ws.accept()        # after the Origin check; the codes below must reach the browser (see module doc)
         if user is None:
             await ws.close(code=CLOSE_LOGIN)
             return
@@ -184,7 +189,6 @@ def register(app, cfg: LiveConfig, session_factory, secret: str) -> LiveHub:
             await ws.close(code=CLOSE_TRY_AGAIN)
             return
         try:
-            await ws.accept()
             hub.offer(client, await snapshot_message())
             outcome: dict[str, int] = {}
 
@@ -211,6 +215,16 @@ def register(app, cfg: LiveConfig, session_factory, secret: str) -> LiveHub:
             hub.leave(client)
 
     return hub
+
+
+async def _close_pubsub(pubsub) -> None:
+    if pubsub is None:
+        return
+    try:
+        closer = getattr(pubsub, "aclose", None) or pubsub.close
+        await closer()
+    except Exception:  # noqa: BLE001 - already broken: nothing more to free
+        pass
 
 
 async def _sender(ws: WebSocket, client: Client) -> int:

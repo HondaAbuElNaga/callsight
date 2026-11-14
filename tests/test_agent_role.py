@@ -52,11 +52,25 @@ def _call(s, uid, hour, *, agent=None, missed=None, status="answered", direction
     return c
 
 
+def _truncate(engine):  # noqa: F811
+    with engine.begin() as c:
+        # the route walk writes listen_audit rows (refused Listen); its TRUNCATE trigger needs the maintenance flag
+        c.execute(text("SET LOCAL callsight.audit_maintenance = 'on'"))
+        c.execute(text("TRUNCATE listen_audit, recording_play, app_user, call_leg, call, agent, queue, ingest_state, "
+                       "reconcile_run RESTART IDENTITY CASCADE"))
+
+
+@pytest.fixture(autouse=True)
+def _no_audit_rows_left(request):
+    """Leave no listen_audit rows behind: other test files TRUNCATE app_user ... CASCADE."""
+    yield
+    if "engine" in request.fixturenames:
+        _truncate(request.getfixturevalue("engine"))
+
+
 @pytest.fixture
 def env(engine, tmp_path):  # noqa: F811
-    with engine.begin() as c:
-        c.execute(text("TRUNCATE recording_play, app_user, call_leg, call, agent, queue, ingest_state, reconcile_run "
-                       "RESTART IDENTITY CASCADE"))
+    _truncate(engine)
     Session = sessionmaker(engine, expire_on_commit=False)
     (tmp_path / "r").mkdir()
     for name in ("own.wav", "other.wav"):

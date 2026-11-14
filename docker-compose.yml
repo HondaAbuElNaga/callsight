@@ -105,17 +105,27 @@ services:
   live:
     profiles: ["live"]
     build: .
-    env_file: .env
     command: python -m callsight live
+    # No env_file: only what the live service reads (no APP_SECRET, no DB password: it never touches the DB).
     environment:
-      DATABASE_URL: postgresql+psycopg://callsight:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/callsight
+      DATABASE_URL: postgresql+psycopg://unused@invalid/unused   # required by Settings, never connected to
       REDIS_URL: redis://redis:6379/0
       LIVE_ENABLED: ${LIVE_ENABLED:-false}
+      LIVE_TOKEN_FILE: /live-state/pbx_token.json
+      YEASTAR_BASE_URL: ${YEASTAR_BASE_URL:-}
+      YEASTAR_CLIENT_ID: ${YEASTAR_CLIENT_ID:-}
+      YEASTAR_CLIENT_SECRET: ${YEASTAR_CLIENT_SECRET:-}
+      YEASTAR_VERIFY_SSL: ${YEASTAR_VERIFY_SSL:-true}
+      YEASTAR_CA_FILE: ${YEASTAR_CA_FILE:-}
+      YEASTAR_CERT_SHA256: ${YEASTAR_CERT_SHA256:-}
+      YEASTAR_TLS_CHECK_HOSTNAME: ${YEASTAR_TLS_CHECK_HOSTNAME:-true}
     volumes:
       - ./config:/app/config:ro            # YEASTAR_CA_FILE (PBX certificate)
+      - live-state:/live-state             # its own PBX token (0600 file); mounted into no other service
     depends_on:
       redis: { condition: service_healthy }
     restart: on-failure:5                  # capped: never a restart loop against the PBX
+    stop_grace_period: 30s                 # time for del_token on stop (frees one of the PBX's 8 tokens)
 
   # Speech-to-text benchmark on the GPU. Not started by "up -d"; run one model at a time:
   #   docker compose run --rm asr-bench --check
@@ -257,5 +267,6 @@ networks:
     internal: true                         # no route to the internet: call audio + transcripts stay on this PC
 
 volumes:
+  live-state:
   pgdata:
   hf-models:

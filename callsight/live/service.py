@@ -4,9 +4,11 @@ Off by default, double gate (decision 7): the compose service has profile `live`
 program exits 0 at once unless LIVE_ENABLED=true.
 
 PBX safety (decision 1):
-- own single login (never shares the ingest token); reuses a saved token younger than 25 min after a restart;
-  at most 1 login per 10 min (Redis key live:login_lock); refreshes with the refresh_token and reconnects the
-  WebSocket with the new token every ~25 min; del_token on a clean stop.
+- own single login (never shares the ingest token); reuses a saved token younger than 25 min after a restart
+  (saved in a 0600 file on a volume only this service mounts, NOT in Redis: every container can read Redis);
+  at most 1 login per 10 min (Redis key live:login_lock); every ~25 min it refreshes with the refresh_token
+  (if the PBX refuses the refresh: one gated login, still max 1 per 10 min) and reconnects the WebSocket with the
+  new token; del_token on a clean stop (SIGTERM interrupts a waiting recv() at once).
 - pbx:auth_blocked is checked before every login (Redis down = treated as blocked) and set on a refused login or
   errcode 60002; a failed login is NEVER retried: the service waits until a person runs `pbx-unblock`.
 - PBX unreachable: exponential back-off 5 s -> 5 min with jitter.
@@ -22,6 +24,7 @@ import random
 import ssl
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from ..pbx.authblock import AuthGuard
@@ -32,7 +35,7 @@ from .state import LiveState
 
 log = logging.getLogger(__name__)
 
-TOKEN_KEY = "live:pbx_token"        # this service's own token, so a restart does not log in again
+TOKEN_FILE_DEFAULT = "/live-state/pbx_token.json"   # LIVE_TOKEN_FILE; volume mounted only into the live service
 LOGIN_LOCK_KEY = "live:login_lock"   # at most one login per LOGIN_INTERVAL
 LOGIN_INTERVAL = 10 * 60
 TOKEN_REUSE = 25 * 60
@@ -69,6 +72,7 @@ class Timing:
     prune_every: float = 60.0
     blocked_poll: float = 60.0       # how often to look whether a person ran pbx-unblock
     subscribe_timeout: float = 15.0
+    republish_every: float = 30.0    # while waiting (back-off, login gate): keep the 90 s snapshot key alive
 
 
 class Backoff:
@@ -104,14 +108,18 @@ class LoginGate:
 
 
 class TokenStore:
-    def __init__(self, redis, clock=time.time):
-        self.redis, self._clock = redis, clock
+    """This service's own PBX token (so a restart does not log in again), in a file readable only by this service.
+    path None = not kept (tests)."""
+
+    def __init__(self, path: Path | None, clock=time.time):
+        self.path, self._clock = path, clock
 
     def load(self) -> dict | None:
+        if self.path is None:
+            return None
         try:
-            raw = self.redis.get(TOKEN_KEY)
-            data = json.loads(raw) if raw else None
-        except Exception:  # noqa: BLE001 - unreadable / Redis down: just log in later (rate limited)
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - missing / unreadable: just log in later (rate limited)
             return None
         if not isinstance(data, dict) or not data.get("access_token"):
             return None
@@ -123,15 +131,24 @@ class TokenStore:
     def save(self, state: dict | None) -> None:
         if not state:
             return
+        if self.path is None:
+            return
         data = {**state, "saved_at": self._clock()}
+        tmp = self.path.with_name(self.path.name + ".tmp")
         try:
-            self.redis.set(TOKEN_KEY, json.dumps(data), ex=int(TOKEN_REUSE))
-        except Exception:  # noqa: BLE001
-            log.warning("could not save the live PBX token in Redis")
+            tmp.unlink(missing_ok=True)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            os.replace(tmp, self.path)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not save the live PBX token (%s)", type(exc).__name__)
 
     def clear(self) -> None:
+        if self.path is None:
+            return
         try:
-            self.redis.delete(TOKEN_KEY)
+            self.path.unlink(missing_ok=True)
         except Exception:  # noqa: BLE001
             pass
 
@@ -162,6 +179,7 @@ Connect = Callable[..., Any]   # websockets.connect-like: async context manager 
 class LiveService:
     def __init__(self, adapter, redis, connect: Connect, *, guard: AuthGuard, base_url: str,
                  ssl_ctx: ssl.SSLContext | None = None, timing: Timing = Timing(), backoff: Backoff | None = None,
+                 token_file: Path | None = None,
                  wall=time.time, mono=time.monotonic, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep):
         self.adapter, self.redis, self.connect, self.guard = adapter, redis, connect, guard
         self.base_url, self.ssl_ctx, self.t = base_url, ssl_ctx, timing
@@ -169,7 +187,7 @@ class LiveService:
         self._wall, self._mono, self._sleep = wall, mono, sleep
         self.state = LiveState()
         self.pub = Publisher(redis, clock=wall)
-        self.tokens = TokenStore(redis, clock=wall)
+        self.tokens = TokenStore(token_file, clock=wall)
         self.status = "disconnected"
         self.stop = asyncio.Event()
 
@@ -197,10 +215,18 @@ class LiveService:
     # ---------- main loop ----------
 
     async def _wait(self, seconds: float) -> None:
-        try:
-            await asyncio.wait_for(self.stop.wait(), timeout=max(0.0, seconds))
-        except asyncio.TimeoutError:
-            pass
+        """Sleep until `seconds` passed or stop; re-publishes the status every `republish_every` so the snapshot key
+        (TTL 90 s) does not expire during a long back-off / login wait (the page would say "service stopped")."""
+        end = self._mono() + max(0.0, seconds)
+        while not self.stop.is_set():
+            rest = end - self._mono()
+            if rest <= 0:
+                return
+            try:
+                await asyncio.wait_for(self.stop.wait(), timeout=min(rest, self.t.republish_every))
+            except asyncio.TimeoutError:
+                if end - self._mono() > 0:
+                    self._publish([])
 
     async def run(self) -> None:
         self._publish([], "disconnected")
@@ -222,6 +248,8 @@ class LiveService:
             except (AuthError, TokenLimit) as exc:
                 # The adapter already set pbx:auth_blocked (and counts the failure in-process): never retried.
                 log.error("live: PBX login refused (%s); waiting for pbx-unblock", type(exc).__name__)
+                if not self.guard.blocked():   # the key could not be written (Redis hiccup): set it now, so the
+                    self.guard.block(f"live: login refused ({type(exc).__name__})")   # pbx-unblock path works
                 self.adapter.access_token = None
                 self.tokens.clear()
                 self._publish(self.state.reset(), "auth_blocked")
@@ -272,10 +300,9 @@ class LiveService:
                     return
                 wake = min(next_beat, next_prune, rotate_at, last_rx + self.t.idle_timeout + 0.01,
                            sync_until if self.status == "syncing" else next_beat)
-                try:
-                    msg = await asyncio.wait_for(ws.recv(), timeout=max(0.01, wake - now))
-                except asyncio.TimeoutError:
-                    msg = None
+                msg = await self._recv_or_stop(ws, max(0.01, wake - now))
+                if self.stop.is_set():
+                    return
                 now = self._mono()
                 if msg is not None:
                     last_rx = now
@@ -293,6 +320,24 @@ class LiveService:
                         self._publish(gone)
                 if now - last_rx > self.t.idle_timeout:
                     raise HeartbeatTimeout("no message from the PBX")
+
+    async def _recv_or_stop(self, ws, timeout: float) -> Any:
+        """ws.recv() that a stop (SIGTERM) interrupts at once: Docker kills after the grace period, and shutdown()
+        must still run del_token. None on timeout / stop; connection errors are raised."""
+        recv = asyncio.ensure_future(ws.recv())
+        stopper = asyncio.ensure_future(self.stop.wait())
+        try:
+            done, _ = await asyncio.wait({recv, stopper}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            stopper.cancel()
+        if recv in done:
+            return recv.result()
+        recv.cancel()
+        try:
+            await recv
+        except BaseException:  # noqa: BLE001 - cancelled / closed: nothing to read
+            pass
+        return None
 
     def _check_subscribe(self, reply: Any) -> None:
         try:
@@ -345,7 +390,8 @@ def build_service() -> LiveService:
                              cert_sha256=s.yeastar_cert_sha256, guard=guard, login_gate=LoginGate(redis),
                              max_login_failures=1)
     return LiveService(adapter, redis, websockets.connect, guard=guard, base_url=s.yeastar_base_url,
-                       ssl_ctx=ssl_context(verify))
+                       ssl_ctx=ssl_context(verify),
+                       token_file=Path(os.getenv("LIVE_TOKEN_FILE", TOKEN_FILE_DEFAULT)))
 
 
 def main(enabled: Callable[[], bool] = lambda: env_true("LIVE_ENABLED"),

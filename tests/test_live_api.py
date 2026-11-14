@@ -18,6 +18,7 @@ from live_fakes import FakeSource
 from test_api import PASSWORD, SECRET, TEAM, engine  # noqa: F401  (engine is a fixture)
 
 ORIGIN = "http://127.0.0.1:8080"
+H = {"origin": ORIGIN}           # the Listen POST must come from the CallSight page
 CALL = {"call_id": "1731574800.101", "state": "talking", "direction": "inbound", "agents": ["119"], "ringing": [],
         "caller": "••••4567", "queue": "6401", "started_at": 1000.0, "answered_at": 1005.0}
 SNAP = {"seq": 41, "status": "connected", "calls": [CALL], "published_at": 1010.0}
@@ -36,8 +37,7 @@ class FakeListenPbx:
 
 @pytest.fixture
 def env(engine):  # noqa: F811
-    with engine.begin() as c:
-        c.execute(text("TRUNCATE listen_audit, recording_play, app_user RESTART IDENTITY CASCADE"))
+    clean(engine)
     Session = sessionmaker(engine, expire_on_commit=False)
     with Session() as s:
         auth.create_user(s, "boss", PASSWORD, "supervisor", "114")
@@ -53,7 +53,14 @@ def env(engine):  # noqa: F811
             live_lookup=lambda cid: next((c for c in state["source"].snap["calls"] if c["call_id"] == cid), None)
             if state["source"].snap else None))
         return TestClient(app)
-    return build, Session, state
+    yield build, Session, state
+    clean(engine)
+
+
+def clean(engine):  # noqa: F811
+    with engine.begin() as c:
+        c.execute(text("SET LOCAL callsight.audit_maintenance = 'on'"))
+        c.execute(text("TRUNCATE listen_audit, recording_play, app_user RESTART IDENTITY CASCADE"))
 
 
 def login(client, user="boss"):
@@ -71,7 +78,7 @@ def refused(client, origin=ORIGIN) -> int:
     return e.value.code
 
 
-# ---------- WebSocket: checks before accept ----------
+# ---------- WebSocket: Origin before accept; login / role / caps right after accept ----------
 
 def test_ws_needs_login(env):
     build, *_ = env
@@ -203,7 +210,7 @@ def test_listen_403_while_off_and_audited(env):
     build, Session, state = env
     c = build()
     login(c)
-    r = c.post(f"/api/live/{CALL['call_id']}/listen")
+    r = c.post(f"/api/live/{CALL['call_id']}/listen", headers=H)
     assert r.status_code == 403 and r.json()["detail"] == "feature off"
     assert state["pbx"].calls == []                                   # no PBX call at all
     assert audit_rows(Session) == [("attempt", "denied_off", CALL["call_id"], None, "114", None)]
@@ -213,11 +220,11 @@ def test_listen_flag_is_read_on_every_request(env):
     build, _, state = env
     c = build()
     login(c)
-    assert c.post(f"/api/live/{CALL['call_id']}/listen").status_code == 403
+    assert c.post(f"/api/live/{CALL['call_id']}/listen", headers=H).status_code == 403
     state["listen"] = True
-    assert c.post(f"/api/live/{CALL['call_id']}/listen").status_code == 503      # gate 2: the adapter refuses
+    assert c.post(f"/api/live/{CALL['call_id']}/listen", headers=H).status_code == 503      # gate 2: the adapter refuses
     state["listen"] = False
-    assert c.post(f"/api/live/{CALL['call_id']}/listen").status_code == 403
+    assert c.post(f"/api/live/{CALL['call_id']}/listen", headers=H).status_code == 403
 
 
 def test_listen_on_writes_pending_then_result(env):
@@ -225,14 +232,14 @@ def test_listen_on_writes_pending_then_result(env):
     state["listen"] = True
     c = build()
     login(c)
-    r = c.post(f"/api/live/{CALL['call_id']}/listen")
+    r = c.post(f"/api/live/{CALL['call_id']}/listen", headers=H)
     assert r.status_code == 503                                       # PBX adapter's own gate refuses
     assert state["pbx"].calls == [("114", CALL["call_id"])]
     rows = audit_rows(Session)
     assert rows[0] == ("attempt", "pending", CALL["call_id"], "119", "114", None)
     assert rows[1][:2] == ("result", "refused") and rows[1][5] is not None
     state["pbx"].ok = True
-    assert c.post(f"/api/live/{CALL['call_id']}/listen").json() == {"ok": True}
+    assert c.post(f"/api/live/{CALL['call_id']}/listen", headers=H).json() == {"ok": True}
     assert audit_rows(Session)[-1][:2] == ("result", "ok")
 
 
@@ -241,21 +248,21 @@ def test_listen_needs_staff_extension_and_a_talking_call(env):
     state["listen"] = True
     c = build()
     login(c, "admin1")
-    assert c.post(f"/api/live/{CALL['call_id']}/listen").status_code == 403         # admin without ext
+    assert c.post(f"/api/live/{CALL['call_id']}/listen", headers=H).status_code == 403         # admin without ext
     c2 = build()
     login(c2, "ali")
-    assert c2.post(f"/api/live/{CALL['call_id']}/listen").status_code == 403        # agents never
+    assert c2.post(f"/api/live/{CALL['call_id']}/listen", headers=H).status_code == 403        # agents never
     c3 = build()
     login(c3)
-    assert c3.post("/api/live/unknown.1/listen").status_code == 404
-    assert c3.post("/api/live/bad%20id/listen").status_code == 422
+    assert c3.post("/api/live/unknown.1/listen", headers=H).status_code == 404
+    assert c3.post("/api/live/bad%20id/listen", headers=H).status_code == 422
     assert [r[1] for r in audit_rows(Session)] == ["denied_no_ext", "denied_role", "not_found"]
     assert state["pbx"].calls == []
 
 
 def test_listen_needs_login(env):
     build, Session, _ = env
-    assert build().post(f"/api/live/{CALL['call_id']}/listen").status_code == 401
+    assert build().post(f"/api/live/{CALL['call_id']}/listen", headers=H).status_code == 401
     assert audit_rows(Session) == []
 
 
@@ -263,7 +270,7 @@ def test_listen_audit_is_append_only(env):
     build, Session, _ = env
     c = build()
     login(c)
-    c.post(f"/api/live/{CALL['call_id']}/listen")
+    c.post(f"/api/live/{CALL['call_id']}/listen", headers=H)
     for sql in ("UPDATE listen_audit SET result = 'ok'", "DELETE FROM listen_audit"):
         with Session() as s:
             with pytest.raises(DBAPIError, match="append-only"):
@@ -278,3 +285,59 @@ def test_no_listen_button_markup_ships():
     for f in src.glob("*.tsx"):
         body = f.read_text(encoding="utf-8")
         assert "/listen" not in body and "استماع" not in body.replace("الاستماع المباشر متوقف", ""), f.name
+
+
+def test_ws_login_code_reaches_the_client_after_accept(env):
+    """A close before accept is an HTTP 403 for a real browser (code 1006): login/role/caps close after accept."""
+    build, *_ = env
+    c = build()
+    with ws(c) as w:                                      # the handshake is accepted ...
+        with pytest.raises(WebSocketDisconnect) as e:
+            w.receive_text()
+    assert e.value.code == CLOSE_LOGIN                    # ... then closed with 4401, which the page acts on
+
+
+def test_listen_needs_the_page_origin_and_is_audited(env):
+    build, Session, state = env
+    state["listen"] = True
+    c = build()
+    login(c)
+    for headers in ({}, {"origin": "http://127.0.0.1:5173"}, {"origin": "null"}):
+        assert c.post(f"/api/live/{CALL['call_id']}/listen", headers=headers).status_code == 403
+    assert [r[1] for r in audit_rows(Session)] == ["denied_origin"] * 3
+    assert state["pbx"].calls == []
+
+
+def test_listen_denials_are_rate_limited(env):
+    build, Session, _ = env
+    c = build()
+    login(c)
+    codes = [c.post(f"/api/live/{CALL['call_id']}/listen", headers=H).status_code for _ in range(13)]
+    assert codes[:10] == [403] * 10 and codes[10:] == [429] * 3
+    assert len(audit_rows(Session)) == 10                 # the table can't be flooded
+
+
+def test_listen_lookup_error_is_audited(env):
+    build, Session, state = env
+    state["listen"] = True
+
+    class Broken:
+        snap = property(lambda self: (_ for _ in ()).throw(ConnectionError("redis down")))
+    state["source"] = Broken()
+    c = build()
+    login(c)
+    assert c.post(f"/api/live/{CALL['call_id']}/listen", headers=H).status_code == 503
+    assert [r[1] for r in audit_rows(Session)] == ["error"]
+    assert state["pbx"].calls == []
+
+
+def test_listen_audit_truncate_refused_unless_maintenance(env):
+    build, Session, _ = env
+    c = build()
+    login(c)
+    c.post(f"/api/live/{CALL['call_id']}/listen", headers=H)
+    with Session() as s:
+        with pytest.raises(DBAPIError, match="append-only"):
+            s.execute(text("TRUNCATE listen_audit"))
+            s.commit()
+    assert len(audit_rows(Session)) == 1

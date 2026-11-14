@@ -57,7 +57,8 @@ connects silently").
 
 ## Decisions (2 judges, 2026-11-14; override the text above where different)
 1. **Token:** no sharing (ingest keeps its token in process memory; sharing = refresh races). The live service does its
-   **own single login**, refreshes only via refresh_token, reconnects the WebSocket with the new token every ~25 min,
+   **own single login**, refreshes via refresh_token (if the PBX refuses the refresh: one login through the same
+   gate, max 1 per 10 min — build note 2026-11-14), reconnects the WebSocket with the new token every ~25 min,
    reuses a saved token (< 25 min old) after a restart, at most 1 login per 10 min, calls `del_token` on clean
    shutdown. New Redis key **`pbx:auth_blocked`**: set by ANY process (ingest, CLI, live) on a failed login or errcode
    60002, cleared only by hand (`python -m callsight pbx-unblock`); every process checks it before logging in. Token

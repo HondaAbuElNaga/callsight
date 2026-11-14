@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type Agent, type LiveCall, type LiveMessage, type Me } from "./api";
+import { api, Unauthorized, type Agent, type LiveCall, type LiveMessage, type Me } from "./api";
 import { DIRECTION_LABEL, formatDateTime, mmss } from "./format";
 
 interface Props { me: Me; onCalls: () => void; onLogout: () => void; onExpired: () => void }
@@ -24,7 +24,8 @@ function wsUrl(): string {
 }
 
 // Browser side of the live push: snapshot, then deltas with a sequence number; on a gap it asks for the snapshot
-// again. Reconnects with back-off 1 s -> 30 s plus jitter. Close code 4401 = login expired.
+// again. Reconnects with back-off 1 s -> 30 s plus jitter. Close code 4401 = login expired; a refused handshake
+// shows up as 1006 in browsers, so after 1006 /api/me tells whether the login has expired.
 function useLiveBoard(onExpired: () => void): [Board, boolean] {
   const [board, setBoard] = useState<Board>(EMPTY);
   const [connected, setConnected] = useState(false);
@@ -38,16 +39,20 @@ function useLiveBoard(onExpired: () => void): [Board, boolean] {
     let timer: number | undefined;
     let idle: number | undefined;
     let seq: number | null = null;
+    let snapshotPending = false;   // one "snapshot" request at a time; deltas are dropped until it arrives
 
-    const askSnapshot = () => { if (ws?.readyState === WebSocket.OPEN) ws.send("snapshot"); };
+    const askSnapshot = (force = false) => {
+      if (snapshotPending && !force) return;
+      if (ws?.readyState === WebSocket.OPEN) { ws.send("snapshot"); snapshotPending = true; }
+    };
     const armIdle = () => {   // nothing heard for 45 s (service died?): ask for the snapshot again
       window.clearTimeout(idle);
-      idle = window.setTimeout(() => { askSnapshot(); armIdle(); }, 45_000);
+      idle = window.setTimeout(() => { askSnapshot(true); armIdle(); }, 45_000);
     };
 
     const connect = () => {
       ws = new WebSocket(wsUrl());
-      ws.onopen = () => { setConnected(true); delay = 1000; armIdle(); };
+      ws.onopen = () => { setConnected(true); delay = 1000; snapshotPending = false; armIdle(); };
       ws.onmessage = (ev) => {
         armIdle();
         let m: LiveMessage;
@@ -55,12 +60,14 @@ function useLiveBoard(onExpired: () => void): [Board, boolean] {
         const skew = m.type === "snapshot" ? m.server_time - Date.now() / 1000 : undefined;
         if (m.type === "snapshot") {
           seq = m.seq;
+          snapshotPending = false;
           setBoard((b) => ({
             available: m.available, status: m.status, lastSeen: m.last_seen, seq: m.seq,
             calls: new Map(m.calls.map((c) => [c.call_id, c])), skew: skew ?? b.skew,
           }));
           return;
         }
+        if (seq !== null && m.seq <= seq) return;   // stale: already in the snapshot
         if (seq === null || m.seq !== seq + 1) {   // gap (or no snapshot yet): fetch the whole state again
           seq = null;
           askSnapshot();
@@ -84,6 +91,9 @@ function useLiveBoard(onExpired: () => void): [Board, boolean] {
         if (stopped) return;
         if (ev.code === 4401) { expired.current(); return; }
         if (ev.code === 4403) return;                  // not allowed: don't retry
+        if (ev.code === 1006) {                        // handshake refused (or network): is the login still valid?
+          api.me().catch((e) => { if (e instanceof Unauthorized && !stopped) { stopped = true; expired.current(); } });
+        }
         const wait = Math.min(30_000, delay) * (0.8 + Math.random() * 0.4);
         delay = Math.min(30_000, delay * 2);
         timer = window.setTimeout(connect, wait);
