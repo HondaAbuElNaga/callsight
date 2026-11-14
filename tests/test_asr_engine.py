@@ -217,6 +217,13 @@ def test_no_overlap_merge_across_a_dropped_window():
     assert r.text == "كيف اقدر اساعدك اساعدك في الطلب"     # both "اساعدك" are real speech
 
 
+def test_no_overlap_merge_across_an_empty_window():
+    a = FakeAdapter(texts=["كيف اقدر اساعدك", "", "اساعدك في الطلب"])
+    r = engine.transcribe_audio(a, tone(80), RATE)
+    assert [s.flag for s in r.segments] == [None, None, None]
+    assert r.text == "كيف اقدر اساعدك اساعدك في الطلب"
+
+
 def test_nul_characters_removed():
     r = engine.transcribe_audio(FakeAdapter(texts=["مرحبا\x00 بك"]), tone(5), RATE)
     assert r.segments[0].text == "مرحبا بك" and "\x00" not in r.text

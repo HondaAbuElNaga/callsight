@@ -132,7 +132,7 @@ def queue_call(session: Session, cfg: AsrConfig, call_id: int, force: bool, now:
         row = session.scalars(select(Transcript).where(Transcript.call_id == call_id, Transcript.model == cfg.model)
                               .with_for_update()).one()
         if force and row.status != "running":
-            row.status, row.tries, row.error, row.queued_at = "queued", 0, None, now
+            row.status, row.tries, row.error, row.queued_at, row.redo = "queued", 0, None, now, True
             row.started_at = row.finished_at = None
             status = "queued"
         else:
@@ -198,7 +198,7 @@ def retry_errors(session: Session, cfg: AsrConfig, since: date, limit: int, now:
                            .where(Transcript.model == cfg.model, Transcript.status == "error", Call.start_time >= start)
                            .order_by(Call.start_time.desc()).limit(limit).with_for_update(of=Transcript)).all()
     for row in rows:
-        row.status, row.tries, row.error, row.queued_at = "queued", 0, None, now
+        row.status, row.tries, row.error, row.queued_at, row.redo = "queued", 0, None, now, True
         row.started_at = row.finished_at = None
     session.commit()
     return [r.call_id for r in rows]
@@ -216,7 +216,7 @@ def status(session: Session, cfg: AsrConfig, queue_length: int | None, now: date
     done = session.execute(select(Transcript.finished_at, Transcript.first_queued_at, Call.end_time)
                            .join(Call, Call.id == Transcript.call_id)
                            .where(Transcript.model == cfg.model, Transcript.status == "done",
-                                  Call.start_time >= since)).all()
+                                  Transcript.redo.is_(False), Call.start_time >= since)).all()
     lat = sorted(latency_seconds(f, e) for f, q, e in done if q - e <= LIVE_QUEUE_WINDOW)
     return {"model": cfg.model, "start_date": cfg.start_date, "queue_length": queue_length, "counts": counts,
             "latency_days": days, "latency_n": len(lat),

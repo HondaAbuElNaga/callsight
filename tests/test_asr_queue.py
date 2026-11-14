@@ -244,12 +244,16 @@ def test_status_counts_and_live_latency(session):
     old = make_call(session, start=NOW - timedelta(days=3))       # backfilled: not counted in latency
     t = _row(session, old, "done", tries=1)
     t.first_queued_at = t.queued_at = t.finished_at = NOW
+    c = make_call(session, start=NOW - timedelta(hours=3))        # redone with --force hours later: left out
+    t = _row(session, c, "done", tries=1)
+    t.first_queued_at = c.end_time + timedelta(seconds=30)
+    t.finished_at, t.redo = NOW, True
     _row(session, make_call(session), "error", tries=2)
     _row(session, make_call(session), "queued")
     session.commit()
     st = queueing.status(session, cfg(), queue_length=1, now=NOW)
     assert st["queue_length"] == 1
-    assert st["counts"] == {"done": 4, "error": 1, "queued": 1}
+    assert st["counts"] == {"done": 5, "error": 1, "queued": 1}
     assert st["latency_n"] == 3 and st["latency_median_s"] == 360.0 and st["latency_max_s"] == 600.0
     out = queueing.format_status(st)
     assert "queue" in out and "6.0 min" in out and "10.0 min" in out
@@ -392,6 +396,30 @@ def test_task_model_load_failure_leaves_row_queued_without_a_try(session, audio_
         assert r["not_ready"]
     t = rows(session)[0]
     assert t.status == "queued" and t.tries == 0 and t.error is None and t.started_at is None
+    # the delayed re-send is unacked outside the Redis list (LLEN 0): the reaper must not count it as lost
+    assert queueing.reap(session, cfg(), NOW + timedelta(minutes=31), queue_length=0) == []
+    t = rows(session)[0]
+    assert t.status == "queued" and t.tries == 0
+
+
+def test_not_ready_task_sends_exactly_one_delayed_message(session, audio_dir, monkeypatch):
+    c = queued_call(session)
+    sent = []
+    h = holder(NoModel())
+    monkeypatch.setattr(tasks, "holder", lambda: h)
+    monkeypatch.setattr(tasks, "send_transcribe", lambda cid, model, countdown=None: sent.append((cid, countdown)))
+    monkeypatch.setattr(tasks.wiring, "session_factory", lambda: (lambda: session))
+    monkeypatch.setattr(tasks.wiring, "settings", lambda: type("S", (), {"audio_dir": audio_dir})())
+    r = tasks.transcribe_call.run(c.id, "whisper-large-v3")
+    assert r["not_ready"] and sent == [(c.id, tasks.NOT_READY_RETRY_S)]
+
+
+def test_wrong_model_row_not_reaped_right_away(session, audio_dir):
+    c = make_call(session, path="2026/11/20/a.wav")
+    queueing.add_row(session, c, cfg(model="audar-asr-turbo"), NOW - timedelta(hours=2))
+    session.commit()
+    tasks.process(session, c.id, "audar-asr-turbo", holder(FakeAdapter()), audio_dir, load=LOAD, now=lambda: NOW)
+    assert queueing.reap(session, cfg(model="audar-asr-turbo"), NOW + timedelta(minutes=10), queue_length=0) == []
 
 
 def test_task_model_unloaded_and_reload_fails_gives_back_the_try(session, audio_dir, monkeypatch):

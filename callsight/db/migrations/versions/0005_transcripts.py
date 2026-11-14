@@ -27,6 +27,7 @@ def upgrade() -> None:
     sa.Column('compute_seconds', sa.Float(), nullable=True),
     sa.Column('dropped_windows', sa.Integer(), server_default=sa.text('0'), nullable=False),
     sa.Column('tries', sa.Integer(), server_default=sa.text('0'), nullable=False),
+    sa.Column('redo', sa.Boolean(), server_default=sa.text('false'), nullable=False),
     sa.Column('segmenter_version', sa.String(length=30), nullable=True),
     sa.Column('diarization_version', sa.String(length=30), nullable=True),
     sa.Column('error', sa.String(length=300), nullable=True),

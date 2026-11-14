@@ -48,6 +48,10 @@
            LOW overlap merge only between neighbouring windows; `first_queued_at` for latency (in 0005);
            models mounted read-only + `HF_MODULES_CACHE` for Jais; asr services without env_file (no PBX secret;
            Yeastar settings now only required by `app.pbx()`); tech-stack "faster-whisper" → transformers.
+           Round 2: 3 more fixed: not-ready/OOM/wrong-model paths set `queued_at` to when the delayed re-send is
+           due (no try used), so the reaper no longer counts unacked countdown messages as lost (one message per
+           row); an empty model window also breaks the overlap merge; `redo` flag (set by --force /
+           --retry-errors) keeps redone rows out of the latency figure.
            Still open: acceptance verify, spec → done, roadmap, merge.
 
 ## Assumptions (builder, 2026-11-14)

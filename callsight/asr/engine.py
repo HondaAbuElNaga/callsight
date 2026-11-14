@@ -135,6 +135,8 @@ def transcribe_audio(adapter, audio, rate: int = TARGET_RATE, silence_rms: float
         elif seg.text:
             runs[-1].append(seg.text)
             res.speech_seconds += end - start
+        else:
+            runs.append([])                # empty window = gap too: no overlap to remove across it
         res.segments.append(seg)
     # Overlap words are only removed between neighbouring windows: across a gap the "repeat" is real speech.
     res.text = " ".join(m for m in (merge_texts(r) for r in runs) if m)

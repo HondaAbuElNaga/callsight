@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -27,6 +27,7 @@ from . import queueing
 log = logging.getLogger(__name__)
 _holder = None                                   # one model per worker process
 NOT_READY_RETRY_S = 300                          # worker can't load its model: try the call again in 5 min
+OOM_RETRY_S = 60                                 # CUDA out of memory: one more try after the cache was freed
 
 
 def _utcnow() -> datetime:
@@ -44,8 +45,10 @@ def _fail(session: Session, row: Transcript, message: str, now: datetime) -> dic
     return {"call_id": row.call_id, "status": "error"}
 
 
-def _requeue(session: Session, row: Transcript, now: datetime, count_try: bool) -> None:
-    row.status, row.queued_at, row.started_at = "queued", now, None
+def _requeue(session: Session, row: Transcript, now: datetime, count_try: bool, due_in_s: int = 0) -> None:
+    """Back to `queued`. `queued_at` = when the (delayed) re-send becomes due: a countdown message sits unacked
+    outside the Redis list (LLEN 0), so the reaper must not mistake the row for a lost message meanwhile."""
+    row.status, row.queued_at, row.started_at = "queued", now + timedelta(seconds=due_in_s), None
     if not count_try:
         row.tries = max(0, row.tries - 1)        # claim() counted it, but the call itself was never tried
     session.commit()
@@ -62,10 +65,12 @@ def process(session: Session, call_id: int, model: str, holder, audio_dir: Path,
     if model != holder.name:                     # not this worker's job: leave it for the right worker
         log.warning("call %s is queued for %s but this worker runs ASR_MODEL=%s: left queued",
                     call_id, model, holder.name)
+        _requeue(session, row, now(), count_try=True)   # not claimed: tries unchanged; reaper re-sends in 30 min
         return {"call_id": call_id, "status": "queued", "skipped": True, "wrong_model": True}
     try:
         holder.ensure_loaded()                   # before the claim: a broken worker must not use up tries
     except engine.ModelNotReady as exc:
+        _requeue(session, row, now(), count_try=True, due_in_s=NOT_READY_RETRY_S)   # not claimed: no try used
         log.warning("call %s left queued: %s", call_id, exc)
         return {"call_id": call_id, "status": "queued", "not_ready": True}
     if not queueing.claim(session, row.id, now()):
@@ -85,13 +90,13 @@ def process(session: Session, call_id: int, model: str, holder, audio_dir: Path,
     except engine.AudioError as exc:
         return _fail(session, row, str(exc), now())
     except engine.ModelNotReady as exc:          # model was unloaded and could not be re-loaded
-        _requeue(session, row, now(), count_try=False)
+        _requeue(session, row, now(), count_try=False, due_in_s=NOT_READY_RETRY_S)
         log.warning("call %s left queued: %s", call_id, exc)
         return {"call_id": call_id, "status": "queued", "not_ready": True}
     except Exception as exc:                     # noqa: BLE001  model/GPU errors: one retry for OOM only
         engine.free_gpu()
         if _is_oom(exc) and row.tries < queueing.MAX_TRIES:
-            _requeue(session, row, now(), count_try=True)
+            _requeue(session, row, now(), count_try=True, due_in_s=OOM_RETRY_S)
             log.warning("transcript for call %s: CUDA out of memory, retrying once", call_id)
             return {"call_id": call_id, "status": "queued", "retry": True}
         if _is_oom(exc):
@@ -148,7 +153,7 @@ def transcribe_call(call_id: int, model: str | None = None) -> dict:
     with wiring.session_factory()() as s:
         r = process(s, call_id, model, h, wiring.settings().audio_dir)
     if r.get("retry"):
-        send_transcribe(call_id, model, countdown=60)        # after the GPU cache was freed
+        send_transcribe(call_id, model, countdown=OOM_RETRY_S)
     elif r.get("not_ready"):
         send_transcribe(call_id, model, countdown=NOT_READY_RETRY_S)
     return r

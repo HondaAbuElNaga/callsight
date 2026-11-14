@@ -124,5 +124,7 @@ transcript within 15 min of hang-up**.
 - **To decision 9 (privacy):** DB engine created with `hide_parameters=True` app-wide; a failed transcript save is
   stored as `saving transcript failed (<type>)`; the asr worker gets no PBX secret / APP_SECRET (explicit
   environment, Yeastar settings only required by the PBX adapter); model cache mounted read-only.
+- **Delayed re-sends:** a delayed (countdown) message is unacked outside the Redis list, so LLEN is 0 while it
+  waits; the task therefore sets `queued_at` to the time the re-send is due, and the reaper only acts 30 min after.
 - **Latency:** measured from `first_queued_at` (never rewritten by retries) to decide "live call"; value =
-  `finished_at − call.end_time`.
+  `finished_at − call.end_time`; rows redone with `--force`/`--retry-errors` (`redo`) are left out.
