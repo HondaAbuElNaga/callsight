@@ -3,7 +3,7 @@
 **Roadmap items:** Phase 6: "Roles & permissions", "Backups (DB + audio), retention policy, disk alerts",
 "Trust the PBX's own self-signed certificate (`YEASTAR_CA_FILE`)", "Pin exact dependency versions with hashes",
 "Monitoring: queue lengths, worker health, GPU usage", "Scale-out guide". ("Rules editor UI" → see Open question 4.)
-**Status:** draft
+**Status:** approved (by 2 judge agents on the user's behalf, 2026-11-14 — user may revise)
 
 ## Goal
 The system runs unattended and safely: agents see only their own calls, data is backed up and old personal data is
@@ -68,3 +68,46 @@ reproducible. Phase 6 **Done when:** restore-from-backup drill succeeds; load te
 3. **Retention default:** off until the user decides (recommended) vs e.g. 365 days.
 4. **Rules editor UI** (bad words / escalation phrases / KPI targets): build a simple admin page now that edits
    `rules.yaml` (needs S5 first) vs keep YAML-only for now (recommended if S5 isn't merged yet).
+
+## Decisions (2 judges, 2026-11-14; override the text above where different)
+1. **Agent role:** agents see only calls where they are `agent_ext` (detail, recording, transcript + .txt, all
+   audited) and their own KPIs (no team comparison/ranking). Nothing from S5 (summary, estimate, flags, silence,
+   ratings, blind set). Other agents' calls → **404**. One `visible_scope(user)` helper used inside `CallFilter.apply`
+   (list, summary, search, exports share it); the server overrides any `agent` parameter with the agent's own ext;
+   `/api/agents` returns only their own entry; other agents' legs removed from detail. **Deny by default:** a pytest
+   walks `app.routes` and fails on any `/api` route not listed as agent-allowed or staff-only. Staff-only (403):
+   gold set, reports PDF/archive, all S5 rating/label/blind APIs, S6 live WebSocket + listen, S7 health/backup.
+   `create-user --role agent` requires `--ext` that exists in teams.yaml; changing ext bumps `token_version`.
+   Known limit: an agent on the 2nd leg of a transferred call doesn't see it. Real accounts ⚠ NEEDS USER.
+2. **Backup:** `pg_dump -Fc` with `postgresql-client-16` from PGDG (pinned) in the app image (bookworm's v15 can't
+   dump a v16 server; test checks client major = server major); no Docker socket. Consistent counts: REPEATABLE READ +
+   `pg_export_snapshot()`, counts saved in `backup_run`, `pg_dump --snapshot`. Files: copy only recordings with
+   status ok + reports, compare size + mtime ±2 s, sha256 manifest, write `.tmp` then rename. DB dump first. Rotation
+   deletes only our own named dumps (14 daily + 8 weekly). Runs on a separate `maint` queue at 01:30 with a lock vs
+   reconcile/ASR. Compose mounts `${BACKUP_HOST_DIR}:/backup` (+ reports) into the worker. Run with
+   `docker compose run --rm worker python -m callsight backup`. The same command is the "pg_dump before every
+   migration" step (R6). **Unencrypted personal data** + **same disk as the audio** by default → permanent health
+   warning "protects against mistakes, not disk loss"; encrypted second disk/NAS ⚠ NEEDS USER; restic later.
+   `.env` (secrets) is NOT in the backup: keep it safe separately (written in the guide).
+3. **Restore drill (`backup verify`):** hard-coded scratch DB `callsight_restore_check`, refuses the live DB name,
+   `DROP DATABASE … WITH (FORCE)` before and after (it holds personal data), `pg_restore --no-owner --no-acl`,
+   compares counts with the `backup_run` counts + `alembic_version`, checks free disk first.
+4. **Retention:** off unless `RETENTION_ENABLED=true` and N ≥ 30; first run always dry-run; deletes only paths from
+   DB rows resolved inside `audio_dir` (never glob), also the copies in `BACKUP_DIR/files` (PDPL: copies too); audit
+   row per call; logs counts only. Deleted calls may remain in DB dumps up to ~8 weeks (rotation) — documented.
+   Tonight tested on temp dirs only, never real audio.
+5. **Health page (admin only, no paths/hostnames/exception text):** disk free C: and D: + `pg_database_size`,
+   queue lengths (Redis LLEN; reserved tasks not counted — said on the page), last success per job (`job_run` table),
+   worker ping, backup age (> 26 h red), same-disk backup warning, last 7 reconcile results, GPU from the asr worker's
+   Redis heartbeat (TTL; grey "not running" when the asr profile is off). Admin-only banner.
+6. **PBX certificate:** `YEASTAR_CA_FILE` client config + fingerprint pinning fallback; never silently disable
+   verification. `pbx-cert --fetch` only prints the SHA-256 fingerprint; saves only with `--accept <sha256>` matching;
+   the user compares with the fingerprint from the PBX console/admin download ⚠ NEEDS USER. Not run tonight.
+7. **Locked deps:** app image only: `requirements.in` → `requirements.lock` compiled with pip-tools inside
+   linux/amd64 Python 3.12 Docker, `--generate-hashes --allow-unsafe`, locked to the versions now installed; dev tools
+   (pytest) split out; `--require-hashes` only if the rebuilt image passes the full suite. Base images pinned by
+   digest. GPU images: [~] stretch.
+8. **Rules editor UI:** not now (YAML only), later idea.
+9. **Load test:** seeds a **separate scratch DB**, never the live one (stretch).
+10. **Cut line:** Must: agent role + route test; backup + verify. Should: health page; CA-file config; app lock file;
+    retention code (off, dry-run). Stretch: GPU-image hashes, load test, scale-out guide (short version at least).
