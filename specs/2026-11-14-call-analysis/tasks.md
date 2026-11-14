@@ -41,8 +41,8 @@
          **Unverified in repo:** the one-off comparison script and its output were not kept, so the numbers below are
          the builder's record of that run and can't be reproduced from the repository (review finding). Model IDs of
          that run, as printed by `ollama list`: `qwen2.5:7b` = `845dbda0ea48`, `qwen3:8b` = `500a1f067a9f` (compare
-         with `python -m callsight analyze status` → "model digest"). Disk was checked before the pulls: 149 GB free
-         on C:, 415 GB on D: (models 4.7 + 5.2 GB, Ollama image ~3.4 GB).
+         with `python -m callsight analyze status` → "model digest"). Free disk space before the pulls was not
+         recorded.
          | | qwen2.5:7b | qwen3:8b (think off) |
          |---|---|---|
          | schema pass (first try / final) | 5/5 / 5/5 | 5/5 / 5/5 |
