@@ -136,9 +136,14 @@ def reindex(session: Session, batch: int = 200) -> int:
         if not ids:
             return n
         for tid in ids:
+            # lock the row first: a concurrent --force redo (asr _save) then either waits for us and writes its own
+            # search_text afterwards, or has committed and we read its new segments (no stale overwrite)
+            if session.scalars(select(Transcript.id).where(Transcript.id == tid, Transcript.status == "done")
+                               .with_for_update()).first() is None:
+                continue
             segs = session.scalars(select(TranscriptSegment).where(TranscriptSegment.transcript_id == tid)
                                    .order_by(TranscriptSegment.seq)).all()
             session.execute(update(Transcript).where(Transcript.id == tid).values(search_text=search_text(segs)))
+            n += 1
         session.commit()
-        n += len(ids)
         last = ids[-1]

@@ -24,6 +24,7 @@ queue worker, so scaling = more workers / a second GPU box, not a rewrite.
 | API | FastAPI + WebSockets | 🔜 | Async, live board push, auto OpenAPI docs |
 | Database | PostgreSQL 16 | 🔜 | Calls, transcripts, scores, KPIs; full-text search; scales far beyond 200 calls/day |
 | ORM / migrations | SQLAlchemy 2 + Alembic, driver psycopg 3 | 🔜 | Added 2026-11-12 (call-ingest spec): typed models, versioned schema changes; standard with FastAPI + Postgres |
+| Transcript search | `pg_trgm` (Postgres contrib extension): trigram GIN index on `transcript.search_text` | ✅ | Added 2026-11-14 (transcript-view spec): fast `LIKE '%word%'` on Arabic text; trusted extension on PostgreSQL 16, so the DB owner creates it in migration 0007 (no superuser) |
 | Config files | PyYAML (`config/teams.yaml`) | 🔜 | Added 2026-11-12: team extensions/queues editable without code |
 | Dev runtime | Docker Desktop on the analytics PC (192.168.50.189) until the server arrives | ✅ | Same Compose file moves to the server unchanged |
 | Queue / workers | Redis + Celery (separate queues: `ingest`, `asr`, `nlp`, `reports`) | 🔜 | Each stage scales independently; GPU queue isolated |

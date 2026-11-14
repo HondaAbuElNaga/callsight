@@ -94,7 +94,7 @@ export function TranscriptPanel({ callId, canSeek, time, onSeek, onExpired }: Pr
           {segs.length === 0 && <p className="muted small">لا يوجد كلام مفهوم في هذه المكالمة.</p>}
           <ol className="segments" ref={listRef}
             onScroll={() => { if (ownScroll.current) ownScroll.current = false; else userBusy(); }}
-            onWheel={userBusy} onTouchMove={userBusy} onKeyDown={userBusy}>
+            onWheel={userBusy} onTouchMove={userBusy} onKeyDown={userBusy} onFocus={userBusy}>
             {segs.map((s, i) => (
               <li key={s.seq}>
                 <button type="button" className={`seg ${i === active ? "on" : ""}`} disabled={!canSeek}

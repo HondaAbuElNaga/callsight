@@ -340,6 +340,7 @@ def test_pg_trgm_handles_arabic_and_index_is_used(env, engine):
         assert "ix_transcript_search_trgm" in plan
 
 
+
 # ---------- worker writes search_text ----------
 
 def test_worker_save_writes_search_text_without_dropped(env):
@@ -373,6 +374,31 @@ def test_cli_transcripts_reindex(env, engine, monkeypatch, capsys):
     assert "1 transcript(s) reindexed" in capsys.readouterr().out
     with Session() as s:
         assert s.get(Transcript, t.id).search_text == "الفاتوره"
+
+
+def test_reindex_skips_rows_no_longer_done(env):
+    """reindex locks + re-checks each row: a transcript put back to queued (--force redo) is left alone."""
+    _, Session = env
+    with Session() as s:
+        c = make_call(s)
+        t = add_transcript(s, c, ["الفاتورة"])
+        t.search_text = "old"
+        s.commit()
+        real_scalars = s.scalars
+        state = {"flipped": False}
+
+        def scalars(stmt, *a, **k):          # flip the row to queued right after the id batch was read
+            r = real_scalars(stmt, *a, **k)
+            if not state["flipped"]:
+                state["flipped"] = True
+                ids = list(r)
+                s.execute(text("UPDATE transcript SET status = 'queued' WHERE id = :i"), {"i": t.id})
+                return iter(ids)
+            return r
+        s.scalars = scalars
+        assert transcripts.reindex(s) == 0          # the row is skipped, not rewritten
+        s.scalars = real_scalars
+        assert s.get(Transcript, t.id).search_text == "old"
 
 
 # ---------- migration 0007 ----------

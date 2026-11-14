@@ -6,8 +6,11 @@
          422 rules, EXISTS no double count, summary = list, combined filters, dropped text not searchable, no search
          words in logs), pg_trgm Arabic + EXPLAIN index use, migration backfill, agent-role stub
          → `tests/test_transcript_view.py`, 16 tests, all pass on `callsight_tv_test`. pg_trgm: `show_trgm('الفاتوره')`
-         gives 9 trigrams (Arabic letters are word characters; multibyte trigrams are shown hashed); EXPLAIN shows
-         `ix_transcript_search_trgm`. `test_migration_0005_up_and_down` adjusted (model now has `search_text` from 0007).
+         gives 9 trigrams (Arabic letters are word characters; multibyte trigrams are shown hashed); the index is
+         **usable** (EXPLAIN of a plain `LIKE` with seqscan off shows `ix_transcript_search_trgm`). The real search
+         statement (correlated EXISTS on the displayed transcript) was EXPLAINed in review: on small tables the
+         planner goes call-first by date and does not pick the trigram index — fine at today's volume (date range
+         ≤ 400 days); re-check on the 60k-call load test. `test_migration_0005_up_and_down` adjusted (model now has `search_text` from 0007).
 - [x] 3. `search_normalize()` + migration 0006 + model fields + `transcripts reindex` CLI
          → `callsight/transcripts.py` (normalize.py unchanged). Migration is **0007** (orchestrator: a parallel
          hardening branch owns 0006; `down_revision = "0005"` now, becomes "0006" at merge). Additive: `search_text`,
@@ -34,3 +37,8 @@
          follows playback, "تنزيل النص (.txt)" opens right in Notepad, search "الفاتورة" finds the expected call.
 - [ ] 7. Verify; review with 3 subagents; fix; spec → done; roadmap; merge (--no-ff)
          Verify done: full pytest 305 passed, 5 skipped (4 WeasyPrint on Windows, pre-existing). Review + merge: orchestrator.
+         → 3 reviewers: 0 critical, 0 high, 1 medium, 8 low; all fixed: pg_trgm row in tech-stack (M); roadmap
+           redaction later-item; EXPLAIN claim reworded (index usable; real EXISTS goes call-first on small tables);
+           auto-scroll pauses on focus; invalid words box clears the applied search; stale seek cleared on play/close;
+           words 422 message only when a words search is applied; reindex locks + re-checks each row (new test).
+           After fixes: pytest 306 passed, 5 skipped; frontend `npm run build` OK. Merge: orchestrator.

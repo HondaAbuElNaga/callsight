@@ -51,6 +51,7 @@ call has a transcript within 15 min of hang-up.
 - [x] STT model chosen by config (`ASR_MODEL`), served by our own `asr` worker, not a separate server (changed 2026-11-14, decision R2; speaches can't run Audar/Jais) ([spec](../specs/2026-11-14-transcription/spec.md)) (source: [speaches-ai/speaches](https://github.com/speaches-ai/speaches))
 - [x] `asr` worker queue: mono recording → 30 s windows → transcribe → store segments with timestamps; speaker split via diarization later (recordings are mono, not stereo) ([spec](../specs/2026-11-14-transcription/spec.md)) (idea: user) ([spec](../specs/2026-11-14-transcription/spec.md))
 - [ ] Transcript view next to the audio player; export transcript as .txt (idea: user)
+- [ ] Later idea: redaction of spoken ID/card/phone numbers in transcripts and the .txt export (PDPL) ([spec](../specs/2026-11-14-transcript-view/spec.md), decision 9)
 
 ## Phase 3: Satisfaction score 1–10 (fine-tuned model)
 

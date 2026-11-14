@@ -40,10 +40,12 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi }: Props) 
   const [playing, setPlaying] = useState<CallRow | null>(null);
   const [detail, setDetail] = useState<CallDetail | null>(null);
   const lastClicked = useRef<number | null>(null);
+  const appliedWords = useRef("");   // read by fail(): the words message only when a words search is applied
+  appliedWords.current = filters.words ?? "";
 
   const fail = useCallback((e: unknown) => {
     if (e instanceof Unauthorized) onExpired();
-    else if (e instanceof BadRequest) setError("كلمات البحث غير صالحة: من 1 إلى 5 كلمات، كل كلمة حرفان على الأقل، حروف وأرقام فقط.");
+    else if (e instanceof BadRequest && appliedWords.current) setError("كلمات البحث غير صالحة: من 1 إلى 5 كلمات، كل كلمة حرفان على الأقل، حروف وأرقام فقط.");
     else setError("تعذر تحميل البيانات. تأكد أن الخدمة تعمل ثم أعد المحاولة.");
   }, [onExpired]);
 
@@ -86,7 +88,11 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi }: Props) 
   const wordsValid = wordsOk(wordsText);
   useEffect(() => {   // transcript words 0.4 s after typing stops
     const w = wordsText.trim().replace(/\s+/g, " ");
-    if (!wordsValid || w === filters.words) return;
+    if (!wordsValid) {   // never keep showing results for words that are no longer in the box
+      if (filters.words) { setFilters((f) => ({ ...f, words: "" })); setPage(1); }
+      return;
+    }
+    if (w === filters.words) return;
     const t = setTimeout(() => { setFilters((f) => ({ ...f, words: w })); setPage(1); }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -198,7 +204,7 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi }: Props) 
                 <td>
                   {c.has_recording && (
                     <button className={`play ${playing?.id === c.id ? "on" : ""}`} aria-label="تشغيل التسجيل"
-                      onClick={(e) => { e.stopPropagation(); setPlaying(c); }}>▶</button>
+                      onClick={(e) => { e.stopPropagation(); setSeek(null); setPlaying(c); }}>▶</button>
                   )}
                 </td>
               </tr>
@@ -220,13 +226,13 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi }: Props) 
       )}
 
       {detail && (
-        <DetailPanel call={detail} onClose={() => setDetail(null)} onPlay={() => setPlaying(detail)}>
+        <DetailPanel call={detail} onClose={() => setDetail(null)} onPlay={() => { setSeek(null); setPlaying(detail); }}>
           <TranscriptPanel key={detail.id} callId={detail.id} canSeek={detail.has_recording}
             time={playing?.id === detail.id && pos?.id === detail.id ? pos.t : null}
             onSeek={(t) => seekTo(detail, t)} onExpired={onExpired} />
         </DetailPanel>
       )}
-      {playing && <Player call={playing} seek={seek} onTime={onTime} onClose={() => setPlaying(null)} />}
+      {playing && <Player call={playing} seek={seek} onTime={onTime} onClose={() => { setSeek(null); setPlaying(null); }} />}
     </div>
   );
 }
