@@ -169,3 +169,18 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .notes { padding-inline-start: 18px; display: grid; gap: 4px; }
 @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
+
+/* ---------- transcript (detail panel) ---------- */
+.detail { width: min(440px, 100vw); }
+.tag.match { color: var(--accent); background: #eef4fb; }
+.transcript { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 4px; }
+.transcript-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.transcript-head h3 { margin: 12px 0 8px; }
+a.button.small { padding: 3px 10px; font-size: 13px; }
+.segments { position: relative; list-style: none; margin: 8px 0 0; padding: 0; max-height: 46vh; overflow-y: auto; display: grid; gap: 2px; }
+.seg { display: flex; gap: 10px; align-items: baseline; width: 100%; text-align: start; border: none; border-radius: 6px; background: none; padding: 6px 8px; line-height: 1.7; }
+.seg:hover:not(:disabled) { background: #f4f6f9; }
+.seg:disabled { opacity: 1; cursor: default; }
+.seg.on { background: #eef4fb; box-shadow: inset -3px 0 0 var(--accent); }
+.seg-time { flex: none; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.seg-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }

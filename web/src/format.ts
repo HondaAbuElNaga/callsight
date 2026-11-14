@@ -31,6 +31,12 @@ const dOnly = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: 
 export const formatDateTime = (iso: string) => dt.format(new Date(iso));
 export const riyadhToday = () => dOnly.format(new Date()); // YYYY-MM-DD
 
+// Transcript line time, Western digits (shown inside dir="ltr").
+export function mmss(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
 export function duration(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined) return "–";
   const s = Math.max(0, Math.round(seconds));
