@@ -10,8 +10,8 @@ queue worker, so scaling = more workers / a second GPU box, not a rewrite.
 | Area | Choice | Status | Why |
 |---|---|---|---|
 | PBX | **Yeastar P-Series** at LAN `192.168.50.151:8088` (plan/firmware TBC), Yealink IP phones | ✅ | API works over LAN (2026-11-12); has REST API, WebSocket events, `*51` Listen |
-| Yeastar integration | Yeastar P-Series OpenAPI: `cdr/*`, `recording/*`, `call/listen`, WebSocket events 30011/30012/30008; `httpx` + `websockets` | 🔜 | Needs Enterprise/Ultimate plan; this is the first `PbxAdapter` |
-| PBX adapter layer | `PbxAdapter` interface: `fetch_cdr()`, `fetch_recording()`, `live_events()`, `spy(call, supervisor_ext)` | 🔜 | One code path for the app; only the adapter changes per PBX brand |
+| Yeastar integration | Yeastar P-Series OpenAPI: `cdr/*`, `recording/*`, WebSocket events 30011/30012 (30008 agent status cut until real payloads are captured); `call/listen` not wired (adapter `listen()` refuses); `httpx` + `websockets` | ✅ / 🔜 | Needs Enterprise/Ultimate plan. Redis key `pbx:auth_blocked` stops every PBX login (worker, CLI, live) after a refused login or errcode 60002 until `pbx-unblock`. Token budget: worker 1 + CLI 1 + live 1 = 3 of 8 |
+| PBX adapter layer | `PbxAdapter` interface: `fetch_cdr()`, `fetch_recording()`, `listen()` (refuses while Listen is off); live events run in the separate `live` service (`callsight/live/`, compose profile `live`, off by default) | ✅ | One code path for the app; only the adapter changes per PBX brand |
 | Asterisk-based PBX (FreePBX/Issabel/MikoPBX…) | AMI (events, originate ChanSpy) + CDR MySQL + MixMonitor recordings | ❓ | Most common; ChanSpy with `q` option = silent listen |
 | 3CX / Yeastar / Grandstream | Their REST/Call-Control API + recording export | ❓ | Fallback if not Asterisk |
 | Recording format | **Mono WAV, 8 kHz, 16-bit** (confirmed 2026-11-12) | ✅ | Both voices mixed, so agent/customer separation needs diarization |

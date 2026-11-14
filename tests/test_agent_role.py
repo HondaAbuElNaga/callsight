@@ -11,8 +11,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 from sqlalchemy.orm import sessionmaker
 
+from starlette.websockets import WebSocketDisconnect
+
 from callsight.api import auth
 from callsight.api.calls import Scope, visible_scope
+from callsight.api.live import LiveConfig, NoLiveSource
 from callsight.api.main import ApiConfig, create_app
 from callsight.config import RIYADH
 from callsight.db.models import Agent, AppUser, Call, CallLeg, RecordingPlay
@@ -31,8 +34,10 @@ STAFF_ONLY = {
     # call analysis (spec 2026-11-14-call-analysis, decision 9): agents see nothing of it
     ("GET", "/api/calls/{call_id}/analysis"), ("GET", "/api/rating/queue"), ("GET", "/api/rating/calls/{call_id}"),
     ("PUT", "/api/rating/calls/{call_id}"),
+    ("WS", "/api/live"), ("POST", "/api/live/{call_id}/listen"),       # live board + Listen stub (live-board spec)
 }
 CATCH_ALL = {("GET", "/api/{rest:path}")}       # plain 404 for unknown /api paths
+ORIGIN = "http://testserver"                     # live WebSocket Origin allowlist in these tests
 
 
 def _today_at(hour: int) -> datetime:
@@ -50,11 +55,25 @@ def _call(s, uid, hour, *, agent=None, missed=None, status="answered", direction
     return c
 
 
+def _truncate(engine):  # noqa: F811
+    with engine.begin() as c:
+        # the route walk writes listen_audit rows (refused Listen); its TRUNCATE trigger needs the maintenance flag
+        c.execute(text("SET LOCAL callsight.audit_maintenance = 'on'"))
+        c.execute(text("TRUNCATE listen_audit, recording_play, app_user, call_leg, call, agent, queue, ingest_state, "
+                       "reconcile_run RESTART IDENTITY CASCADE"))
+
+
+@pytest.fixture(autouse=True)
+def _no_audit_rows_left(request):
+    """Leave no listen_audit rows behind: other test files TRUNCATE app_user ... CASCADE."""
+    yield
+    if "engine" in request.fixturenames:
+        _truncate(request.getfixturevalue("engine"))
+
+
 @pytest.fixture
 def env(engine, tmp_path):  # noqa: F811
-    with engine.begin() as c:
-        c.execute(text("TRUNCATE recording_play, app_user, call_leg, call, agent, queue, ingest_state, reconcile_run "
-                       "RESTART IDENTITY CASCADE"))
+    _truncate(engine)
     Session = sessionmaker(engine, expire_on_commit=False)
     (tmp_path / "r").mkdir()
     for name in ("own.wav", "other.wav"):
@@ -78,7 +97,8 @@ def env(engine, tmp_path):  # noqa: F811
         ids = {"own": own.id, "own_out": own_out.id, "other": other.id, "missed": missed.id, "sales": sales.id}
         auth.create_user(s, "boss", PASSWORD, "supervisor", "114")
         auth.create_user(s, "ali", PASSWORD, "agent", "119", TEAM.ext_team)
-    app = create_app(Session, ApiConfig(secret=SECRET, audio_dir=tmp_path, teams=lambda: TEAM, reports_dir=tmp_path))
+    app = create_app(Session, ApiConfig(secret=SECRET, audio_dir=tmp_path, teams=lambda: TEAM, reports_dir=tmp_path,
+                                        live=LiveConfig(origins=frozenset({ORIGIN}), source=NoLiveSource())))
     return TestClient(app), Session, ids, app
 
 
@@ -118,10 +138,20 @@ def test_every_api_route_is_classified(env):
     assert not (AGENT_ALLOWED & STAFF_ONLY)
 
 
+def _ws_close_code(client, path) -> int:
+    with pytest.raises(WebSocketDisconnect) as e:
+        with client.websocket_connect(path, headers={"origin": ORIGIN}) as w:
+            w.receive_text()
+    return e.value.code
+
+
 def test_staff_only_routes_refuse_agents(env):
     client, _, ids, app = env
     login(client)
     for method, path in sorted(_api_routes(app) & STAFF_ONLY):
+        if method == "WS":                      # refused before accept: close code 4403 (= HTTP 403)
+            assert _ws_close_code(client, path) == 4403, path
+            continue
         url = path.replace("{report_id}", "1").replace("{clip_id}", "1").replace("{call_id}", str(ids["own"]))
         r = client.request(method, url, json={"text": "x", "score": 5} if method == "PUT" else None)
         assert r.status_code == 403, (method, path, r.status_code)
@@ -143,6 +173,9 @@ def test_agent_allowed_routes_answer(env):
 def test_agent_routes_need_login(env):
     client, _, ids, app = env
     for method, path in sorted(_api_routes(app) & (AGENT_ALLOWED | STAFF_ONLY)):
+        if method == "WS":                      # close code 4401 (= HTTP 401)
+            assert _ws_close_code(client, path) == 4401, path
+            continue
         url = path.replace("{call_id}", str(ids["own"])).replace("{report_id}", "1").replace("{clip_id}", "1")
         assert client.request(method, url).status_code == 401, (method, path)
 

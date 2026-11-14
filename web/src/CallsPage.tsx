@@ -10,6 +10,7 @@ import { AnalysisPanel } from "./AnalysisPanel";
 interface Props {
   me: Me; onLogout: () => void; onExpired: () => void; onGoldset?: () => void; onKpi?: () => void; onHealth?: () => void;
   onRating?: () => void;
+  onLive?: () => void;
 }
 
 // A function, not a constant: the page may stay open past midnight.
@@ -29,7 +30,7 @@ function wordsOk(text: string): boolean {
 
 interface Seek { id: number; t: number; n: number }
 
-export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth, onRating }: Props) {
+export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth, onRating, onLive }: Props) {
   const [filters, setFilters] = useState<Filters>(emptyFilters); // applied as soon as a field changes
   const [qText, setQText] = useState("");                  // number box: applied after typing stops
   const [wordsText, setWordsText] = useState("");          // transcript words: same, never in the page URL
@@ -123,6 +124,7 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
       <header className="topbar">
         <h1>سجل المكالمات</h1>
         <div className="who">
+          {onLive && <button className="link" onClick={onLive}>المكالمات الحالية</button>}
           {onKpi && <button className="link" onClick={onKpi}>المؤشرات</button>}
           {onRating && <button className="link" onClick={onRating}>تقييم المكالمات</button>}
           {onGoldset && <button className="link" onClick={onGoldset}>النصوص المرجعية</button>}

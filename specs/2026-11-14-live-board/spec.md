@@ -2,7 +2,7 @@
 
 **Roadmap items:** Phase 5: "Live event stream from PBX adapter → WebSocket → live board", "Listen button"
 (built behind a switch that stays OFF: the user paused silent listen), "Access control + audit log of who listened".
-**Status:** approved (by 2 judge agents on the user's behalf, 2026-11-14 — user may revise)
+**Status:** built + merged, OFF by default (2026-11-14); office-LAN live test, PBX setting and legal steps before Listen ⚠ NEEDS USER
 
 ## Goal
 The supervisor sees all active team calls (who is talking, caller, duration, queue waiting) updating within 2 s
@@ -41,11 +41,11 @@ connects silently").
   - "Rang agent but not picked" per-agent counts from live events (later KPI improvement).
 
 ## Acceptance criteria
-- [ ] pytest: parser on synthetic payloads (incl. unknown/missing fields), state transitions (ring → talk → hold →
+- [x] pytest: parser on synthetic payloads (incl. unknown/missing fields), state transitions (ring → talk → hold →
       end, transfer, queue join/leave), pruning, back-off schedule, no auth retry after a failed login, token sharing
       (max one extra login), API WebSocket auth (401/close without login), snapshot + delta push, Listen 403 while off,
       audit row when on (PBX client faked)
-- [ ] `docker compose up -d` starts no `live` service; the live page shows "no live data"
+- [x] `docker compose up -d` starts no `live` service; the live page shows "no live data"
 - [ ] ⚠ NEEDS USER (office LAN): `--profile live up -d live`, make a test call, board updates < 2 s; capture real
       30011 payloads to replace the synthetic fixtures; later decide on Listen
 
@@ -57,7 +57,8 @@ connects silently").
 
 ## Decisions (2 judges, 2026-11-14; override the text above where different)
 1. **Token:** no sharing (ingest keeps its token in process memory; sharing = refresh races). The live service does its
-   **own single login**, refreshes only via refresh_token, reconnects the WebSocket with the new token every ~25 min,
+   **own single login**, refreshes via refresh_token (if the PBX refuses the refresh: one login through the same
+   gate, max 1 per 10 min — build note 2026-11-14), reconnects the WebSocket with the new token every ~25 min,
    reuses a saved token (< 25 min old) after a restart, at most 1 login per 10 min, calls `del_token` on clean
    shutdown. New Redis key **`pbx:auth_blocked`**: set by ANY process (ingest, CLI, live) on a failed login or errcode
    60002, cleared only by hand (`python -m callsight pbx-unblock`); every process checks it before logging in. Token

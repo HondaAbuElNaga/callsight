@@ -747,7 +747,7 @@ def test_migration_0008_up_and_down(engine):
     spec = importlib.util.spec_from_file_location("m0008", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    assert (mod.revision, mod.down_revision) == ("0008", "0007")
+    assert (mod.revision, mod.down_revision) == ("0008", "0009")
     new = ("call_analysis", "call_flag", "call_audio_metrics", "satisfaction_label", "blind_set")
     try:
         with engine.begin() as conn:

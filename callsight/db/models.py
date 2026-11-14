@@ -397,3 +397,40 @@ class BlindSet(Base):
     sampler_version: Mapped[str] = mapped_column(String(20))
     salt: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ListenAudit(Base):
+    """Append-only audit of every Listen attempt (spec live-board, decision 4), including refused ones.
+    kind 'attempt' (result pending / denied_*) is written BEFORE any PBX call; kind 'result' (ok / refused / error)
+    after it, pointing at its attempt. Database triggers refuse UPDATE, DELETE and TRUNCATE of a non-empty table
+    (bypass only with SET LOCAL callsight.audit_maintenance = 'on'). They stop mistakes, not the DB owner: real
+    tamper resistance needs an INSERT/SELECT-only DB role for the API (later idea). client_ip is the Docker bridge
+    gateway behind the port mapping, not the user's PC: user_id identifies who."""
+    __tablename__ = "listen_audit"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(10))                  # attempt / result
+    result: Mapped[str] = mapped_column(String(20))
+    attempt_id: Mapped[int | None] = mapped_column(ForeignKey("listen_audit.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    user_ext: Mapped[str | None] = mapped_column(String(20))
+    client_ip: Mapped[str | None] = mapped_column(String(64))
+    live_call_id: Mapped[str] = mapped_column(String(64))         # PBX call id (live calls are not in `call` yet)
+    agent_ext: Mapped[str | None] = mapped_column(String(20))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+LISTEN_AUDIT_APPEND_ONLY = (
+    "CREATE OR REPLACE FUNCTION listen_audit_append_only() RETURNS trigger AS $$ BEGIN "
+    "RAISE EXCEPTION 'listen_audit is append-only'; END; $$ LANGUAGE plpgsql",
+    "CREATE TRIGGER listen_audit_no_change BEFORE UPDATE OR DELETE ON listen_audit "
+    "FOR EACH ROW EXECUTE FUNCTION listen_audit_append_only()",
+    "CREATE OR REPLACE FUNCTION listen_audit_no_truncate() RETURNS trigger AS $$ BEGIN "
+    "IF EXISTS (SELECT 1 FROM listen_audit) AND "
+    "coalesce(current_setting('callsight.audit_maintenance', true), '') <> 'on' THEN "
+    "RAISE EXCEPTION 'listen_audit is append-only (TRUNCATE refused)'; END IF; RETURN NULL; END; $$ "
+    "LANGUAGE plpgsql",
+    "CREATE TRIGGER listen_audit_no_truncate BEFORE TRUNCATE ON listen_audit "
+    "FOR EACH STATEMENT EXECUTE FUNCTION listen_audit_no_truncate()",
+)
+for _sql in LISTEN_AUDIT_APPEND_ONLY:      # also for create_all (tests); migration 0009 runs the same statements
+    event.listen(ListenAudit.__table__, "after_create", DDL(_sql).execute_if(dialect="postgresql"))

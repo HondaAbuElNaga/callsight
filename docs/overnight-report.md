@@ -1,7 +1,7 @@
 # Overnight report (2026-11-14): what was recommended, what was done, what is left
 
 The plan and every judges' decision are in `docs/overnight-plan.md`. Each spec's own decisions are in its `spec.md`, under "Decisions".
-*(This file is updated as the work goes on. Last update: S2 closed, S3 + S7 being built.)*
+*(This file is updated as the work goes on. Last update: S7 + S3 live; S5 + S6 being built. A usage-limit pause happened once mid-way; work resumed.)*
 
 ## How it worked
 - Claude's plan (R1–R7) and every spec's open questions went to **2 independent judge agents**. Their merged decisions
@@ -19,10 +19,10 @@ The plan and every judges' decision are in `docs/overnight-plan.md`. Each spec's
 | S1 ASR benchmark | Test 3 local models on 30 real clips: Whisper large-v3, Audar Turbo, Jais 4-bit. All run offline (no network). Strict WER. | ✅ **Merged.** 21 review findings (1 critical) fixed. **All 3 models ran 30/30 clips.** Jais 4-bit needs 11.2 GB (more than 8 GB) and runs about 4× slower than real time, so it needs the server. The **winner is picked when you type the 30 reference texts** (`goldset score`). |
 | S4 KPI + weekly/monthly PDF | KPIs from SQL. Repeat callers within the same team. Masked numbers in the PDF. PDF engine allowed to load fonts only. | ✅ **Merged, live.** Migration 0004 applied. PDFs made for week 2026-11-01 and month 2026-10. Real week 2026-11-08: 453 calls, 218 answered, AHT 149 s, 80 repeats. Review: 0 critical/high. |
 | S2 Transcription | Our own `asr` worker (not speaches). The model is set in config. 30 s windows. Bad windows dropped. Worker unloads when idle. Internal network, no PBX secret. | ✅ **Merged, live.** Migration 0005 applied. **5 real calls transcribed** in 5–10× real time. GPU freed after stop. 2 review rounds, all findings fixed. Automatic transcription stays **off until you set `ASR_START_DATE`**. |
-| S7 Hardening | Agent role (own calls only, deny-by-default route test). `backup` + automatic restore check. Health page. PBX certificate file. Locked dependencies. Retention code **off**. | 🔧 Being built (migration 0006). |
-| S3 Transcript view | Transcript next to the player. Arabic search (normalised, pg_trgm). Audited views/exports. .txt export. | 🔧 Being built (migration 0007). |
-| S5 Call analysis | Local Ollama `qwen2.5:7b` (vs `qwen3:8b`). Summary, topic, flags. First satisfaction estimate **never in KPIs**. Blind 100-call set. Fine-tune with CAMeLBERT-DA. | ⏳ Next (migration 0008). |
-| S6 Live board | Separate `live` service, **off by default**, own single PBX login. `pbx:auth_blocked` guard. WebSocket with Origin check. Listen = 403 stub + audit. | ⏳ After S5 (migration 0009). Live testing needs the office LAN. |
+| S7 Hardening | Agent role (own calls only, deny-by-default route test). `backup` + automatic restore check. Health page. PBX certificate file. Locked dependencies. Retention code **off**. | ✅ **Merged, live** (0006). Review: 1 high (ASR image build), 5 medium, 8 low, all fixed. Live backup: 18 tables + 418 recordings; **restore drill OK** (counts equal). Load test + GPU-image hashes = stretch, not done. |
+| S3 Transcript view | Transcript next to the player. Arabic search (normalised, pg_trgm). Audited views/exports. .txt export. | ✅ **Merged, live** (0007). Review: 1 medium, 8 low, all fixed. Agents see transcripts of their own calls only. Real transcripts searchable. Browser check ⚠ NEEDS USER. |
+| S5 Call analysis | Local Ollama `qwen2.5:7b` (vs `qwen3:8b`). Summary, topic, flags. First satisfaction estimate **never in KPIs**. Blind 100-call set. Fine-tune with CAMeLBERT-DA. | 🔧 Being built (migration 0008). |
+| S6 Live board | Separate `live` service, **off by default**, own single PBX login. `pbx:auth_blocked` guard. WebSocket with Origin check. Listen = 403 stub + audit. | 🔧 Being built (migration 0009). Live testing needs the office LAN. |
 
 ## ⚠ NEEDS YOU
 1. **Type the 30 reference texts** on the "Gold set" page (admin). Then Claude runs `goldset score` and the best ASR model is chosen.
@@ -39,8 +39,10 @@ The plan and every judges' decision are in `docs/overnight-plan.md`. Each spec's
    - confirm the PBX certificate fingerprint;
    - enable "Call Status Monitor" per trunk on the PBX;
    - legal steps before Listen (IVR notice "calls may be recorded or monitored", staff policy, lawyer).
-6. Optional: pyannote (speaker split) needs you to accept its licence on Hugging Face and give a token.
-7. Phase 0 leftovers: legal recording announcement (PDPL), server purchase.
+6. Delete `D:/callsight-backup-test` (750 MB unencrypted test copy of recordings made by the backup test) when you no longer need it. Decide if the gold-set clips are kept under retention.
+7. Log in as admin and look at the new pages: "الحالة" (health) and a call's transcript (click a line → audio jumps there).
+8. Optional: pyannote (speaker split) needs you to accept its licence on Hugging Face and give a token.
+9. Phase 0 leftovers: legal recording announcement (PDPL), server purchase.
 
 ## Model downloads + licences
 | Model | Licence | Status |

@@ -4,12 +4,13 @@ Run: uvicorn callsight.api.main:app  (settings from .env; APP_SECRET is required
 """
 
 import os
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Callable, Iterator
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Path as FPath, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
@@ -18,13 +19,18 @@ from sqlalchemy.orm import Session
 
 from .. import kpi, transcripts
 from ..config import RIYADH
-from ..db.models import (Agent, AppUser, Call, GoldClip, RecordingPlay, ReportArchive, ReportDownload, Transcript,
+from ..db.models import (Agent, AppUser, Call, GoldClip, ListenAudit, RecordingPlay, ReportArchive, ReportDownload,
+                         Transcript,
                          TranscriptAccess)
 from ..ingest.classify import TeamConfig
+from ..pbx.base import PbxError
 from . import auth
+from . import live as live_ws
+from .live import LiveConfig, NoLiveSource
 from .calls import (DIRECTIONS, STATUSES, CallFilter, call_detail, list_calls, summary, team_agents, visible_call,
                     visible_scope)
 
+LISTEN_DENIALS_PER_MIN = 10           # audited refused Listen requests per user per minute
 MAX_RANGE_DAYS = 400
 AUDIT_WINDOW = timedelta(minutes=10)   # one audit row per user + call within this window
 
@@ -41,6 +47,12 @@ class ApiConfig:
     health: Callable[[Session], dict] | None = None    # health page data (callsight.health.collect)
     llm_model: str = "qwen2.5:7b"                       # LLM_MODEL: its analysis (current prompt) is shown first
     topics: Callable[[], dict] | None = None            # config/topics.yaml, re-read per request
+    live: "LiveConfig | None" = None                   # live board WebSocket (None: always "no live data")
+    # Listen (spec live-board, decision 4): OFF. Gate 1 = this flag, read on EVERY request (LISTEN_ENABLED);
+    # gate 2 = the PBX adapter's listen() refuses too. Every attempt is written to listen_audit.
+    listen_enabled: Callable[[], bool] = lambda: False
+    listen_client: Callable[[], object] | None = None   # -> object with listen(monitor_ext, call_id)
+    live_lookup: Callable[[str], dict | None] | None = None   # live call by PBX call id (from the snapshot)
 
 
 class LoginIn(BaseModel):
@@ -425,6 +437,71 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
             raise HTTPException(503, "health checks not configured")
         return cfg.health(s)
 
+    # ---------- live board (admin + supervisor) + Listen stub (OFF) ----------
+
+    live_ws.register(app, cfg.live or LiveConfig(origins=frozenset(), source=NoLiveSource()), session_factory,
+                     cfg.secret)
+
+    def listen_audit(s: Session, user: AppUser, ip: str | None, call_id: str, result: str, agent: str | None = None,
+                     kind: str = "attempt", attempt_id: int | None = None) -> ListenAudit:
+        row = ListenAudit(kind=kind, result=result, attempt_id=attempt_id, user_id=user.id, user_ext=user.ext,
+                          client_ip=ip, live_call_id=call_id, agent_ext=agent)
+        s.add(row)
+        s.commit()                       # committed before anything else happens (before any PBX call)
+        return row
+
+    listen_origins = cfg.live.origins if cfg.live else frozenset()
+    denials: dict[int, list[float]] = {}          # user id -> times of audited denials (this API process)
+
+    def deny(s: Session, user: AppUser, ip: str | None, call_id: str, result: str, code: int, detail: str):
+        """Audit a refused Listen, but at most LISTEN_DENIALS_PER_MIN rows per user per minute: a script or a
+        cross-site form must not flood the append-only table (later ones: 429, no row)."""
+        now = time.monotonic()
+        recent = [t for t in denials.get(user.id, []) if now - t < 60]
+        if len(recent) >= LISTEN_DENIALS_PER_MIN:
+            denials[user.id] = recent
+            raise HTTPException(429, "too many refused listen requests; try again in a minute")
+        denials[user.id] = [*recent, now]
+        listen_audit(s, user, ip, call_id, result)
+        raise HTTPException(code, detail)
+
+    @app.post("/api/live/{call_id}/listen")
+    def listen(call_id: Annotated[str, FPath(pattern=r"^[A-Za-z0-9_.\-]{1,64}$")], request: Request, user: User,
+               s: DB) -> dict:
+        # client_ip: behind Docker's port mapping this is the bridge gateway, not the user's PC (user_id is the key)
+        ip = request.client.host if request.client else None
+        if (request.headers.get("origin") or "").rstrip("/") not in listen_origins:
+            deny(s, user, ip, call_id, "denied_origin", 403, "request not from the CallSight page")
+        if user.role not in auth.STAFF_ROLES:
+            deny(s, user, ip, call_id, "denied_role", 403, "admin or supervisor only")
+        if not cfg.listen_enabled():
+            deny(s, user, ip, call_id, "denied_off", 403, "feature off")
+        if not user.ext:
+            deny(s, user, ip, call_id, "denied_no_ext", 403, "your account has no extension to ring")
+        try:
+            live = cfg.live_lookup(call_id) if cfg.live_lookup else None
+        except Exception:  # noqa: BLE001 - Redis down / bad snapshot: still audited
+            listen_audit(s, user, ip, call_id, "error")
+            raise HTTPException(503, "live data not available") from None
+        agent = ((live or {}).get("agents") or [None])[0]
+        if live is None or agent is None:
+            listen_audit(s, user, ip, call_id, "not_found", agent)
+            raise HTTPException(404, "no such call talking now")
+        attempt = listen_audit(s, user, ip, call_id, "pending", agent)
+        try:
+            if cfg.listen_client is None:
+                raise RuntimeError("no PBX client")
+            cfg.listen_client().listen(user.ext, call_id)       # the adapter refuses too (2nd gate)
+            result = "ok"
+        except PbxError:
+            result = "refused"
+        except Exception:  # noqa: BLE001 - audited; details stay out of the answer
+            result = "error"
+        listen_audit(s, user, ip, call_id, result, agent, kind="result", attempt_id=attempt.id)
+        if result != "ok":
+            raise HTTPException(503, "the PBX did not start listening")
+        return {"ok": True}
+
     @app.get("/api/{rest:path}")
     def api_404(rest: str) -> None:
         raise HTTPException(404, "not found")
@@ -444,7 +521,42 @@ def _app_from_env() -> FastAPI:
         asr_model=os.getenv("ASR_MODEL", "whisper-large-v3").strip(),
         llm_model=os.getenv("LLM_MODEL", "qwen2.5:7b").strip(),
         cookie_secure=os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes"),
-        health=_health_from_env()))
+        health=_health_from_env(), live=_live_from_env(),
+        listen_enabled=lambda: os.getenv("LISTEN_ENABLED", "false").strip().lower() in ("1", "true", "yes"),
+        listen_client=lambda: _listen_adapter(), live_lookup=_live_lookup_from_env()))
+
+
+def live_origins(env: dict[str, str] | os._Environ = os.environ) -> frozenset[str]:
+    """LIVE_ORIGINS="http://127.0.0.1:8080,http://localhost:8080" (exact match); default: this PC on WEB_PORT."""
+    raw = env.get("LIVE_ORIGINS", "").strip()
+    if raw:
+        return frozenset(o.strip().rstrip("/") for o in raw.split(",") if o.strip())
+    port = env.get("WEB_PORT", "8080").strip() or "8080"
+    return frozenset({f"http://127.0.0.1:{port}", f"http://localhost:{port}"})
+
+
+def _live_from_env() -> LiveConfig:
+    from ..app import settings
+    return LiveConfig(origins=live_origins(), source=live_ws.RedisLiveSource(settings().redis_url))
+
+
+def _live_lookup_from_env() -> Callable[[str], dict | None]:
+    import json
+
+    from ..app import redis_client
+    from ..live.bus import SNAPSHOT_KEY
+
+    def lookup(call_id: str) -> dict | None:
+        raw = redis_client().get(SNAPSHOT_KEY)
+        calls = (json.loads(raw) or {}).get("calls") or [] if raw else []
+        return next((c for c in calls if c.get("call_id") == call_id), None)
+    return lookup
+
+
+def _listen_adapter():
+    """Only reached when LISTEN_ENABLED=true; its listen() still refuses (listen_enabled=False, 2nd gate)."""
+    from ..app import pbx_adapter
+    return pbx_adapter("api", fail_closed=True)
 
 
 def _health_from_env(cache_seconds: float = 15.0) -> Callable[[Session], dict]:

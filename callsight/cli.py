@@ -37,6 +37,10 @@
   flags --recompute [--call ID]    re-match config/rules.yaml on the transcripts (after editing the word lists)
   blindset create [--n 100 --min-pool 100]   freeze the blind test set once (it never changes afterwards)
   blindset status                  blind set size and rating progress
+  pbx-unblock            allow PBX logins again after a refused login / token limit set pbx:auth_blocked
+                         (fix the cause first: Client ID/Secret, PBX API IP allow-list, other programs' logins)
+  live                   live call board service (one PBX WebSocket). Does nothing unless LIVE_ENABLED=true;
+                         in Docker: docker compose --profile live up -d live   (office LAN only)
 """
 from __future__ import annotations
 
@@ -100,7 +104,14 @@ def main(argv: list[str] | None = None) -> int:
     fl.add_argument("--call", type=int)
     bs = sub.add_parser("blindset"); bs.add_argument("action", choices=("create", "status"))
     bs.add_argument("--n", type=int, default=100); bs.add_argument("--min-pool", type=int, default=100)
+    sub.add_parser("pbx-unblock")
+    sub.add_parser("live")
     a = p.parse_args(argv)
+    if a.cmd == "pbx-unblock":
+        return _pbx_unblock()
+    if a.cmd == "live":
+        from .live.service import main as live_main
+        return live_main()
     if a.cmd == "backup":
         return _backup(a)
     if a.cmd == "retention":
@@ -480,3 +491,18 @@ def _pbx_cert(a: argparse.Namespace) -> int:
     except (ValueError, OSError, tls.PbxError) as exc:
         print("ERROR:", exc, file=sys.stderr)
         return 1
+
+
+def _pbx_unblock(redis=None) -> int:
+    from .pbx.authblock import unblock
+    try:
+        info = unblock(redis if redis is not None else wiring.redis_client())
+    except Exception as exc:  # noqa: BLE001 - redis connection errors
+        print(f"ERROR: cannot reach Redis ({type(exc).__name__}). In Docker: "
+              "docker compose run --rm worker python -m callsight pbx-unblock", file=sys.stderr)
+        return 1
+    if info is None:
+        print("PBX logins were not blocked.")
+    else:
+        print(f"PBX logins allowed again (was blocked by {info.get('by', '?')}: {info.get('reason', '?')}).")
+    return 0
