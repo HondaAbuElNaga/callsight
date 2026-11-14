@@ -79,7 +79,11 @@ def load_examples(session, asr_model: str, llm_model: str | None = None, prompt_
                                   func.bool_and(SatisfactionLabel.prefill.is_(None)))
                            .group_by(SatisfactionLabel.call_id).order_by(SatisfactionLabel.call_id)).all()
     train, test = [], []
+    from .settings import rating_excluded
+    skip = rating_excluded()                       # test calls: never trained or evaluated on
     for call_id, mean, no_prefill in rows:
+        if call_id in skip:
+            continue
         if call_id in blind and not no_prefill:
             continue                               # a pre-filled label can't be part of the blind evaluation
         t = displayed(session, call_id, asr_model)

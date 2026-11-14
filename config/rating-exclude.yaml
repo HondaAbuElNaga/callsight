@@ -1,0 +1,6 @@
+# Calls kept OUT of the satisfaction rating: not on the rating page, not in the blind test set, not in training.
+# Use it for test calls (not real customers). The calls stay in the call list and in the KPIs.
+# The number is the call id (shown in the address of the call page / rating page).
+call_ids:
+  - 2865   # 2026-11-12 19:19:59  test call from project setup (user, 2026-11-14)
+  - 3071   # 2026-11-12 19:29:26  test call from project setup (user, 2026-11-14)
