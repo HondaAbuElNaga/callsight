@@ -19,6 +19,12 @@
                          print the KPIs of the week (Sun-Sat) / month containing --start
                          (default: the last closed one); --pdf also writes the PDF report
   report-archive [--period week|month]   (re)build the archived PDF of the last closed period(s) now
+  backup                 DB dump + copy of new recordings/reports into BACKUP_DIR (also the step before
+                         every migration). In Docker: docker compose run --rm worker python -m callsight backup
+  backup verify          restore drill: newest dump -> scratch DB callsight_restore_check, compare row counts
+  retention [--dry-run]  PDPL clean-up now (only when RETENTION_ENABLED=true and days >= 30 in retention.yaml)
+  pbx-cert --fetch       show the SHA-256 fingerprint of the PBX's certificate (office LAN; compare it with the
+                         PBX web page); --accept SHA256 saves it to YEASTAR_CA_FILE only when it matches
 """
 from __future__ import annotations
 
@@ -63,7 +69,18 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("--start", type=date.fromisoformat); rp.add_argument("--team"); rp.add_argument("--agent")
     rp.add_argument("--pdf", help="write the PDF report to this file")
     ra = sub.add_parser("report-archive"); ra.add_argument("--period", choices=("week", "month"))
+    bk = sub.add_parser("backup"); bk.add_argument("action", nargs="?", choices=("run", "verify"), default="run")
+    rt = sub.add_parser("retention"); rt.add_argument("--dry-run", action="store_true")
+    pc = sub.add_parser("pbx-cert"); g2 = pc.add_mutually_exclusive_group(required=True)
+    g2.add_argument("--fetch", action="store_true"); g2.add_argument("--accept", metavar="SHA256")
+    pc.add_argument("--out", help="where to save the PEM (default: YEASTAR_CA_FILE or config/pbx-ca.pem)")
     a = p.parse_args(argv)
+    if a.cmd == "backup":
+        return _backup(a)
+    if a.cmd == "retention":
+        return _retention(a)
+    if a.cmd == "pbx-cert":
+        return _pbx_cert(a)
     if a.cmd == "report":
         return _report(a)
     if a.cmd == "report-archive":
@@ -216,3 +233,81 @@ def _report_archive(a: argparse.Namespace) -> int:
             row = archive.generate(s, kind, wiring.teams(), wiring.reports_dir())
             print(f"{kind} {row.period_start}: {row.file} ({row.size_bytes} bytes)")
     return 0
+
+
+def _backup(a: argparse.Namespace) -> int:
+    from . import backup
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    cfg = wiring.backup_config()
+    with wiring.session_factory()() as s:
+        if a.action == "verify":
+            try:
+                res = backup.verify(s, cfg)
+            except backup.BackupError as exc:
+                print("ERROR:", exc, file=sys.stderr)
+                return 1
+            print(res.message)
+            for table, (want, got) in res.mismatches.items():
+                print(f"  {table}: backup {want} / restored {got}")
+            return 0 if res.ok else 1
+        with _maint_lock() as got:
+            if not got:
+                print("ERROR: another backup/retention run holds the maintenance lock", file=sys.stderr)
+                return 1
+            run = backup.run_backup(s, cfg)
+    if run.status != "ok":
+        print(f"ERROR: backup failed: {run.error}", file=sys.stderr)
+        return 1
+    print(f"backup ok: {run.dump_file} ({run.dump_bytes} bytes, {len(run.counts or {})} tables); "
+          f"{run.files_copied} new files copied ({run.files_bytes} bytes)")
+    print("note: not encrypted, and on the same disk as the audio unless BACKUP_HOST_DIR points to another disk/NAS")
+    return 0
+
+
+def _maint_lock():
+    """The Redis maintenance lock when Redis is reachable (Docker); without Redis (PC tests) run unlocked."""
+    import contextlib
+    from .locks import maint_lock
+    try:
+        import redis
+        r = redis.Redis.from_url(wiring.settings().redis_url, socket_timeout=2, socket_connect_timeout=2)
+        r.ping()
+    except Exception:  # noqa: BLE001
+        print("note: Redis not reachable, running without the maintenance lock", file=sys.stderr)
+        return contextlib.nullcontext(True)
+    return maint_lock(r)
+
+
+def _retention(a: argparse.Namespace) -> int:
+    from . import retention
+    cfg = wiring.retention_config()
+    with wiring.session_factory()() as s:
+        r = retention.run(s, cfg, wiring.settings().audio_dir, wiring.backup_config().files_dir,
+                          force_dry_run=a.dry_run)
+    if not r.get("enabled"):
+        print(r["reason"])
+        return 0
+    print(("DRY RUN, nothing deleted: " if r["dry_run"] else "deleted: ") +
+          f"{r['calls']} calls older than {r['days']} days, {r['files']} recording files, {r['audit_rows']} audit rows")
+    return 0
+
+
+def _pbx_cert(a: argparse.Namespace) -> int:
+    from pathlib import Path
+    from .config import ROOT
+    from .pbx import tls
+    s = wiring.settings()
+    try:
+        if a.fetch:
+            host, port = tls.host_port(s.yeastar_base_url)
+            print(f"SHA-256 fingerprint of the certificate the PBX presents now:\n  {tls.fingerprint(tls.fetch_cert(host, port))}")
+            print("Compare it with the fingerprint shown in the PBX web interface (or the certificate you download "
+                  "there). Only if they are equal: python -m callsight pbx-cert --accept <fingerprint>")
+            return 0
+        out = Path(a.out or s.yeastar_ca_file or ROOT / "config" / "pbx-ca.pem")
+        fp = tls.accept(s.yeastar_base_url, a.accept, out)
+        print(f"saved {out} ({fp}). Now set YEASTAR_CA_FILE={out} in .env and restart.")
+        return 0
+    except (ValueError, OSError, tls.PbxError) as exc:
+        print("ERROR:", exc, file=sys.stderr)
+        return 1

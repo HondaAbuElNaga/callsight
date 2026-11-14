@@ -1,0 +1,9 @@
+# Retention of personal data (PDPL). OFF until the business/legal decision is made (NEEDS USER).
+# It only runs when BOTH are set:  RETENTION_ENABLED=true in .env  AND  days below (minimum 30).
+# The first run for a new "days" value is always a dry run: it only counts what would be deleted
+# (see the retention_run table / the nightly log). The next night really deletes.
+# Deleted: recording files (+ their copies in the backup folder), transcripts, call analysis of calls older
+# than "days". Call metadata (time, agent, duration) stays for the KPIs. DB dumps keep old data ~8 weeks.
+days: null
+# Audit rows (who played which recording / downloaded which report) are kept 2 years (730 days, minimum).
+audit_days: 730

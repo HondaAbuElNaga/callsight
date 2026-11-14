@@ -36,6 +36,7 @@ class ApiConfig:
     cookie_secure: bool = False
     teams: Callable[[], TeamConfig] = TeamConfig      # re-read per request (teams.yaml edits apply at once)
     reports_dir: Path | None = None
+    health: Callable[[Session], dict] | None = None    # health page data (callsight.health.collect)
 
 
 class LoginIn(BaseModel):
@@ -312,6 +313,14 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         audit_play(s, user, c.call_id)
         return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, no-store"})
 
+    # ---------- health (admin only; no paths, hostnames or error texts in the answer) ----------
+
+    @app.get("/api/health")
+    def health(user: Admin, s: DB) -> dict:
+        if cfg.health is None:
+            raise HTTPException(503, "health checks not configured")
+        return cfg.health(s)
+
     @app.get("/api/{rest:path}")
     def api_404(rest: str) -> None:
         raise HTTPException(404, "not found")
@@ -328,7 +337,31 @@ def _app_from_env() -> FastAPI:
     static = Path(os.getenv("WEB_DIST", str(Path(__file__).resolve().parents[2] / "web" / "dist")))
     return create_app(session_factory(), ApiConfig(
         secret=secret, audio_dir=settings().audio_dir, static_dir=static, teams=teams, reports_dir=reports_dir(),
-        cookie_secure=os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes")))
+        cookie_secure=os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes"),
+        health=_health_from_env()))
+
+
+def _health_from_env(cache_seconds: float = 15.0) -> Callable[[Session], dict]:
+    """Real disks / Redis / Celery for the health page; answers cached a few seconds (worker ping takes 1 s)."""
+    import time
+
+    import redis
+
+    from .. import health
+    from ..app import settings
+    from ..jobs import celery
+    st = settings()
+    deps = health.HealthDeps(
+        disk_paths={"system": Path("/"), "audio": st.audio_dir, "backup": st.backup_dir},
+        redis=redis.Redis.from_url(st.redis_url, socket_timeout=1, socket_connect_timeout=1),
+        ping=lambda: celery.control.ping(timeout=1.0), offsite_confirmed=health.offsite_confirmed())
+    cached: dict = {}
+
+    def get(s: Session) -> dict:
+        if not cached or time.monotonic() - cached["t"] > cache_seconds:
+            cached.update(t=time.monotonic(), data=health.collect(s, deps))
+        return cached["data"]
+    return get
 
 
 def __getattr__(name: str):   # `uvicorn callsight.api.main:app` builds the app lazily (tests import without .env)
