@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import (BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text,
-                        func)
+                        UniqueConstraint, func)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -145,3 +145,50 @@ class GoldClip(Base):
     typed_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     typed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Transcript(Base):
+    """Speech-to-text of one call by one model (spec 2026-11-14-transcription). Text = personal data (PDPL)."""
+    __tablename__ = "transcript"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"))
+    model: Mapped[str] = mapped_column(String(50))
+    model_revision: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(10))               # queued/running/done/error/skipped
+    text: Mapped[str | None] = mapped_column(Text)
+    audio_seconds: Mapped[float | None] = mapped_column(Float)
+    speech_seconds: Mapped[float | None] = mapped_column(Float)    # windows that kept text
+    compute_seconds: Mapped[float | None] = mapped_column(Float)
+    dropped_windows: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    segmenter_version: Mapped[str | None] = mapped_column(String(30))
+    diarization_version: Mapped[str | None] = mapped_column(String(30))   # NULL until speaker split exists
+    error: Mapped[str | None] = mapped_column(String(300))        # ids/reasons only, never transcript text
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    segments: Mapped[list["TranscriptSegment"]] = relationship(
+        back_populates="transcript", cascade="all, delete-orphan", order_by="TranscriptSegment.seq")
+
+    __table_args__ = (
+        UniqueConstraint("call_id", "model", name="uq_transcript_call_model"),
+        Index("ix_transcript_status", "status"),
+    )
+
+
+class TranscriptSegment(Base):
+    """One audio window of a transcript. `flag` = why its text was dropped (silence/blocklist/repeat/too_fast)."""
+    __tablename__ = "transcript_segment"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    transcript_id: Mapped[int] = mapped_column(ForeignKey("transcript.id", ondelete="CASCADE"))
+    seq: Mapped[int] = mapped_column(Integer)                      # order in the call, 0-based
+    start_seconds: Mapped[float] = mapped_column(Float)
+    end_seconds: Mapped[float] = mapped_column(Float)
+    speaker: Mapped[str | None] = mapped_column(String(20))        # NULL until diarization
+    text: Mapped[str] = mapped_column(Text, default="")
+    flag: Mapped[str | None] = mapped_column(String(20))
+
+    transcript: Mapped[Transcript] = relationship(back_populates="segments")
+
+    __table_args__ = (UniqueConstraint("transcript_id", "seq", name="uq_transcript_segment_seq"),)
