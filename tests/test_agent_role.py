@@ -11,8 +11,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 from sqlalchemy.orm import sessionmaker
 
+from starlette.websockets import WebSocketDisconnect
+
 from callsight.api import auth
 from callsight.api.calls import Scope, visible_scope
+from callsight.api.live import LiveConfig, NoLiveSource
 from callsight.api.main import ApiConfig, create_app
 from callsight.config import RIYADH
 from callsight.db.models import Agent, AppUser, Call, CallLeg, RecordingPlay
@@ -28,8 +31,10 @@ STAFF_ONLY = {
     ("GET", "/api/reports/pdf"), ("GET", "/api/reports"), ("GET", "/api/reports/{report_id}/pdf"),
     ("GET", "/api/goldset"), ("GET", "/api/goldset/{clip_id}"), ("PUT", "/api/goldset/{clip_id}"),
     ("GET", "/api/goldset/{clip_id}/audio"), ("GET", "/api/health"),
+    ("WS", "/api/live"), ("POST", "/api/live/{call_id}/listen"),       # live board + Listen stub (live-board spec)
 }
 CATCH_ALL = {("GET", "/api/{rest:path}")}       # plain 404 for unknown /api paths
+ORIGIN = "http://testserver"                     # live WebSocket Origin allowlist in these tests
 
 
 def _today_at(hour: int) -> datetime:
@@ -75,7 +80,8 @@ def env(engine, tmp_path):  # noqa: F811
         ids = {"own": own.id, "own_out": own_out.id, "other": other.id, "missed": missed.id, "sales": sales.id}
         auth.create_user(s, "boss", PASSWORD, "supervisor", "114")
         auth.create_user(s, "ali", PASSWORD, "agent", "119", TEAM.ext_team)
-    app = create_app(Session, ApiConfig(secret=SECRET, audio_dir=tmp_path, teams=lambda: TEAM, reports_dir=tmp_path))
+    app = create_app(Session, ApiConfig(secret=SECRET, audio_dir=tmp_path, teams=lambda: TEAM, reports_dir=tmp_path,
+                                        live=LiveConfig(origins=frozenset({ORIGIN}), source=NoLiveSource())))
     return TestClient(app), Session, ids, app
 
 
@@ -115,11 +121,21 @@ def test_every_api_route_is_classified(env):
     assert not (AGENT_ALLOWED & STAFF_ONLY)
 
 
+def _ws_close_code(client, path) -> int:
+    with pytest.raises(WebSocketDisconnect) as e:
+        with client.websocket_connect(path, headers={"origin": ORIGIN}) as w:
+            w.receive_text()
+    return e.value.code
+
+
 def test_staff_only_routes_refuse_agents(env):
     client, *_, app = env
     login(client)
     for method, path in sorted(_api_routes(app) & STAFF_ONLY):
-        url = path.replace("{report_id}", "1").replace("{clip_id}", "1")
+        if method == "WS":                      # refused before accept: close code 4403 (= HTTP 403)
+            assert _ws_close_code(client, path) == 4403, path
+            continue
+        url = path.replace("{report_id}", "1").replace("{clip_id}", "1").replace("{call_id}", "1")
         r = client.request(method, url, json={"text": "x"} if method == "PUT" else None)
         assert r.status_code == 403, (method, path, r.status_code)
 
@@ -140,6 +156,9 @@ def test_agent_allowed_routes_answer(env):
 def test_agent_routes_need_login(env):
     client, _, ids, app = env
     for method, path in sorted(_api_routes(app) & (AGENT_ALLOWED | STAFF_ONLY)):
+        if method == "WS":                      # close code 4401 (= HTTP 401)
+            assert _ws_close_code(client, path) == 4401, path
+            continue
         url = path.replace("{call_id}", str(ids["own"])).replace("{report_id}", "1").replace("{clip_id}", "1")
         assert client.request(method, url).status_code == 401, (method, path)
 
