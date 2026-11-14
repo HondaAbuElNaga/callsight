@@ -14,6 +14,7 @@
   disable-user NAME      block a web login
   goldset pick [--n 30 --seconds 60 --seed 1]   choose + cut the ASR gold-set clips (once)
   goldset score [--bench-dir data/asr-bench --out docs/asr-benchmark.md]
+  goldset drafts [--bench-dir data/asr-bench]   pre-fill model drafts (rotating source) for the typist to correct
                          WER/CER per model from the typed texts -> benchmark report
   report --period week|month [--start YYYY-MM-DD] [--team T] [--agent EXT] [--pdf out.pdf]
                          print the KPIs of the week (Sun-Sat) / month containing --start
@@ -77,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--generate", action="store_true", help="random password, printed once")
     du = sub.add_parser("disable-user"); du.add_argument("username")
     se = sub.add_parser("set-ext"); se.add_argument("username"); se.add_argument("--ext", required=True)
-    g = sub.add_parser("goldset"); g.add_argument("action", choices=("pick", "score"))
+    g = sub.add_parser("goldset"); g.add_argument("action", choices=("pick", "score", "drafts"))
     g.add_argument("--n", type=int, default=30); g.add_argument("--seconds", type=float, default=60.0)
     g.add_argument("--seed", type=int, default=1)
     g.add_argument("--bench-dir", default="data/asr-bench"); g.add_argument("--out", default="docs/asr-benchmark.md")
@@ -308,6 +309,8 @@ def _blindset(a: argparse.Namespace) -> int:
 def _goldset(a: argparse.Namespace) -> int:
     if a.action == "score":
         return _goldset_score(a)
+    if a.action == "drafts":
+        return _goldset_drafts(a)
     from collections import Counter
     from .asr.goldset import pick
     from .db.models import Call
@@ -321,6 +324,21 @@ def _goldset(a: argparse.Namespace) -> int:
         return 1
     print(f"{len(clips)} clips cut into {wiring.settings().audio_dir / 'goldset'}")
     print("per agent:", dict(Counter(c.agent_ext for c in calls)), "| per direction:", dict(Counter(c.direction for c in calls)))
+    return 0
+
+
+def _goldset_drafts(a: argparse.Namespace) -> int:
+    import json
+    from collections import Counter
+    from pathlib import Path
+    from .asr.goldset import make_drafts
+    drafts = make_drafts(Path(a.bench_dir))
+    if not drafts:
+        print("ERROR: no benchmark results found in", a.bench_dir, file=sys.stderr)
+        return 1
+    out = wiring.settings().audio_dir / "goldset" / "drafts.json"
+    out.write_text(json.dumps(drafts, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"{len(drafts)} drafts written to {out}; per model:", dict(Counter(d["source"] for d in drafts.values())))
     return 0
 
 

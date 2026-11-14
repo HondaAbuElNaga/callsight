@@ -201,3 +201,34 @@ def test_goldset_bad_input(client):
     assert c.get("/api/goldset/999").status_code == 404
     assert c.put("/api/goldset/999", json={"text": "x"}).status_code == 404
     assert c.put("/api/goldset/1", json={"text": "x" * 10_001}).status_code == 422
+
+
+def test_make_drafts_rotates_and_falls_back(tmp_path):
+    import json
+    from callsight.asr.goldset import make_drafts
+    def jl(model, rows):
+        (tmp_path / f"{model}.jsonl").write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    clips = [f"clip_0{i}_call_{i}.wav" for i in range(1, 5)]
+    jl("a", [{"clip": c, "text": f"a{i}"} for i, c in enumerate(clips)])
+    jl("b", [{"clip": c, "text": f"b{i}"} for i, c in enumerate(clips)])
+    jl("c", [{"clip": clips[2], "text": "c2"}, {"clip": clips[1], "text": ""}, {"clip": clips[1], "text": "c1"}])
+    d = make_drafts(tmp_path, ("a", "b", "c"))
+    assert [d[c]["source"] for c in clips] == ["a", "b", "c", "a"]
+    assert d[clips[2]]["text"] == "c2"
+    jl("b", [])                                     # b missing → next model in the rotation
+    assert make_drafts(tmp_path, ("a", "b", "c"))[clips[1]]["source"] == "c"
+
+
+def test_goldset_draft_text_hides_source(client, env):
+    import json
+    c, Session = client
+    _, audio = env
+    as_user(c, "boss")
+    with Session() as s:
+        name = Path(s.get(GoldClip, 1).file).name
+    assert c.get("/api/goldset/1").json()["draft_text"] == ""          # no drafts file yet
+    (audio / "goldset" / "drafts.json").write_text(json.dumps({name: {"text": "مسودة", "source": "m"}}), encoding="utf-8")
+    r = c.get("/api/goldset/1").json()
+    assert r["draft_text"] == "مسودة" and "source" not in r
+    assert not r["has_text"]                                            # a draft is not a saved text
+    assert "draft_text" not in c.get("/api/goldset").json()[0]

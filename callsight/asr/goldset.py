@@ -100,3 +100,30 @@ def pick(session: Session, audio_dir: Path, agents: list[str], n: int = 30, seco
         clips.append(clip)
     session.commit()
     return clips
+
+
+DRAFT_MODELS = ("whisper-large-v3", "audar-asr-turbo", "jais-asr-4bit")
+
+
+def make_drafts(bench_dir: Path, models: tuple[str, ...] = DRAFT_MODELS) -> dict[str, dict]:
+    """Machine drafts the typist only corrects. The source model rotates clip by clip (clip 1 → models[0],
+    clip 2 → models[1], …) so no model gets every reference shaped like its own output. If the rotated model
+    has no text for a clip, the next model is used. The source is kept for the scoring step, never shown."""
+    import json
+    texts: dict[str, dict[str, str]] = {}
+    for m in models:
+        f = bench_dir / f"{m}.jsonl"
+        if not f.is_file():
+            continue
+        for line in f.read_text(encoding="utf-8").splitlines():
+            r = json.loads(line) if line.strip() else {}
+            if (r.get("text") or "").strip():
+                texts.setdefault(r["clip"], {})[m] = r["text"].strip()      # last good run wins
+    out: dict[str, dict] = {}
+    for i, clip in enumerate(sorted(texts)):
+        for k in range(len(models)):
+            m = models[(i + k) % len(models)]
+            if m in texts[clip]:
+                out[clip] = {"text": texts[clip][m], "source": m}
+                break
+    return out

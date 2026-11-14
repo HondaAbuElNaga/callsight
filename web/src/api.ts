@@ -74,6 +74,7 @@ export interface GoldClip {
   agent_ext: string | null;
   direction: string | null;
   reference_text?: string;
+  draft_text?: string;              // machine draft (goldset drafts), shown only until the admin saves a text
 }
 
 export interface KpiSummary {

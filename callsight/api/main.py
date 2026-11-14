@@ -349,7 +349,18 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
              "agent_ext": call.agent_ext if call else None, "direction": call.direction if call else None}
         if with_text:
             d["reference_text"] = c.reference_text or ""
+            d["draft_text"] = gold_draft(c.file)
         return d
+
+    def gold_draft(file: str) -> str:
+        """Machine draft for the typist to correct (goldset drafts). Text only: the source model stays hidden."""
+        import json
+        from pathlib import PurePosixPath
+        try:
+            drafts = json.loads((cfg.audio_dir / "goldset" / "drafts.json").read_text(encoding="utf-8"))
+            return str(drafts.get(PurePosixPath(file).name, {}).get("text") or "")
+        except (OSError, ValueError, AttributeError):
+            return ""
 
     @app.get("/api/goldset")
     def goldset(user: Admin, s: DB) -> list[dict]:

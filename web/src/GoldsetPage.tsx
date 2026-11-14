@@ -42,10 +42,12 @@ export function GoldsetPage({ me, onBack, onLogout, onExpired }: Props) {
       const c = await api.goldClip(id);
       setCurrent(id);
       const draft = readDraft(id);
-      setText(draft ?? c.reference_text ?? "");
+      const machine = !c.reference_text && draft === null && c.draft_text ? c.draft_text : null;
+      setText(draft ?? c.reference_text ?? machine ?? "");
       setSavedText(c.reference_text ?? "");
       if (draft !== null && draft.trim() !== (c.reference_text ?? "").trim())
         setMsg({ ok: true, text: "تمت استعادة نص غير محفوظ" });
+      else if (machine) setMsg({ ok: true, text: "مسودة آلية فيها أخطاء: استمع وصحّح كل كلمة قبل الحفظ" });
       else setMsg(null);
       box.current?.focus();
     } catch (e) { fail(e); }
