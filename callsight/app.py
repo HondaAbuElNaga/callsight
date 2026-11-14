@@ -30,16 +30,35 @@ def reports_dir() -> Path:
     return Path(os.getenv("REPORTS_DIR", str(ROOT / "data" / "reports")))
 
 
-@lru_cache(maxsize=1)
-def pbx() -> YeastarAdapter:
-    """One adapter per process: the token is reused and the failed-login counter survives between jobs."""
+def redis_client(timeout: float = 2.0):
+    import redis
+    return redis.Redis.from_url(settings().redis_url, socket_timeout=timeout, socket_connect_timeout=timeout)
+
+
+def auth_guard(who: str, fail_closed: bool):
+    """The shared pbx:auth_blocked switch (spec live-board, decision 1)."""
+    from .pbx.authblock import AuthGuard
+    return AuthGuard(redis_client(), who, fail_closed=fail_closed)
+
+
+def pbx_adapter(who: str, fail_closed: bool = False) -> YeastarAdapter:
     from .pbx.tls import verify_setting
     s = settings()
     s.require_pbx()
     verify = verify_setting(s.yeastar_ca_file, s.yeastar_verify_ssl, s.yeastar_check_hostname,
                             cert_sha256=s.yeastar_cert_sha256)
     return YeastarAdapter(s.yeastar_base_url, s.yeastar_client_id, s.yeastar_client_secret,
-                          verify_ssl=verify, cert_sha256=s.yeastar_cert_sha256)
+                          verify_ssl=verify, cert_sha256=s.yeastar_cert_sha256,
+                          guard=auth_guard(who, fail_closed))
+
+
+@lru_cache(maxsize=1)
+def pbx() -> YeastarAdapter:
+    """One adapter per process: the token is reused and the failed-login counter survives between jobs.
+    Checks pbx:auth_blocked before every login; Redis unreachable (e.g. the CLI on the PC, where Redis is not
+    published) = log a warning and rely on the in-process failed-login limit."""
+    import sys
+    return pbx_adapter("cli" if "celery" not in sys.argv[0] else "worker")
 
 
 def backup_config():
