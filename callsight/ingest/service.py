@@ -11,7 +11,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
@@ -158,7 +158,10 @@ def recording_rel_path(call: Call) -> Path:
     return Path(f"{d:%Y}") / f"{d:%m}" / f"{d:%d}" / safe_recording_name(call.recording_file or "")
 
 
-def fetch_one_recording(session: Session, pbx: PbxAdapter, audio_dir: Path, call: Call) -> bool:
+def fetch_one_recording(session: Session, pbx: PbxAdapter, audio_dir: Path, call: Call,
+                        after_ok: Callable[[Session, Call], object] | None = None) -> bool:
+    """Download + check one recording. `after_ok(session, call)` runs after the commit (queues the transcript)."""
+    ok = False
     try:
         rel = recording_rel_path(call)
         dest = audio_dir / rel
@@ -170,6 +173,7 @@ def fetch_one_recording(session: Session, pbx: PbxAdapter, audio_dir: Path, call
             dest.unlink(missing_ok=True)
             raise PbxError(f"bad WAV: {exc}") from exc
         call.recording_path, call.recording_status = rel.as_posix(), "ok"
+        ok = True
         return True
     except PbxUnavailable:
         raise                      # PBX down / token limit: not this file's fault, don't count a try
@@ -181,14 +185,17 @@ def fetch_one_recording(session: Session, pbx: PbxAdapter, audio_dir: Path, call
         return False
     finally:
         session.commit()
+        if ok and after_ok is not None:
+            after_ok(session, call)
 
 
-def fetch_recordings(session: Session, pbx: PbxAdapter, audio_dir: Path, limit: int = 50) -> tuple[int, int]:
+def fetch_recordings(session: Session, pbx: PbxAdapter, audio_dir: Path, limit: int = 50,
+                     after_ok: Callable[[Session, Call], object] | None = None) -> tuple[int, int]:
     calls = session.scalars(
         select(Call).where(Call.recording_status.in_(("pending", "error")),
                            Call.recording_attempts < MAX_RECORDING_ATTEMPTS)
         .order_by(Call.start_time).limit(limit)).all()
-    ok = sum(fetch_one_recording(session, pbx, audio_dir, c) for c in calls)
+    ok = sum(fetch_one_recording(session, pbx, audio_dir, c, after_ok) for c in calls)
     return ok, len(calls) - ok
 
 

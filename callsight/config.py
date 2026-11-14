@@ -17,14 +17,22 @@ RIYADH = timezone(timedelta(hours=3), "AST")   # Saudi Arabia: UTC+3, no dayligh
 
 @dataclass(frozen=True)
 class Settings:
-    yeastar_base_url: str
-    yeastar_client_id: str
-    yeastar_client_secret: str
-    yeastar_verify_ssl: bool
     database_url: str
     redis_url: str
     audio_dir: Path
     teams_file: Path
+    # Only the PBX adapter needs these (checked in app.pbx()), so the asr worker runs without the PBX secret.
+    yeastar_base_url: str = ""
+    yeastar_client_id: str = ""
+    yeastar_client_secret: str = ""
+    yeastar_verify_ssl: bool = True
+
+    def require_pbx(self) -> None:
+        missing = [k for k, v in (("YEASTAR_BASE_URL", self.yeastar_base_url),
+                                  ("YEASTAR_CLIENT_ID", self.yeastar_client_id),
+                                  ("YEASTAR_CLIENT_SECRET", self.yeastar_client_secret)) if not v]
+        if missing:
+            raise RuntimeError(f"Missing in .env: {', '.join(missing)} (see .env.example)")
     yeastar_ca_file: str | None = None          # PBX's own certificate (PEM); verified against it when set
     yeastar_cert_sha256: str | None = None      # fingerprint pin, checked before each login
     yeastar_check_hostname: bool = True
@@ -33,14 +41,12 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         load_dotenv(ROOT / ".env")
-        missing = [k for k in ("YEASTAR_BASE_URL", "YEASTAR_CLIENT_ID", "YEASTAR_CLIENT_SECRET", "DATABASE_URL")
-                   if not os.getenv(k)]
-        if missing:
-            raise RuntimeError(f"Missing in .env: {', '.join(missing)} (see .env.example)")
+        if not os.getenv("DATABASE_URL"):
+            raise RuntimeError("Missing in .env: DATABASE_URL (see .env.example)")
         return cls(
-            yeastar_base_url=os.environ["YEASTAR_BASE_URL"],
-            yeastar_client_id=os.environ["YEASTAR_CLIENT_ID"],
-            yeastar_client_secret=os.environ["YEASTAR_CLIENT_SECRET"],
+            yeastar_base_url=os.getenv("YEASTAR_BASE_URL", ""),
+            yeastar_client_id=os.getenv("YEASTAR_CLIENT_ID", ""),
+            yeastar_client_secret=os.getenv("YEASTAR_CLIENT_SECRET", ""),
             yeastar_verify_ssl=os.getenv("YEASTAR_VERIFY_SSL", "true").lower() not in ("0", "false", "no"),
             database_url=os.environ["DATABASE_URL"],
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),

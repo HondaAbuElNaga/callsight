@@ -1,0 +1,173 @@
+"""Celery task of the GPU `asr` worker: transcribe one call (spec 2026-11-14-transcription).
+
+Run only in the asr image:  celery -A callsight.asr.tasks worker -Q asr --concurrency=1
+The ingest worker and the API never import this module: they enqueue by name with
+`send_task(TASK_NAME)`, so they never need torch. The engine/model are created lazily inside the task.
+Privacy (decision 9): results and logs hold ids and counts only, never transcript text.
+Only errors of the call itself (bad audio, the model failing on this audio) are terminal; a worker that can't
+load its model or runs another model leaves the row `queued` without counting a try.
+"""
+from __future__ import annotations
+
+import logging
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Callable
+
+from celery.signals import worker_init
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
+
+from .. import app as wiring
+from ..db.models import Call, Transcript, TranscriptSegment
+from ..jobs import celery, send_transcribe
+from . import queueing
+
+log = logging.getLogger(__name__)
+_holder = None                                   # one model per worker process
+NOT_READY_RETRY_S = 300                          # worker can't load its model: try the call again in 5 min
+MAINT_WAIT_S = 300                               # backup/retention running: wait, then try again
+OOM_RETRY_S = 60                                # CUDA out of memory: one more try after the cache was freed
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _is_oom(exc: BaseException) -> bool:
+    return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower()
+
+
+def _fail(session: Session, row: Transcript, message: str, now: datetime) -> dict:
+    row.status, row.error, row.finished_at = "error", message[:300], now
+    session.commit()
+    log.warning("transcript for call %s failed: %s", row.call_id, message)
+    return {"call_id": row.call_id, "status": "error"}
+
+
+def _requeue(session: Session, row: Transcript, now: datetime, count_try: bool, due_in_s: int = 0) -> None:
+    """Back to `queued`. `queued_at` = when the (delayed) re-send becomes due: a countdown message sits unacked
+    outside the Redis list (LLEN 0), so the reaper must not mistake the row for a lost message meanwhile."""
+    row.status, row.queued_at, row.started_at = "queued", now + timedelta(seconds=due_in_s), None
+    if not count_try:
+        row.tries = max(0, row.tries - 1)        # claim() counted it, but the call itself was never tried
+    session.commit()
+
+
+def process(session: Session, call_id: int, model: str, holder, audio_dir: Path,
+            load: Callable | None = None, now: Callable[[], datetime] = _utcnow) -> dict:
+    """Transcribe one call into its `queued` transcript row. Idempotent: anything but `queued` is left alone."""
+    from . import engine                         # lazy: numpy/torch only in the asr image
+    load = load or engine.load_audio
+    row = session.scalars(select(Transcript).where(Transcript.call_id == call_id, Transcript.model == model)).first()
+    if row is None or row.status != "queued":
+        return {"call_id": call_id, "status": row.status if row else None, "skipped": True}
+    if model != holder.name:                     # not this worker's job: leave it for the right worker
+        log.warning("call %s is queued for %s but this worker runs ASR_MODEL=%s: left queued",
+                    call_id, model, holder.name)
+        _requeue(session, row, now(), count_try=True)   # not claimed: tries unchanged; reaper re-sends in 30 min
+        return {"call_id": call_id, "status": "queued", "skipped": True, "wrong_model": True}
+    try:
+        holder.ensure_loaded()                   # before the claim: a broken worker must not use up tries
+    except engine.ModelNotReady as exc:
+        _requeue(session, row, now(), count_try=True, due_in_s=NOT_READY_RETRY_S)   # not claimed: no try used
+        log.warning("call %s left queued: %s", call_id, exc)
+        return {"call_id": call_id, "status": "queued", "not_ready": True}
+    if not queueing.claim(session, row.id, now()):
+        return {"call_id": call_id, "status": "taken", "skipped": True}
+    session.refresh(row)
+
+    call = session.get(Call, call_id)
+    base = audio_dir.resolve()
+    path = (base / (call.recording_path or "")).resolve()
+    t0 = time.perf_counter()
+    try:
+        if not call.recording_path or not path.is_relative_to(base):
+            raise engine.AudioError("recording path outside AUDIO_DIR")
+        audio = load(path)
+        with holder.use() as adapter:
+            result = engine.transcribe_audio(adapter, audio)
+    except engine.AudioError as exc:
+        return _fail(session, row, str(exc), now())
+    except engine.ModelNotReady as exc:          # model was unloaded and could not be re-loaded
+        _requeue(session, row, now(), count_try=False, due_in_s=NOT_READY_RETRY_S)
+        log.warning("call %s left queued: %s", call_id, exc)
+        return {"call_id": call_id, "status": "queued", "not_ready": True}
+    except Exception as exc:                     # noqa: BLE001  model/GPU errors: one retry for OOM only
+        engine.free_gpu()
+        if _is_oom(exc) and row.tries < queueing.MAX_TRIES:
+            _requeue(session, row, now(), count_try=True, due_in_s=OOM_RETRY_S)
+            log.warning("transcript for call %s: CUDA out of memory, retrying once", call_id)
+            return {"call_id": call_id, "status": "queued", "retry": True}
+        if _is_oom(exc):
+            return _fail(session, row, "CUDA out of memory", now())
+        if type(exc).__name__ == "SoftTimeLimitExceeded":
+            return _fail(session, row, "time limit (15 min) exceeded", now())
+        return _fail(session, row, f"model failed ({type(exc).__name__})", now())   # message may quote text
+
+    try:
+        _save(session, row, result, holder.revision, round(time.perf_counter() - t0, 2), now())
+    except Exception as exc:                     # noqa: BLE001  DB errors may quote the text: never re-raise them
+        session.rollback()
+        return _fail(session, row, f"saving transcript failed ({type(exc).__name__})", now())
+    latency = queueing.latency_seconds(row.finished_at, call.end_time)
+    log.info("transcript for call %s: %s segments (%s dropped), %.0f s audio in %.1f s, latency %.0f s",
+             call_id, len(result.segments), result.dropped_windows, result.audio_seconds, row.compute_seconds, latency)
+    return {"call_id": call_id, "status": "done", "segments": len(result.segments),
+            "dropped": result.dropped_windows, "audio_s": result.audio_seconds, "latency_s": round(latency)}
+
+
+def _save(session: Session, row: Transcript, result, revision: str | None, compute_s: float, now: datetime) -> None:
+    from .engine import SEGMENTER_VERSION
+    session.execute(delete(TranscriptSegment).where(TranscriptSegment.transcript_id == row.id))   # --force redo
+    session.add_all(TranscriptSegment(transcript_id=row.id, seq=s.seq, start_seconds=s.start, end_seconds=s.end,
+                                      text=s.text, flag=s.flag) for s in result.segments)
+    row.status, row.text, row.error = "done", result.text, None
+    row.model_revision = revision
+    row.audio_seconds, row.speech_seconds = result.audio_seconds, result.speech_seconds
+    row.dropped_windows, row.segmenter_version = result.dropped_windows, SEGMENTER_VERSION
+    row.compute_seconds, row.finished_at = compute_s, now
+    session.commit()
+
+
+def _maint_busy() -> bool:
+    """True while backup/retention holds the maintenance lock. Redis trouble never blocks transcription."""
+    from ..jobs import redis_client
+    from ..locks import maint_busy
+    try:
+        return maint_busy(redis_client())
+    except Exception:                            # noqa: BLE001
+        return False
+
+
+def holder():
+    global _holder
+    if _holder is None:
+        from .engine import ModelHolder
+        cfg = queueing.AsrConfig.from_env()
+        _holder = ModelHolder(cfg.model, idle_unload_s=cfg.idle_unload_s)
+    return _holder
+
+
+@worker_init.connect
+def _check_config(**_) -> None:
+    """Refuse to start an asr worker with an unknown ASR_MODEL (it would take messages it can't do)."""
+    from .engine import check_model_name
+    check_model_name(queueing.AsrConfig.from_env().model)
+
+
+@celery.task(name=queueing.TASK_NAME, soft_time_limit=15 * 60, time_limit=16 * 60, ignore_result=False)
+def transcribe_call(call_id: int, model: str | None = None) -> dict:
+    h = holder()
+    model = model or h.name
+    if _maint_busy():                            # backup/retention running: don't compete for disk, try in 5 min
+        send_transcribe(call_id, model, countdown=MAINT_WAIT_S)
+        return {"call_id": call_id, "status": "queued", "maint_wait": True}
+    with wiring.session_factory()() as s:
+        r = process(s, call_id, model, h, wiring.settings().audio_dir)
+    if r.get("retry"):
+        send_transcribe(call_id, model, countdown=OOM_RETRY_S)
+    elif r.get("not_ready"):
+        send_transcribe(call_id, model, countdown=NOT_READY_RETRY_S)
+    return r

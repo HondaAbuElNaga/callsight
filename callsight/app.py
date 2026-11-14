@@ -35,6 +35,7 @@ def pbx() -> YeastarAdapter:
     """One adapter per process: the token is reused and the failed-login counter survives between jobs."""
     from .pbx.tls import verify_setting
     s = settings()
+    s.require_pbx()
     verify = verify_setting(s.yeastar_ca_file, s.yeastar_verify_ssl, s.yeastar_check_hostname)
     return YeastarAdapter(s.yeastar_base_url, s.yeastar_client_id, s.yeastar_client_secret,
                           verify_ssl=verify, cert_sha256=s.yeastar_cert_sha256)

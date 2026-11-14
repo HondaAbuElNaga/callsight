@@ -25,6 +25,10 @@
   retention [--dry-run]  PDPL clean-up now (only when RETENTION_ENABLED=true and days >= 30 in retention.yaml)
   pbx-cert --fetch       show the SHA-256 fingerprint of the PBX's certificate (office LAN; compare it with the
                          PBX web page); --accept SHA256 saves it to YEASTAR_CA_FILE only when it matches
+  transcribe --call ID [--force]   queue one call for the asr worker (--force: redo done/error/skipped)
+  transcribe --days N --limit M    backfill: newest M answered calls of the last N days (max 500)
+  transcribe status                queue length, done/error counts, latency hang-up -> transcript
+  transcribe --retry-errors --since YYYY-MM-DD [--limit 50]   re-queue failed calls since that day (max 500)
 """
 from __future__ import annotations
 
@@ -75,6 +79,10 @@ def main(argv: list[str] | None = None) -> int:
     pc = sub.add_parser("pbx-cert"); g2 = pc.add_mutually_exclusive_group(required=True)
     g2.add_argument("--fetch", action="store_true"); g2.add_argument("--accept", metavar="SHA256")
     pc.add_argument("--out", help="where to save the PEM (default: YEASTAR_CA_FILE or config/pbx-ca.pem)")
+    tr = sub.add_parser("transcribe"); tr.add_argument("action", nargs="?", choices=("status",))
+    tr.add_argument("--call", type=int); tr.add_argument("--force", action="store_true")
+    tr.add_argument("--days", type=int); tr.add_argument("--limit", type=int)
+    tr.add_argument("--retry-errors", action="store_true"); tr.add_argument("--since", type=date.fromisoformat)
     a = p.parse_args(argv)
     if a.cmd == "backup":
         return _backup(a)
@@ -86,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         return _report(a)
     if a.cmd == "report-archive":
         return _report_archive(a)
+    if a.cmd == "transcribe":
+        return _transcribe(a, p)
     if a.cmd == "goldset":
         return _goldset(a)
     if a.cmd in ("create-user", "set-password", "disable-user", "set-ext"):
@@ -233,6 +243,46 @@ def _report_archive(a: argparse.Namespace) -> int:
         for kind in kinds:
             row = archive.generate(s, kind, wiring.teams(), wiring.reports_dir())
             print(f"{kind} {row.period_start}: {row.file} ({row.size_bytes} bytes)")
+
+
+def _transcribe(a: argparse.Namespace, p: argparse.ArgumentParser) -> int:
+    """DB + Redis only (never the PBX). Run where Redis is reachable, e.g. inside the worker container."""
+    from . import jobs
+    from .asr import queueing
+    modes = sum((a.action == "status", a.call is not None, a.retry_errors,
+                 not a.retry_errors and (a.days is not None or a.limit is not None)))
+    if modes != 1:
+        p.error("transcribe: give exactly one of: status | --call ID | --days N --limit M | --retry-errors --since D")
+    if a.retry_errors and (a.since is None or a.days is not None):
+        p.error("transcribe: --retry-errors needs --since YYYY-MM-DD (and optional --limit)")
+    if not a.retry_errors and (a.days is not None and a.limit is None or a.limit is not None and a.days is None):
+        p.error("transcribe: backfill needs both --days and --limit")
+    cfg = queueing.AsrConfig.from_env()
+    now = datetime.now(RIYADH)
+    with wiring.session_factory()() as s:
+        if a.action == "status":
+            print(queueing.format_status(queueing.status(s, cfg, jobs.asr_queue_length(), now)))
+            return 0
+        try:
+            if a.call is not None:
+                status, send = queueing.queue_call(s, cfg, a.call, a.force, now)
+                ids = [a.call] if send else []
+                print(f"call {a.call}: {status}" + ("" if send else " (nothing sent; --force to redo)"))
+            elif a.retry_errors:
+                ids = queueing.retry_errors(s, cfg, a.since, a.limit or 50, now)
+            else:
+                ids = queueing.queue_recent(s, cfg, a.days, a.limit, now)
+        except ValueError as exc:
+            print("ERROR:", exc, file=sys.stderr)
+            return 1
+    try:
+        for cid in ids:
+            jobs.send_transcribe(cid, cfg.model)
+    except Exception as exc:                              # noqa: BLE001
+        print(f"ERROR: queue not reachable ({type(exc).__name__}); rows stay queued and the reaper re-sends "
+              "them within ~40 min once Redis is back", file=sys.stderr)
+        return 1
+    print(f"{len(ids)} call(s) sent to the asr queue for {cfg.model}")
     return 0
 
 

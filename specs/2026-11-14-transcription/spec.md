@@ -3,7 +3,7 @@
 **Roadmap items:** Phase 2, "Local OpenAI-compatible STT server, model chosen by config" (changed: no separate server,
 see decision R2 in `docs/overnight-plan.md`) and "`asr` worker queue: … transcribe → store segments with speaker +
 timestamps"
-**Status:** approved (by 2 judge agents on the user's behalf, 2026-11-14 — user may revise)
+**Status:** done (2026-11-14; automatic transcription waits for `ASR_START_DATE` ⚠ NEEDS USER)
 
 ## Goal
 Readable text for every answered team call, so supervisors can read/search calls and Phase 3 can score them.
@@ -110,3 +110,21 @@ transcript within 15 min of hang-up**.
     Acceptance run waits until the overnight benchmark has freed the GPU.
 11. The Phase 2 "Done when" quality gate is the **gold-set WER** (8 kHz phone audio upsampled to 16 kHz), never the
     public WER.
+
+## Amendments (builder + 3-reviewer pass, 2026-11-14; user may revise)
+- **To decision 7 (reaper):** `running` rows older than 30 min go back to `queued` while tries < 2, else `error`.
+  `queued` rows older than 30 min only count as lost when the asr queue is **empty** (Redis LLEN = 0; a long
+  backlog is not a failure; queue length unknown → not reaped); each such re-send **counts a try**, so a lost
+  message can be re-sent at most twice before the row becomes `error` — no endless loop.
+- **To decision 7 (worker faults):** only errors of the call itself are terminal (bad/missing audio, the model
+  failing on this audio, 15-min limit, 2nd CUDA OOM). A worker that cannot load its model (no offline cache, no
+  CUDA, GPU held by another job) leaves the row `queued` **without counting a try** and re-sends it after 5 min
+  (load re-tried at most every 2 min); a message for another model than the worker's `ASR_MODEL` is left queued.
+  An unknown `ASR_MODEL` stops the worker at start. Bulk recovery: `transcribe --retry-errors --since D [--limit N]`.
+- **To decision 9 (privacy):** DB engine created with `hide_parameters=True` app-wide; a failed transcript save is
+  stored as `saving transcript failed (<type>)`; the asr worker gets no PBX secret / APP_SECRET (explicit
+  environment, Yeastar settings only required by the PBX adapter); model cache mounted read-only.
+- **Delayed re-sends:** a delayed (countdown) message is unacked outside the Redis list, so LLEN is 0 while it
+  waits; the task therefore sets `queued_at` to the time the re-send is due, and the reaper only acts 30 min after.
+- **Latency:** measured from `first_queued_at` (never rewritten by retries) to decide "live call"; value =
+  `finished_at − call.end_time`; rows redone with `--force`/`--retry-errors` (`redo`) are left out.

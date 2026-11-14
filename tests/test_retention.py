@@ -116,8 +116,8 @@ def test_changing_days_needs_a_new_dry_run(env):
 def test_transcripts_of_old_calls_are_deleted(env, engine):  # noqa: F811
     Session, audio, files, _ = env
     with engine.begin() as c:
-        c.execute(text("CREATE TABLE IF NOT EXISTS transcript (id serial PRIMARY KEY, call_id bigint)"))
-        c.execute(text("INSERT INTO transcript (call_id) SELECT id FROM call"))
+        # real table since the transcription merge (segments go with it: ON DELETE CASCADE)
+        c.execute(text("INSERT INTO transcript (call_id, model, status) SELECT id, 'm', 'done' FROM call"))
     try:
         with Session() as s:
             retention.run(s, ON, audio, files, NOW)
@@ -128,4 +128,4 @@ def test_transcripts_of_old_calls_are_deleted(env, engine):  # noqa: F811
         assert left == {"new", "norec"} and what == "recording,backup_copy,transcript"
     finally:
         with engine.begin() as c:
-            c.execute(text("DROP TABLE transcript"))
+            c.execute(text("DELETE FROM transcript"))
