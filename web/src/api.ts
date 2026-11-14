@@ -134,6 +134,43 @@ export interface ArchivedReport {
 export interface HealthItem { key: string; state: "ok" | "warn" | "bad" | "off"; [k: string]: unknown }
 export interface Health { ok: boolean; problems: string[]; checked_at: string; items: HealthItem[] }
 
+// ---------- call analysis (spec 2026-11-14-call-analysis): admin + supervisor only ----------
+export interface AnalysisContent {
+  status: "queued" | "running" | "done" | "error" | "skipped";
+  model: string;
+  prompt_version: string;
+  summary?: string;              // plain text: rendered as text, never as HTML
+  topic?: string;
+  topic_label?: string;
+  action_items?: string[];
+  escalation?: boolean | null;
+  trimmed?: boolean;
+}
+export interface Estimate { score: number; reason: string; label: string }
+export interface CallAnalysis {
+  call_id: number;
+  analysis: AnalysisContent | null;
+  estimate: Estimate | null;
+  estimate_hidden: "blind" | "not_frozen" | null;
+  flags: { kind: string; phrase: string; start: number; end: number }[];
+  silence: { share: number; seconds: number; longest: number; count: number; long_count: number } | null;
+}
+export interface RatingProgress {
+  labels: number; labels_target: number; blind_frozen: boolean; blind_rated: number; blind_target: number; mine: boolean;
+}
+export interface RatingItem { call_id: number; start_time: string; talk_seconds: number; blind: boolean }
+export interface RatingQueue { progress: RatingProgress; items: RatingItem[] }
+export interface RatingCall {
+  call_id: number;
+  start_time: string;
+  talk_seconds: number;
+  has_recording: boolean;
+  blind: boolean;
+  analysis: AnalysisContent | null;
+  estimate: Estimate | null;     // always null for blind-set calls
+  my_label: { score: number; note: string | null } | null;
+}
+
 export class Unauthorized extends Error {}
 export class NotFound extends Error {}
 export class BadRequest extends Error {}
@@ -199,4 +236,17 @@ export const api = {
     return r.json() as Promise<GoldClip>;
   },
   logout: () => fetch("/api/logout", { method: "POST", credentials: "same-origin" }),
+  analysis: (id: number) => get<CallAnalysis>(`/api/calls/${id}/analysis`),
+  ratingQueue: () => get<RatingQueue>("/api/rating/queue"),
+  ratingCall: (id: number) => get<RatingCall>(`/api/rating/calls/${id}`),
+  async saveRating(id: number, score: number, note: string): Promise<void> {
+    const r = await fetch(`/api/rating/calls/${id}`, {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ score, note: note.trim() || null }),
+    });
+    if (r.status === 401) throw new Unauthorized();
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  },
 };

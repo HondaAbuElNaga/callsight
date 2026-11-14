@@ -5,9 +5,11 @@ import {
 } from "./api";
 import { DIRECTION_LABEL, LEG_LABEL, STATUS_LABEL, STATUS_ORDER, duration, formatDateTime, riyadhToday } from "./format";
 import { TranscriptPanel } from "./TranscriptPanel";
+import { AnalysisPanel } from "./AnalysisPanel";
 
 interface Props {
   me: Me; onLogout: () => void; onExpired: () => void; onGoldset?: () => void; onKpi?: () => void; onHealth?: () => void;
+  onRating?: () => void;
 }
 
 // A function, not a constant: the page may stay open past midnight.
@@ -27,7 +29,7 @@ function wordsOk(text: string): boolean {
 
 interface Seek { id: number; t: number; n: number }
 
-export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth }: Props) {
+export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth, onRating }: Props) {
   const [filters, setFilters] = useState<Filters>(emptyFilters); // applied as soon as a field changes
   const [qText, setQText] = useState("");                  // number box: applied after typing stops
   const [wordsText, setWordsText] = useState("");          // transcript words: same, never in the page URL
@@ -122,6 +124,7 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth 
         <h1>سجل المكالمات</h1>
         <div className="who">
           {onKpi && <button className="link" onClick={onKpi}>المؤشرات</button>}
+          {onRating && <button className="link" onClick={onRating}>تقييم المكالمات</button>}
           {onGoldset && <button className="link" onClick={onGoldset}>النصوص المرجعية</button>}
           {onHealth && <button className="link" onClick={onHealth}>حالة النظام</button>}
           <span className="muted">{me.username}{me.ext ? ` · تحويلة ${me.ext}` : ""}</span>
@@ -230,6 +233,10 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth 
 
       {detail && (
         <DetailPanel call={detail} onClose={() => setDetail(null)} onPlay={() => { setSeek(null); setPlaying(detail); }}>
+          {canSearchText && (   /* admin + supervisor only: agents see nothing of the analysis (decision 9) */
+            <AnalysisPanel key={`a${detail.id}`} callId={detail.id} onExpired={onExpired}
+              onSeek={detail.has_recording ? (t) => seekTo(detail, t) : undefined} />
+          )}
           <TranscriptPanel key={detail.id} callId={detail.id} canSeek={detail.has_recording}
             time={playing?.id === detail.id && pos?.id === detail.id ? pos.t : null}
             onSeek={(t) => seekTo(detail, t)} onExpired={onExpired} />
