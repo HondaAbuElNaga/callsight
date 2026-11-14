@@ -27,7 +27,9 @@ log = logging.getLogger(__name__)
 
 MIN_DAYS = 30
 AUDIT_DAYS = 730
-CONTENT_TABLES = ("transcript", "call_analysis")     # per-call personal content (S2 / S5); deleted when present
+# per-call personal content (S2 / S5); deleted when present. blind_set stays (call ids only, keeps the test set's
+# membership); a rating note may hold personal data, and without its transcript a label is useless for training.
+CONTENT_TABLES = ("transcript", "call_analysis", "call_flag", "call_audio_metrics", "satisfaction_label")
 BATCH = 200
 
 

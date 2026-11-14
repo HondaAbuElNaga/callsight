@@ -16,6 +16,7 @@ from .config import RIYADH
 from .ingest import service
 
 log = logging.getLogger(__name__)
+ANALYZE_TASK, NLP_QUEUE = "callsight.analysis.tasks.analyze_call", "nlp"   # = analysis.queueing (no import cycle)
 logging.getLogger("httpx").setLevel(logging.WARNING)   # request URLs contain the access token
 
 celery = Celery("callsight", broker=wiring.settings().redis_url)
@@ -28,7 +29,8 @@ celery.conf.update(
     task_routes={"callsight.jobs.report_*": {"queue": "reports"},
                  "callsight.jobs.backup_nightly": {"queue": "maint"},
                  "callsight.jobs.retention_nightly": {"queue": "maint"},
-                 queueing.TASK_NAME: {"queue": queueing.QUEUE}},
+                 queueing.TASK_NAME: {"queue": queueing.QUEUE},
+                 ANALYZE_TASK: {"queue": NLP_QUEUE}},
     beat_schedule={
         "ingest-every-2-min": {"task": "callsight.jobs.ingest_new", "schedule": 120.0,
                                "options": {"expires": 110}},
@@ -48,6 +50,11 @@ celery.conf.update(
                                     "options": {"expires": 290}},
         "transcripts-reaper-every-10-min": {"task": "callsight.jobs.reap_transcripts", "schedule": 600.0,
                                             "options": {"expires": 590}},
+        # call analysis (LLM): does nothing unless NLP_ENABLED=true (and the llm profile runs the nlp worker)
+        "analyses-every-5-min": {"task": "callsight.jobs.queue_analyses", "schedule": 300.0,
+                                 "options": {"expires": 290}},
+        "analyses-reaper-every-10-min": {"task": "callsight.jobs.reap_analyses", "schedule": 600.0,
+                                         "options": {"expires": 590}},
     },
 )
 
@@ -98,6 +105,10 @@ def send_transcribe(call_id: int, model: str, countdown: int | None = None) -> N
     celery.send_task(queueing.TASK_NAME, args=[call_id, model], queue=queueing.QUEUE, countdown=countdown)
 
 
+def send_analyze(call_id: int, model: str, prompt_version: str, countdown: int | None = None) -> None:
+    celery.send_task(ANALYZE_TASK, args=[call_id, model, prompt_version], queue=NLP_QUEUE, countdown=countdown)
+
+
 def redis_queue_length(channel, queue: str) -> int:
     """LLEN of the queue's Redis lists (kombu keeps one list per priority step). A missing key = empty queue = 0
     (a passive queue_declare would raise there and look like "broker down")."""
@@ -105,13 +116,13 @@ def redis_queue_length(channel, queue: str) -> int:
     return sum(int(channel.client.llen(channel._q_for_pri(queue, p))) for p in steps)
 
 
-def asr_queue_length() -> int | None:
-    """Messages waiting in the asr queue; None only when the broker can't be reached."""
+def asr_queue_length(queue: str = queueing.QUEUE) -> int | None:
+    """Messages waiting in the asr (or another) queue; None only when the broker can't be reached."""
     try:
         with celery.connection_for_read() as conn:
-            return redis_queue_length(conn.default_channel, queueing.QUEUE)
+            return redis_queue_length(conn.default_channel, queue)
     except Exception as exc:                # noqa: BLE001  broker down / not reachable
-        log.warning("asr queue length unknown: %s", type(exc).__name__)
+        log.warning("%s queue length unknown: %s", queue, type(exc).__name__)
         return None
 
 
@@ -240,6 +251,46 @@ def reap_transcripts() -> dict:
     for cid in ids:
         send_transcribe(cid, cfg.model)
     return {"requeued": len(ids), "queue_length": ql}
+
+
+# ---------- call analysis (queue `nlp`, spec 2026-11-14-call-analysis) ----------
+
+def _analysis_setup():
+    from .analysis import llm
+    from .analysis.settings import LlmConfig, load_topics
+    cfg = LlmConfig.from_env()
+    return cfg, llm.prompt_version(load_topics(cfg.topics_file))
+
+
+@celery.task
+def queue_analyses() -> dict:
+    """Freeze the blind set once the pool is big enough, then send new done transcripts to the nlp queue.
+    Off unless NLP_ENABLED=true."""
+    from .analysis import blindset
+    from .analysis import queueing as nlpq
+    cfg, pv = _analysis_setup()
+    if not cfg.enabled:
+        return {"enabled": False}
+    with wiring.session_factory()() as s:
+        frozen = blindset.ensure(s)
+        ids = nlpq.queue_new(s, cfg.model, pv, cfg.batch, datetime.now(RIYADH))
+    for cid in ids:
+        send_analyze(cid, cfg.model, pv)
+    return {"queued": len(ids), "blind_set_created": frozen}
+
+
+@celery.task
+def reap_analyses() -> dict:
+    from .analysis import queueing as nlpq
+    cfg, _ = _analysis_setup()
+    if not cfg.enabled:
+        return {"enabled": False}
+    ql = asr_queue_length(NLP_QUEUE)
+    with wiring.session_factory()() as s:
+        rows = nlpq.reap(s, cfg.model, datetime.now(RIYADH), queue_length=ql if ql is not None else 1)
+    for cid, row_pv in rows:
+        send_analyze(cid, cfg.model, row_pv)
+    return {"requeued": len(rows), "queue_length": ql}
 
 
 # ---------- maintenance (queue `maint`): backup + retention ----------

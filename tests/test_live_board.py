@@ -424,7 +424,7 @@ def test_restart_reuses_saved_token_without_login(tmp_path):
 def test_token_rotation_refreshes_without_new_login():
     timing = Timing(heartbeat=0.05, idle_timeout=5, rotate_after=0.15, sync_grace=10, prune_every=10,
                     blocked_poll=0.05)
-    svc, conn, http, r, _ = make_service([FakeWs([1.0]), FakeWs([1.0])], timing=timing)
+    svc, conn, http, r, _ = make_service([FakeWs([3.0]), FakeWs([1.0])], timing=timing)   # rotation waits >= 1 s
     run(svc)
     assert http.logins == 1 and http.calls.count("refresh_token") >= 1
     assert conn.urls[0].endswith("tok1") and conn.urls[1].endswith("tok2")

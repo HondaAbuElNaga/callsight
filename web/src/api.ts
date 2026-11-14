@@ -134,6 +134,47 @@ export interface ArchivedReport {
 export interface HealthItem { key: string; state: "ok" | "warn" | "bad" | "off"; [k: string]: unknown }
 export interface Health { ok: boolean; problems: string[]; checked_at: string; items: HealthItem[] }
 
+// ---------- call analysis (spec 2026-11-14-call-analysis): admin + supervisor only ----------
+export interface AnalysisContent {
+  status: "queued" | "running" | "done" | "error" | "skipped";
+  model: string;
+  prompt_version: string;
+  summary?: string;              // plain text: rendered as text, never as HTML
+  topic?: string;
+  topic_label?: string;
+  action_items?: string[];
+  escalation?: boolean | null;
+  trimmed?: boolean;
+}
+export interface Estimate { score: number; reason: string; label: string }
+export interface CallAnalysis {
+  call_id: number;
+  analysis: AnalysisContent | null;
+  estimate: Estimate | null;
+  estimate_hidden: "blind" | "not_frozen" | null;
+  flags: { kind: string; phrase: string; start: number; end: number }[];
+  // long_s = the "long silence" threshold (seconds) these numbers were computed with (config/rules.yaml)
+  silence: { share: number; seconds: number; longest: number; count: number; long_count: number;
+             long_s: number | null } | null;
+}
+export interface RatingProgress {
+  labels: number; labels_target: number; blind_frozen: boolean; blind_rated: number; blind_target: number; mine: boolean;
+}
+export interface RatingItem { call_id: number; start_time: string; talk_seconds: number; blind: boolean }
+export interface RatingQueue { progress: RatingProgress; items: RatingItem[] }
+export interface RatingCall {
+  call_id: number;
+  start_time: string;
+  talk_seconds: number;
+  has_recording: boolean;
+  blind: boolean;
+  analysis: AnalysisContent | null;   // always null for blind-set calls (no LLM judgement before the rating)
+  estimate: Estimate | null;     // always null for blind-set calls
+  my_label: { score: number; note: string | null } | null;
+  locked: boolean;               // blind-set call already rated by me: the rating is final
+}
+
+
 // Live board (WebSocket /api/live). Caller numbers arrive masked (last 4 digits) from the server.
 export interface LiveCall {
   call_id: string;
@@ -222,4 +263,18 @@ export const api = {
     return r.json() as Promise<GoldClip>;
   },
   logout: () => fetch("/api/logout", { method: "POST", credentials: "same-origin" }),
+  analysis: (id: number) => get<CallAnalysis>(`/api/calls/${id}/analysis`),
+  ratingQueue: () => get<RatingQueue>("/api/rating/queue"),
+  ratingCall: (id: number) => get<RatingCall>(`/api/rating/calls/${id}`),
+  // prefillShown = the LLM estimate the page displayed when the rating was given (the server checks it)
+  async saveRating(id: number, score: number, note: string, prefillShown: number | null): Promise<void> {
+    const r = await fetch(`/api/rating/calls/${id}`, {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ score, note: note.trim() || null, prefill_shown: prefillShown }),
+    });
+    if (r.status === 401) throw new Unauthorized();
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  },
 };

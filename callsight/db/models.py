@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import (DDL, BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text,
-                        UniqueConstraint, event, func)
+from sqlalchemy import (DDL, BigInteger, Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer,
+                        String, Text, UniqueConstraint, event, func)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -302,6 +302,101 @@ class TranscriptAccess(Base):
     call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
     kind: Mapped[str] = mapped_column(String(10))                  # view / export
     accessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------- call analysis (spec 2026-11-14-call-analysis). Every row goes with its call (ON DELETE CASCADE). ----------
+
+class CallAnalysis(Base):
+    """Local-LLM output for one call, per (model, prompt_version). Summary/reason = personal data (PDPL): never logged.
+    `llm_score` is a first, unvalidated estimate ("تقدير أولي"): never in KPIs/PDFs, never per agent (decision 9)."""
+    __tablename__ = "call_analysis"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"))
+    transcript_id: Mapped[int | None] = mapped_column(BigInteger)   # which transcript was read (no FK: goes with call)
+    model: Mapped[str] = mapped_column(String(50))                # e.g. qwen2.5:7b
+    prompt_version: Mapped[str] = mapped_column(String(30))       # prompt id + hash of topics.yaml
+    status: Mapped[str] = mapped_column(String(10))               # queued/running/done/error/skipped
+    summary: Mapped[str | None] = mapped_column(Text)
+    topic: Mapped[str | None] = mapped_column(String(30))         # stable key from config/topics.yaml
+    action_items: Mapped[list | None] = mapped_column(JSONB)
+    llm_score: Mapped[int | None] = mapped_column(Integer)        # 1-10
+    reason: Mapped[str | None] = mapped_column(Text)
+    escalation: Mapped[bool | None] = mapped_column(Boolean)
+    trimmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # head+tail cut
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer)
+    compute_seconds: Mapped[float | None] = mapped_column(Float)
+    tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    error: Mapped[str | None] = mapped_column(String(300))        # ids/reasons only, never text
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("call_id", "model", "prompt_version", name="uq_call_analysis_version"),
+        Index("ix_call_analysis_status", "status"),
+        Index("ix_call_analysis_call_id", "call_id"),
+    )
+
+
+class CallFlag(Base):
+    """A rules.yaml phrase found in a kept transcript window (no LLM). Always "needs listening"; never in KPIs."""
+    __tablename__ = "call_flag"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    transcript_id: Mapped[int] = mapped_column(BigInteger)          # no FK: the row goes with its call
+    kind: Mapped[str] = mapped_column(String(20))                 # bad_word / escalation / competitor
+    phrase: Mapped[str] = mapped_column(String(100))              # the rules.yaml phrase (not transcript text)
+    start_seconds: Mapped[float] = mapped_column(Float)
+    end_seconds: Mapped[float] = mapped_column(Float)
+    rules_version: Mapped[str] = mapped_column(String(30))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CallAudioMetrics(Base):
+    """Silence metrics from the recording (RMS frames, no diarization). Hold music is not silence."""
+    __tablename__ = "call_audio_metrics"
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), primary_key=True)
+    metrics_version: Mapped[str] = mapped_column(String(30))
+    audio_seconds: Mapped[float] = mapped_column(Float)
+    silence_seconds: Mapped[float] = mapped_column(Float)
+    silence_share: Mapped[float] = mapped_column(Float)            # 0..1
+    longest_silence_s: Mapped[float] = mapped_column(Float)
+    silences: Mapped[int] = mapped_column(Integer)                 # silences >= min_silence_s
+    long_silences: Mapped[int] = mapped_column(Integer)            # silences > long_silence_s (hold-like)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SatisfactionLabel(Base):
+    """A supervisor's 1-10 rating of the CUSTOMER's satisfaction in one call (training/test data, not HR data)."""
+    __tablename__ = "satisfaction_label"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    score: Mapped[int] = mapped_column(Integer)
+    note: Mapped[str | None] = mapped_column(String(500))
+    blind: Mapped[bool] = mapped_column(Boolean)                   # call was in the blind set when rated
+    prefill: Mapped[int | None] = mapped_column(Integer)           # LLM estimate shown as pre-fill (None = none)
+    changed_from_prefill: Mapped[bool | None] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
+                                                 onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("call_id", "user_id", name="uq_satisfaction_label_call_user"),
+        CheckConstraint("score BETWEEN 1 AND 10", name="ck_satisfaction_label_score"),
+    )
+
+
+class BlindSet(Base):
+    """The frozen 100-call test set (decision 8): chosen once, before any LLM estimate is shown; never trained on."""
+    __tablename__ = "blind_set"
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), primary_key=True)
+    rank: Mapped[int] = mapped_column(Integer)
+    agent_ext: Mapped[str | None] = mapped_column(String(16))
+    sampler_version: Mapped[str] = mapped_column(String(20))
+    salt: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ListenAudit(Base):

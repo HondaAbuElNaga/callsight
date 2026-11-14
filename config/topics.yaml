@@ -1,0 +1,11 @@
+# Call topics for the LLM summary (spec 2026-11-14-call-analysis, decision 2). The manager may edit the Arabic labels
+# and add topics. Keys: lowercase a-z and _ only, never change an existing key (old analyses keep it).
+# "other" must always stay. Any edit changes prompt_version, so new calls are analysed with the new list;
+# old calls only with: python -m callsight analyze --rescore --days N --limit M
+topics:
+  inquiry: استفسار
+  complaint: شكوى
+  maintenance: طلب صيانة
+  billing: فاتورة / دفع
+  order_follow_up: متابعة طلب
+  other: أخرى

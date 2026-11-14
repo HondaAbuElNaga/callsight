@@ -284,7 +284,8 @@ def test_no_listen_button_markup_ships():
     src = Path(__file__).resolve().parent.parent / "web" / "src"
     for f in src.glob("*.tsx"):
         body = f.read_text(encoding="utf-8")
-        assert "/listen" not in body and "استماع" not in body.replace("الاستماع المباشر متوقف", ""), f.name
+        allowed = body.replace("الاستماع المباشر متوقف", "").replace("تحتاج استماع", "")   # S5: listen to the RECORDING
+        assert "/listen" not in body and "استماع" not in allowed, f.name
 
 
 def test_ws_login_code_reaches_the_client_after_accept(env):

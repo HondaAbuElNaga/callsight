@@ -111,3 +111,33 @@ labels exist, the tuned model can be trained and checked against the Phase 3 "Do
     task + GPU lock, call-detail display (blind-aware), flags, rating page with frozen blind set, tests, 5 real calls.
     May be [~]: silence metrics, train.py (tiny test in Docker), qwen3 comparison, rescore. Never ticked tonight:
     real fine-tune, 500 labels (⚠ NEEDS USER), legal/HR OK for internal use of estimates (⚠ NEEDS USER).
+
+## Review decisions (3 reviewers, 2026-11-14; override the text above where different)
+15. **Blindness wins over "summary on the rating page":** for blind-set calls the rating page returns **no analysis
+    block at all** (no summary, topic, action items or escalation badge), and call detail hides it too until the
+    viewing user has rated the call. Flags (rule matches) and silence numbers are not LLM judgement and stay.
+16. **A blind label is final:** a second `PUT /api/rating/calls/{id}` by the same user on a blind-set call → 409
+    (after rating, call detail shows them the estimate). Non-blind labels may be changed; the **first** pre-fill is
+    kept. The pre-fill is what the page displayed (`prefill_shown`), accepted only when it equals a stored estimate.
+17. **"500 labels" = 500 rated calls in total = at least 400 training calls + the 100 blind test calls**
+    (`MIN_TRAIN = 400`, page and progress say the same).
+18. **Retry differs:** the one retry after an invalid answer uses another seed and adds a note naming the failed
+    fields (our field names only). Schema errors never echo a model-written key (`extra_field`). Summary, reason and
+    action items with a run of 7+ digits (ASCII / Arabic-Indic / Persian, single spaces or dashes allowed) are
+    invalid → retry → error; whitespace-only text is invalid.
+19. **GPU priority = transcription:** an asr task that finds the GPU taken sets `callsight:lock:gpu:wanted` (TTL
+    5 min); while it exists the nlp task requeues itself instead of taking the lock. The asr side re-takes its lock
+    inside the model holder's own lock right before loading/using the model. `ASR_IDLE_UNLOAD_S` must be ≥ 1.
+    **Deliberate exception to decision 6:** when Redis itself fails, the asr task transcribes without the lock
+    (transcripts are the priority); the nlp side fails closed (no Redis = no Ollama answer), so an overlap needs
+    Redis to fail in the middle of an Ollama answer.
+20. **Audit:** returning a done analysis (call detail or rating page) writes a `transcript_access` row of kind
+    `analysis` (same 10-minute dedupe as transcript views).
+21. **Training guards:** the real run refuses to start unless `HF_HUB_OFFLINE=1`, and only base models in
+    `ALLOWED_BASE_MODELS` (CAMeLBERT-DA) run; MARBERT is refused with the licence reason. The LLM baseline uses only
+    the estimate of the configured `LLM_MODEL` under the current prompt version (both written into the report).
+    Output goes to a mounted host folder (`-v ./data/train:/out --out /out`).
+22. **Retention:** supervisors' ratings are deleted with the call content → ⚠ NEEDS USER: finish rating and run the
+    training inside the retention window.
+23. **Model tags:** `ollama-pull` runs on its own network (no postgres/redis); `analyze status` prints the model
+    digest to compare with the IDs recorded in tasks.md (a tag can be re-pointed).

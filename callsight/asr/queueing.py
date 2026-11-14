@@ -46,12 +46,17 @@ class AsrConfig:
         from dotenv import load_dotenv
         load_dotenv(ROOT / ".env")
         start = (os.getenv("ASR_START_DATE") or "").strip()
+        idle = int(os.getenv("ASR_IDLE_UNLOAD_S", "300"))
+        if idle < 1:
+            # 0 = "never unload": the model would stay on the GPU while its Redis GPU lock expires, and the nlp
+            # task (Ollama) would then load a second model on the same 8 GB (call-analysis review).
+            raise RuntimeError("ASR_IDLE_UNLOAD_S must be at least 1 second (0 = never unload is not allowed)")
         return cls(model=os.getenv("ASR_MODEL", "whisper-large-v3").strip(),
                    min_talk=int(os.getenv("ASR_MIN_TALK", "5")),
                    max_seconds=int(os.getenv("ASR_MAX_SECONDS", "3600")),
                    start_date=date.fromisoformat(start) if start else None,
                    batch=int(os.getenv("ASR_BATCH", "50")),
-                   idle_unload_s=int(os.getenv("ASR_IDLE_UNLOAD_S", "300")))
+                   idle_unload_s=idle)
 
     @property
     def revision(self) -> str | None:

@@ -58,13 +58,13 @@ call has a transcript within 15 min of hang-up.
 **Goal:** Every analysed call gets a trustworthy 1–10 customer-satisfaction score.
 **Done when:** on a 100-call human-rated test set, score is within ±2 of the human on ≥ 80% of calls.
 
-- [ ] Labelling tool: supervisor rates calls 1–10 (pre-filled by local LLM to go faster) (idea: user)
-- [ ] Label ≥ 500 calls (LLM pre-label + human correction) (idea: user)
-- [ ] Fine-tune MARBERT / CAMeLBERT-DA as 1–10 regressor on customer-side text; compare with LLM-only baseline (idea: user)
-- [ ] `nlp` worker: score each call; store score + model version; re-score job when model updates (idea: user)
-- [ ] LLM call summary: summary, topic, action items (source: [transcriptionstream/transcriptionstream](https://github.com/transcriptionstream/transcriptionstream))
-- [ ] Bad words / escalation flags (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
-- [ ] Silence, interruption & talk-ratio metrics from channel timings (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
+- [~] Labelling tool: supervisor rates calls 1–10 (pre-filled by local LLM to go faster; first 100 = frozen blind test set without pre-fill) — built + tested (synthetic data); not yet deployed: needs migration 0008 on the live DB + the nlp worker ([spec](../specs/2026-11-14-call-analysis/spec.md)) (idea: user)
+- [ ] Label ≥ 500 calls = 400 training + the 100 blind test calls (LLM pre-label + human correction) ⚠ NEEDS USER: rate on the page "تقييم المكالمات", 100 blind first (idea: user)
+- [~] Fine-tune CAMeLBERT-DA (Apache-2.0; MARBERT excluded: research-only licence) as 1–10 regressor; compare with LLM-only baseline on the blind set — training code `callsight/analysis/train.py` + Docker self-test done; real run waits for ≥ 500 labels; customer-side text needs diarization ([spec](../specs/2026-11-14-call-analysis/spec.md)) (idea: user)
+- [~] `nlp` worker: score each call; store score + model version; re-score job when model updates — built for the LLM first estimate (model + prompt version stored, `analyze --rescore`); the tuned model's score comes after training ([spec](../specs/2026-11-14-call-analysis/spec.md)) (idea: user)
+- [~] LLM call summary: summary, topic, action items — local Ollama `qwen2.5:7b`, JSON schema + validation; built + tested, 5 real calls analysed in memory only; not yet deployed (no real call has gone through the nlp worker to the page) ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [transcriptionstream/transcriptionstream](https://github.com/transcriptionstream/transcriptionstream))
+- [~] Bad words / escalation flags — matching built (`config/rules.yaml`, whole words, normalised); real word lists ⚠ NEEDS USER ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
+- [~] Silence, interruption & talk-ratio metrics from channel timings — silence metrics built (RMS, no diarization); talk ratio + interruptions need diarization (recordings are mono) ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
 
 ## Phase 4: KPI engine & reports ([spec](../specs/2026-11-14-kpi-reports/spec.md); built 2026-11-14, "Done when" hand check ⚠ open)
 

@@ -30,6 +30,13 @@
   transcribe status                queue length, done/error counts, latency hang-up -> transcript
   transcribe --retry-errors --since YYYY-MM-DD [--limit 50]   re-queue failed calls since that day (max 500)
   transcripts reindex              rebuild the normalised search text of all done transcripts
+  analyze --call ID [--force]      queue one call for the nlp worker (local LLM summary + first estimate)
+  analyze --days N --limit M [--rescore]   backfill: newest M transcribed calls of the last N days without an
+                                   analysis (--rescore: without one by the current LLM_MODEL + prompt/topics)
+  analyze status                   analysis counts for the current model + prompt version, nlp queue length
+  flags --recompute [--call ID]    re-match config/rules.yaml on the transcripts (after editing the word lists)
+  blindset create [--n 100 --min-pool 100]   freeze the blind test set once (it never changes afterwards)
+  blindset status                  blind set size and rating progress
   pbx-unblock            allow PBX logins again after a refused login / token limit set pbx:auth_blocked
                          (fix the cause first: Client ID/Secret, PBX API IP allow-list, other programs' logins)
   live                   live call board service (one PBX WebSocket). Does nothing unless LIVE_ENABLED=true;
@@ -89,6 +96,14 @@ def main(argv: list[str] | None = None) -> int:
     tr.add_argument("--days", type=int); tr.add_argument("--limit", type=int)
     tr.add_argument("--retry-errors", action="store_true"); tr.add_argument("--since", type=date.fromisoformat)
     ts = sub.add_parser("transcripts"); ts.add_argument("action", choices=("reindex",))
+    an = sub.add_parser("analyze"); an.add_argument("action", nargs="?", choices=("status",))
+    an.add_argument("--call", type=int); an.add_argument("--force", action="store_true")
+    an.add_argument("--days", type=int); an.add_argument("--limit", type=int)
+    an.add_argument("--rescore", action="store_true")
+    fl = sub.add_parser("flags"); fl.add_argument("--recompute", action="store_true", required=True)
+    fl.add_argument("--call", type=int)
+    bs = sub.add_parser("blindset"); bs.add_argument("action", choices=("create", "status"))
+    bs.add_argument("--n", type=int, default=100); bs.add_argument("--min-pool", type=int, default=100)
     sub.add_parser("pbx-unblock")
     sub.add_parser("live")
     a = p.parse_args(argv)
@@ -113,6 +128,12 @@ def main(argv: list[str] | None = None) -> int:
         return _goldset(a)
     if a.cmd == "transcripts":
         return _transcripts_reindex()
+    if a.cmd == "analyze":
+        return _analyze(a, p)
+    if a.cmd == "flags":
+        return _flags(a)
+    if a.cmd == "blindset":
+        return _blindset(a)
     if a.cmd in ("create-user", "set-password", "disable-user", "set-ext"):
         return _users(a)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -198,6 +219,89 @@ def _transcripts_reindex() -> int:
     with wiring.session_factory()() as s:
         n = reindex(s)
     print(f"{n} transcript(s) reindexed for search")
+    return 0
+
+
+def _analyze(a: argparse.Namespace, p: argparse.ArgumentParser) -> int:
+    """DB + Redis only. Run where Redis is reachable, e.g. inside the worker container."""
+    from . import jobs
+    from .analysis import llm
+    from .analysis import queueing as nlpq
+    from .analysis.settings import ConfigError, LlmConfig, load_topics
+    modes = sum((a.action == "status", a.call is not None, a.days is not None or a.limit is not None))
+    if modes != 1:
+        p.error("analyze: give exactly one of: status | --call ID | --days N --limit M [--rescore]")
+    if a.call is None and a.action is None and (a.days is None or a.limit is None):
+        p.error("analyze: backfill needs both --days and --limit")
+    try:
+        cfg = LlmConfig.from_env()
+        pv = llm.prompt_version(load_topics(cfg.topics_file))
+    except (ConfigError, OSError) as exc:
+        print("ERROR:", exc, file=sys.stderr)
+        return 1
+    now = datetime.now(RIYADH)
+    with wiring.session_factory()() as s:
+        if a.action == "status":
+            counts = nlpq.status_counts(s, cfg.model, pv)
+            auto = "on" if cfg.enabled else "OFF (set NLP_ENABLED=true)"
+            print(f"model: {cfg.model}   prompt: {pv}   automatic: {auto}")
+            digest = llm.Ollama(cfg).model_digest()     # a tag can be re-pointed: compare this with the report
+            print(f"model digest: {digest[:12] if digest else 'unknown (Ollama not reachable from here, or model not pulled)'}")
+            print(f"nlp queue length: {jobs.asr_queue_length(jobs.NLP_QUEUE)}")
+            print("analyses: " + (", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "none yet"))
+            return 0
+        try:
+            if a.call is not None:
+                status, send = nlpq.queue_call(s, a.call, cfg.model, pv, a.force, now)
+                ids = [a.call] if send else []
+                print(f"call {a.call}: {status}" + ("" if send else " (nothing sent; --force to redo)"))
+            else:
+                ids = nlpq.queue_recent(s, cfg.model, pv, a.days, a.limit, now, rescore=a.rescore)
+        except ValueError as exc:
+            print("ERROR:", exc, file=sys.stderr)
+            return 1
+    try:
+        for cid in ids:
+            jobs.send_analyze(cid, cfg.model, pv)
+    except Exception as exc:                              # noqa: BLE001
+        print(f"ERROR: queue not reachable ({type(exc).__name__}); rows stay queued, the reaper re-sends them",
+              file=sys.stderr)
+        return 1
+    print(f"{len(ids)} call(s) sent to the nlp queue for {cfg.model} ({pv})")
+    return 0
+
+
+def _flags(a: argparse.Namespace) -> int:
+    import os
+    from .analysis import flags
+    from .analysis.settings import ConfigError, LlmConfig, load_rules
+    try:
+        rules = load_rules(LlmConfig.from_env().rules_file)
+    except (ConfigError, OSError) as exc:
+        print("ERROR:", exc, file=sys.stderr)
+        return 1
+    with wiring.session_factory()() as s:
+        n = flags.recompute(s, rules, os.getenv("ASR_MODEL", "whisper-large-v3").strip(), call_id=a.call)
+    print(f"flags recomputed for {n} call(s) (rules {rules.version})")
+    return 0
+
+
+def _blindset(a: argparse.Namespace) -> int:
+    from .analysis import blindset
+    with wiring.session_factory()() as s:
+        if a.action == "create":
+            try:
+                n = blindset.freeze(s, n=a.n, min_pool=a.min_pool)
+            except ValueError as exc:
+                print("ERROR:", exc, file=sys.stderr)
+                return 1
+            print(f"blind set frozen: {n} calls (never changes; LLM estimates are now shown for the other calls)")
+            return 0
+        pr = blindset.progress(s)
+        state = f"frozen, {blindset.size(s)} calls" if pr["blind_frozen"] else "NOT frozen"
+        print(f"blind set: {state}; pool now {len(blindset.pool(s))} transcribed calls")
+        print(f"labels: {pr['labels']} / {pr['labels_target']} calls rated; blind test set: "
+              f"{pr['blind_rated']} / {pr['blind_target']} rated without pre-fill")
     return 0
 
 

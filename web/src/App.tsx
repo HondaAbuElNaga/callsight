@@ -5,11 +5,12 @@ import { CallsPage } from "./CallsPage";
 import { GoldsetPage } from "./GoldsetPage";
 import { KpiPage } from "./KpiPage";
 import { HealthPage } from "./HealthPage";
+import { RatingPage } from "./RatingPage";
 import { LivePage } from "./LivePage";
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = still checking
-  const [view, setView] = useState<"calls" | "goldset" | "kpi" | "health" | "live">("calls");
+  const [view, setView] = useState<"calls" | "goldset" | "kpi" | "health" | "live" | "rating">("calls");
   const [problems, setProblems] = useState(0);
   const isAdmin = me?.role === "admin";
   const isStaff = me?.role === "admin" || me?.role === "supervisor";
@@ -43,6 +44,8 @@ export function App() {
     page = <HealthPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "goldset" && isAdmin)
     page = <GoldsetPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
+  else if (view === "rating" && isStaff)
+    page = <RatingPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "live" && isStaff)
     page = <LivePage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "kpi")
@@ -57,6 +60,7 @@ export function App() {
         onKpi={() => setView("kpi")}
         onLive={isStaff ? () => setView("live") : undefined}
         onHealth={isAdmin ? () => setView("health") : undefined}
+        onRating={isStaff ? () => setView("rating") : undefined}
       />
     );
   return <>{banner}{page}</>;
