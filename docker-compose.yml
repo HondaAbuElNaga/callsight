@@ -30,6 +30,7 @@ services:
       - pgdata:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5433:5432"     # this PC only, for the CLI and tests
+    networks: [default, asr-internal]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U callsight -d callsight"]
       interval: 5s
@@ -45,6 +46,7 @@ services:
       timeout: 3s
       retries: 20
     restart: unless-stopped
+    networks: [default, asr-internal]
 
   worker:
     <<: *app
@@ -136,6 +138,81 @@ services:
       HF_HUB_DISABLE_TELEMETRY: "1"
     volumes:
       - hf-models:/models
+
+  # Speech-to-text worker (spec 2026-11-14-transcription). Not started by "up -d"; start with:
+  #   docker compose --profile asr up -d asr-worker
+  # ASR_MODEL must match the image: whisper-large-v3 (default, MIT) or audar-asr-turbo here, jais-asr-4bit only in
+  # asr-worker-jais. Only ONE asr worker may run (8 GB GPU). Only on the internal network: no internet, no PBX.
+  asr-worker:
+    profiles: ["asr"]
+    build:
+      context: .
+      dockerfile: docker/asr-worker/Dockerfile
+    # No env_file: the worker gets only what it needs (no PBX secret, no APP_SECRET). Values come from .env.
+    environment: &asr-env
+      DATABASE_URL: postgresql+psycopg://callsight:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/callsight
+      REDIS_URL: redis://redis:6379/0
+      AUDIO_DIR: /data/audio
+      TEAMS_FILE: /app/config/teams.yaml
+      ASR_MODEL: ${ASR_MODEL:-whisper-large-v3}
+      ASR_START_DATE: ${ASR_START_DATE:-}
+      ASR_MIN_TALK: ${ASR_MIN_TALK:-5}
+      ASR_MAX_SECONDS: ${ASR_MAX_SECONDS:-3600}
+      ASR_BATCH: ${ASR_BATCH:-50}
+      ASR_IDLE_UNLOAD_S: ${ASR_IDLE_UNLOAD_S:-300}
+      HF_HOME: /models
+      HF_HUB_OFFLINE: "1"                  # models come from the cache filled by asr-bench-download
+    networks: [asr-internal]
+    volumes:
+      - ${AUDIO_HOST_DIR:-./data/audio}:/data/audio:ro   # read-only: the worker never changes recordings
+      - ./config:/app/config:ro
+      - hf-models:/models:ro               # read-only: the worker never downloads or changes models
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Jais-ASR (transformers 5). SERVER ONLY: 11 GB peak GPU memory, does not fit this PC's 8 GB; untested here.
+  #   docker compose --profile asr-jais up -d asr-worker-jais     (stop asr-worker first)
+  asr-worker-jais:
+    profiles: ["asr-jais"]
+    build:
+      context: .
+      dockerfile: docker/asr-worker/Dockerfile
+      args:
+        REQS: requirements-jais.txt
+        TORCH_REQS: requirements-jais-torch.txt
+    environment:
+      <<: *asr-env
+      ASR_MODEL: jais-asr-4bit
+      HF_MODULES_CACHE: /tmp/hf-modules    # its remote code is copied here at load; /models is read-only
+    networks: [asr-internal]
+    volumes:
+      - ${AUDIO_HOST_DIR:-./data/audio}:/data/audio:ro
+      - ./config:/app/config:ro
+      - hf-models:/models:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+networks:
+  asr-internal:
+    internal: true                         # no route to the internet: call audio + transcripts stay on this PC
 
 volumes:
   pgdata:

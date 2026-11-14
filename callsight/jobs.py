@@ -9,6 +9,7 @@ from celery.schedules import crontab
 from celery.signals import beat_init
 
 from . import app as wiring
+from .asr import queueing
 from .config import RIYADH
 from .ingest import service
 
@@ -21,7 +22,8 @@ celery.conf.update(
     task_default_queue="ingest",
     worker_prefetch_multiplier=1,
     task_acks_late=False,
-    task_routes={"callsight.jobs.report_*": {"queue": "reports"}},
+    # Transcription runs only in the GPU asr worker (-Q asr). Enqueued by name: this module never imports torch.
+    task_routes={"callsight.jobs.report_*": {"queue": "reports"}, queueing.TASK_NAME: {"queue": queueing.QUEUE}},
     beat_schedule={
         "ingest-every-2-min": {"task": "callsight.jobs.ingest_new", "schedule": 120.0,
                                "options": {"expires": 110}},
@@ -33,6 +35,10 @@ celery.conf.update(
         "report-weekly": {"task": "callsight.jobs.report_week", "schedule": crontab(hour=7, minute=0, day_of_week=0)},
         "report-monthly": {"task": "callsight.jobs.report_month",
                            "schedule": crontab(hour=7, minute=0, day_of_month=1)},
+        "transcripts-every-5-min": {"task": "callsight.jobs.queue_transcripts", "schedule": 300.0,
+                                    "options": {"expires": 290}},
+        "transcripts-reaper-every-10-min": {"task": "callsight.jobs.reap_transcripts", "schedule": 600.0,
+                                            "options": {"expires": 590}},
     },
 )
 
@@ -47,10 +53,41 @@ def ingest_new() -> dict:
     return vars(r)
 
 
+def send_transcribe(call_id: int, model: str, countdown: int | None = None) -> None:
+    celery.send_task(queueing.TASK_NAME, args=[call_id, model], queue=queueing.QUEUE, countdown=countdown)
+
+
+def redis_queue_length(channel, queue: str) -> int:
+    """LLEN of the queue's Redis lists (kombu keeps one list per priority step). A missing key = empty queue = 0
+    (a passive queue_declare would raise there and look like "broker down")."""
+    steps = getattr(channel, "priority_steps", None) or [0]
+    return sum(int(channel.client.llen(channel._q_for_pri(queue, p))) for p in steps)
+
+
+def asr_queue_length() -> int | None:
+    """Messages waiting in the asr queue; None only when the broker can't be reached."""
+    try:
+        with celery.connection_for_read() as conn:
+            return redis_queue_length(conn.default_channel, queueing.QUEUE)
+    except Exception as exc:                # noqa: BLE001  broker down / not reachable
+        log.warning("asr queue length unknown: %s", type(exc).__name__)
+        return None
+
+
+def _queue_after_recording(session, call) -> None:
+    """Never breaks the recording download (Phase 1), not even with a typo in an ASR_* setting."""
+    try:
+        cfg = queueing.AsrConfig.from_env()
+        queueing.after_recording(session, call, cfg, lambda cid: send_transcribe(cid, cfg.model))
+    except Exception as exc:                # noqa: BLE001
+        log.warning("transcript not queued for call %s: %s", call.id, type(exc).__name__)
+
+
 @celery.task
 def fetch_recordings() -> dict:
     with wiring.session_factory()() as s:
-        ok, failed = service.fetch_recordings(s, wiring.pbx(), wiring.settings().audio_dir)
+        ok, failed = service.fetch_recordings(s, wiring.pbx(), wiring.settings().audio_dir,
+                                              after_ok=_queue_after_recording)
     log.info("recordings: %s ok, %s failed", ok, failed)
     return {"ok": ok, "failed": failed}
 
@@ -107,3 +144,25 @@ def report_catch_up() -> list[str]:
 @beat_init.connect
 def _catch_up_on_beat_start(sender=None, **kwargs) -> None:
     report_catch_up.delay()
+
+
+@celery.task
+def queue_transcripts() -> dict:
+    """New answered calls since ASR_START_DATE -> asr queue (DB only; runs on the ingest worker)."""
+    cfg = queueing.AsrConfig.from_env()
+    with wiring.session_factory()() as s:
+        ids = queueing.queue_new_calls(s, cfg, datetime.now(RIYADH))
+    for cid in ids:
+        send_transcribe(cid, cfg.model)
+    return {"queued": len(ids)}
+
+
+@celery.task
+def reap_transcripts() -> dict:
+    cfg = queueing.AsrConfig.from_env()
+    ql = asr_queue_length()
+    with wiring.session_factory()() as s:
+        ids = queueing.reap(s, cfg, datetime.now(RIYADH), queue_length=ql if ql is not None else 1)
+    for cid in ids:
+        send_transcribe(cid, cfg.model)
+    return {"requeued": len(ids), "queue_length": ql}

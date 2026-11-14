@@ -172,6 +172,19 @@ def test_failed_recording_retried_then_missing(session, tmp_path):
     assert call.recording_status == "missing" and call.recording_attempts == 3
 
 
+def test_after_ok_hook_runs_only_for_downloaded_recordings_after_commit(session, tmp_path):
+    service.ingest_rows(session, ALL_ROWS, TEAM); session.commit()
+    files = session.scalars(select(Call.recording_file).where(Call.recording_file.is_not(None))).all()
+    pbx = FakePbx(ALL_ROWS, bad_files={files[0]})
+    seen = []
+
+    def hook(s, call):
+        assert not s.dirty and not s.new                   # recording already committed
+        seen.append((call.id, call.recording_status))
+    ok, failed = service.fetch_recordings(session, pbx, tmp_path, limit=500, after_ok=hook)
+    assert len(seen) == ok and failed == 1 and all(st == "ok" for _, st in seen)
+
+
 def test_corrupt_wav_is_not_accepted(session, tmp_path):
     service.ingest_rows(session, ALL_ROWS, TEAM); session.commit()
 
