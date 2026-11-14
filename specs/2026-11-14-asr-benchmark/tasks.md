@@ -16,7 +16,12 @@
          → `docker/asr-bench/` (pytorch 2.8.0-cu128), compose profile `bench`, runner `callsight/asr/bench.py` (resumable
            jsonl); `--check`: RTX 5050 capability 12.0, 8 GB, kernel test ok; Whisper large-v3 on clip_01: 60 s in 7.4 s,
            3.2 GB peak, 65 Arabic words (3 chunks); 159 tests pass
-- [ ] 8. Model adapters: Whisper large-v3, Audar-ASR-V1-Turbo, Jais-ASR (4-bit try)
+- [x] 8. Model adapters: Whisper large-v3, Audar-ASR-V1-Turbo, Jais-ASR (4-bit try)
+         → `bench.py`: whisper-large-v3, audar-asr-turbo (qwen-asr 0.0.6, transformers 4.57.6), jais-asr-4bit
+           (official `IFM/Jais-ASR-W4A16-AWQ`, own image `asr-bench-jais`: transformers 5.16.1 + torch 2.11 cu128).
+           Smoke test clip_01 (60 s): Whisper 7 s / 3.2 GB / 65 words; Audar 19 s / 4.7 GB / 113 words;
+           Jais 227 s / 11.2 GB / 116 words. Jais: transformers unpacks the 4-bit weights to bf16 → spills past
+           the 8 GB GPU into shared RAM: result is usable for accuracy, its speed is NOT representative (server)
 - [ ] 9. Run all models on the 30 clips (after all texts are typed); write `docs/asr-benchmark.md`
 - [ ] 10. Verify the acceptance criteria
 - [ ] 11. Review with 3 subagents (bugs, security, accuracy); fix confirmed findings

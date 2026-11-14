@@ -68,15 +68,16 @@ class WhisperLargeV3:
     """openai/whisper-large-v3 via transformers, fp16, language forced to Arabic."""
     name = "whisper-large-v3"
     repo = "openai/whisper-large-v3"
+    revision = "06f233fe06e710322aca913c1bc4249a0d71fce1"     # pinned 2026-11-14
     window_s = 30.0
 
     def load(self):
         import torch
         from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
         self.torch = torch
-        self.processor = AutoProcessor.from_pretrained(self.repo)
+        self.processor = AutoProcessor.from_pretrained(self.repo, revision=self.revision)
         self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            self.repo, dtype=torch.float16, low_cpu_mem_usage=True).to("cuda").eval()
+            self.repo, revision=self.revision, dtype=torch.float16, low_cpu_mem_usage=True).to("cuda").eval()
 
     def transcribe(self, audio16k) -> str:
         feats = self.processor(audio16k, sampling_rate=TARGET_RATE, return_tensors="pt").input_features
@@ -90,12 +91,13 @@ class AudarTurbo:
     """audarai/Audar-ASR-V1-Turbo via the qwen-asr package, bf16, settings from the model card (benchmark settings)."""
     name = "audar-asr-turbo"
     repo = "audarai/Audar-ASR-V1-Turbo"
+    revision = "371428bea487c7aec82b27dc21f8d4324002e98e"     # pinned 2026-11-14
     window_s = 30.0                                          # audio encoder context; longer audio chunked by us
 
     def load(self):
         import torch
         from qwen_asr import Qwen3ASRModel
-        self.model = Qwen3ASRModel.from_pretrained(self.repo, dtype=torch.bfloat16, device_map="cuda:0",
+        self.model = Qwen3ASRModel.from_pretrained(self.repo, revision=self.revision, dtype=torch.bfloat16, device_map="cuda:0",
                                                    max_inference_batch_size=1, max_new_tokens=256)
 
     def transcribe(self, audio16k) -> str:
@@ -107,15 +109,16 @@ class JaisAsr4bit:
     """IFM/Jais-ASR-W4A16-AWQ (official 4-bit; bf16 needs ~12 GB) via transformers 5 + compressed-tensors."""
     name = "jais-asr-4bit"
     repo = "IFM/Jais-ASR-W4A16-AWQ"
+    revision = "31b942fd9bd6278635acc19c57393f9442d22252"     # pinned 2026-11-14: remote code can't change silently
     window_s = 30.0                                          # card gives no limit; same windows as the others
 
     def load(self):
         import torch
         from transformers import AutoModelForCausalLM, AutoProcessor
         self.torch = torch
-        self.processor = AutoProcessor.from_pretrained(self.repo, trust_remote_code=True)
+        self.processor = AutoProcessor.from_pretrained(self.repo, revision=self.revision, trust_remote_code=True)
         self.model = AutoModelForCausalLM.from_pretrained(
-            self.repo, trust_remote_code=True, device_map="cuda:0", dtype=torch.bfloat16).eval()
+            self.repo, revision=self.revision, trust_remote_code=True, device_map="cuda:0", dtype=torch.bfloat16).eval()
         self.prompt = self.processor.tokenizer.apply_chat_template(
             [{"role": "user", "content": [{"type": "audio"}]}], tokenize=False, add_generation_prompt=True)
 
