@@ -30,7 +30,7 @@ LISTEN_AUDIT_APPEND_ONLY = (
 )
 
 revision = '0009'
-down_revision = '0007'  # down_revision becomes "0008" when merged after the call-analysis spec
+down_revision = '0007'  # merged before the call-analysis spec, whose 0008 then follows this 0009
 branch_labels = None
 depends_on = None
 
