@@ -43,7 +43,7 @@ export function GoldsetPage({ me, onBack, onLogout, onExpired }: Props) {
       setCurrent(id);
       const draft = readDraft(id);
       const machine = !c.reference_text && draft === null && c.draft_text ? c.draft_text : null;
-      setText(draft ?? c.reference_text ?? machine ?? "");
+      setText(draft ?? (c.reference_text || machine || ""));   // API sends "" (not null) when nothing is saved
       setSavedText(c.reference_text ?? "");
       if (draft !== null && draft.trim() !== (c.reference_text ?? "").trim())
         setMsg({ ok: true, text: "تمت استعادة نص غير محفوظ" });
