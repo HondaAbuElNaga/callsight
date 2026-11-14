@@ -86,7 +86,7 @@ generates in < 30 s; weekly/monthly reports also auto-generate on schedule.
 **Done when:** live board updates within 2 s of call state change; "Listen" button rings
 the supervisor's phone and connects silently to the chosen call (customer + agent unaware).
 
-- [~] Live event stream from PBX adapter → WebSocket → live board (who's on call, caller, duration, queue waiting) (idea: user) — built, off by default; office-LAN test ⚠ NEEDS USER ([spec](../specs/2026-11-14-live-board/spec.md))
+- [~] Live event stream from PBX adapter → WebSocket → live board (who's on call, caller, duration, queue waiting) (idea: user) — built; **on since 2026-11-14** (Call Status Monitor on trunk SSTLI); the user saw a real test call appear on the board; delay not timed, real 30011 payload not saved yet ([spec](../specs/2026-11-14-live-board/spec.md))
 - [~] "Listen" button: PBX originates spy call (ChanSpy `q` / vendor monitor) to supervisor extension (idea: user) — paused by user; 403 stub only, legal steps ⚠ NEEDS USER ([spec](../specs/2026-11-14-live-board/spec.md))
 - [x] Access control + audit log of who listened to which call (idea: user) — staff only, append-only listen_audit ([spec](../specs/2026-11-14-live-board/spec.md))
 
