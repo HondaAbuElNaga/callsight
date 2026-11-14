@@ -16,15 +16,17 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import kpi
+from .. import kpi, transcripts
 from ..config import RIYADH
-from ..db.models import AppUser, Call, GoldClip, RecordingPlay, ReportArchive, ReportDownload
+from ..db.models import (Agent, AppUser, Call, GoldClip, RecordingPlay, ReportArchive, ReportDownload,
+                         TranscriptAccess)
 from ..ingest.classify import TeamConfig
 from . import auth
 from .calls import DIRECTIONS, STATUSES, CallFilter, call_detail, list_calls, summary, team_agents
 
 MAX_RANGE_DAYS = 400
 AUDIT_WINDOW = timedelta(minutes=10)   # one audit row per user + call within this window
+MANAGER_ROLES = ("admin", "supervisor")   # who may see transcripts now (agent role: Phase 6)
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,7 @@ class ApiConfig:
     cookie_secure: bool = False
     teams: Callable[[], TeamConfig] = TeamConfig      # re-read per request (teams.yaml edits apply at once)
     reports_dir: Path | None = None
+    asr_model: str = "whisper-large-v3"   # ASR_MODEL: its done transcript is the one displayed
 
 
 class LoginIn(BaseModel):
@@ -55,6 +58,17 @@ def audit_play(s: Session, user: AppUser, call_id: int) -> None:
     if recent is None:
         s.add(RecordingPlay(user_id=user.id, call_id=call_id, played_at=now))
         s.commit()
+
+
+def audit_transcript(s: Session, user: AppUser, call_id: int, kind: str) -> None:
+    """Transcripts are personal data: views (deduplicated within AUDIT_WINDOW, like plays) and every export."""
+    now = datetime.now(timezone.utc)
+    if kind == "view" and s.scalar(select(TranscriptAccess.id).where(
+            TranscriptAccess.user_id == user.id, TranscriptAccess.call_id == call_id, TranscriptAccess.kind == kind,
+            TranscriptAccess.accessed_at > now - AUDIT_WINDOW).limit(1)) is not None:
+        return
+    s.add(TranscriptAccess(user_id=user.id, call_id=call_id, kind=kind, accessed_at=now))
+    s.commit()
 
 
 def audit_report(s: Session, user: AppUser, period: kpi.Period, scope: str, archive_id: int | None = None) -> None:
@@ -94,7 +108,7 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         resp.headers["Content-Security-Policy"] = (
             "default-src 'self'; media-src 'self'; img-src 'self' data:; style-src 'self'; "
             "script-src 'self'; frame-ancestors 'none'")
-        if request.url.path.startswith("/api/"):
+        if request.url.path.startswith("/api/") and "cache-control" not in resp.headers:
             resp.headers["Cache-Control"] = "no-store"
         return resp
 
@@ -118,10 +132,15 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         status: Annotated[str | None, Query()] = None,
         direction: Annotated[str | None, Query()] = None,
         q: Annotated[str | None, Query(pattern=r"^\+?\d{1,20}$")] = None,
+        words: Annotated[str | None, Query()] = None,   # checked by hand: a 422 must not echo the words
     ) -> CallFilter:
         today = datetime.now(RIYADH).date()
+        try:
+            parsed = transcripts.parse_words(words)
+        except transcripts.BadSearch as exc:
+            raise HTTPException(422, str(exc)) from None
         f = CallFilter(date_from or today, date_to or date_from or today, agent or None,
-                       status or None, direction or None, q or None)
+                       status or None, direction or None, q or None, parsed, cfg.asr_model)
         if f.date_to < f.date_from or (f.date_to - f.date_from).days > MAX_RANGE_DAYS:
             raise HTTPException(422, "bad date range")
         if f.status and f.status not in STATUSES:
@@ -133,7 +152,7 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
     Filter = Annotated[CallFilter, Depends(call_filter)]
 
     def manager(user: User) -> AppUser:
-        if user.role not in ("admin", "supervisor"):
+        if user.role not in MANAGER_ROLES:
             raise HTTPException(403, "admin or supervisor only")
         return user
 
@@ -189,12 +208,18 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
     def agents(user: User, s: DB) -> list[dict]:
         return team_agents(s)
 
+    def search_allowed(user: AppUser, f: CallFilter) -> None:
+        if f.words and user.role not in MANAGER_ROLES:
+            raise HTTPException(403, "transcript search: admin or supervisor only")
+
     @app.get("/api/calls")
     def calls(user: User, s: DB, f: Filter, page: Annotated[int, Query(ge=1, le=10_000)] = 1) -> dict:
+        search_allowed(user, f)
         return list_calls(s, f, page)
 
     @app.get("/api/calls/summary")
     def calls_summary(user: User, s: DB, f: Filter) -> dict:
+        search_allowed(user, f)
         return summary(s, f)
 
     @app.get("/api/calls/{call_id}")
@@ -215,6 +240,31 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
             raise HTTPException(404, "no recording")
         audit_play(s, user, c.id)
         return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, no-store"})
+
+    # ---------- transcripts (admin + supervisor; personal data: every view/export audited) ----------
+
+    @app.get("/api/calls/{call_id}/transcript")
+    def transcript(call_id: int, user: Manager, s: DB) -> dict:
+        t = transcripts.displayed(s, call_id, cfg.asr_model)
+        if t is None:
+            raise HTTPException(404, "no transcript")
+        if t.status == "done":                   # status polling (queued/running) writes no audit row
+            audit_transcript(s, user, call_id, "view")
+        return transcripts.as_dict(s, t)
+
+    @app.get("/api/calls/{call_id}/transcript.txt")
+    def transcript_txt(call_id: int, user: Manager, s: DB) -> Response:
+        t = transcripts.displayed(s, call_id, cfg.asr_model)
+        c = s.get(Call, call_id)
+        if t is None or c is None or t.status != "done":
+            raise HTTPException(404, "no transcript")
+        ext = c.agent_ext or c.missed_agent_ext
+        agent = s.get(Agent, ext) if ext else None
+        data = transcripts.export_txt(c, agent.name if agent else None, t, transcripts.segments(s, t))
+        audit_transcript(s, user, call_id, "export")
+        return Response(data, media_type="text/plain; charset=utf-8", headers={
+            "Content-Disposition": f'attachment; filename="{transcripts.txt_filename(c)}"',
+            "Cache-Control": "private, no-store"})
 
     # ---------- KPIs + reports (admin + supervisor) ----------
 
@@ -317,6 +367,7 @@ def _app_from_env() -> FastAPI:
     static = Path(os.getenv("WEB_DIST", str(Path(__file__).resolve().parents[2] / "web" / "dist")))
     return create_app(session_factory(), ApiConfig(
         secret=secret, audio_dir=settings().audio_dir, static_dir=static, teams=teams, reports_dir=reports_dir(),
+        asr_model=os.getenv("ASR_MODEL", "whisper-large-v3").strip(),
         cookie_secure=os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes")))
 
 
