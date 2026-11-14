@@ -121,3 +121,16 @@ def load_rules(path: Path) -> Rules:
     if not 0 <= share <= 1:
         raise ConfigError(f"{path.name}: analysis.max_dropped_share must be 0..1")
     return Rules(flags=flags, silence=silence, max_dropped_share=share, version="r-" + file_hash(path))
+
+
+def rating_excluded(path: Path | None = None) -> frozenset[int]:
+    """Call ids kept out of the satisfaction rating (queue, blind set, training): config/rating-exclude.yaml.
+    For test calls made while the system was being set up. A missing or empty file excludes nothing."""
+    path = path or Path(os.getenv("RATING_EXCLUDE_FILE", str(ROOT / "config" / "rating-exclude.yaml")))
+    if not path.exists():
+        return frozenset()
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    ids = data.get("call_ids") or []
+    if not isinstance(ids, list) or any(not isinstance(i, int) or isinstance(i, bool) for i in ids):
+        raise ConfigError(f"{path.name}: call_ids must be a list of call numbers")
+    return frozenset(ids)

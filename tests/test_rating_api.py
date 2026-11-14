@@ -229,3 +229,20 @@ def test_analysis_prefers_current_model_and_prompt(env):
     d = client.get(f"/api/calls/{ids[1]}/analysis").json()
     assert d["analysis"]["model"] == "qwen2.5:7b" and d["estimate"]["score"] == 4
     assert blindset.LABEL_TARGET == 500
+
+
+def test_excluded_test_calls_never_in_queue_or_blind_pool(env, tmp_path, monkeypatch):
+    client, Session, ids = env
+    f = tmp_path / "rating-exclude.yaml"
+    f.write_text(f"call_ids:\n  - {ids[0]}\n  - {ids[3]}\n", encoding="utf-8")
+    monkeypatch.setenv("RATING_EXCLUDE_FILE", str(f))
+    login(client)
+    assert sorted(i["call_id"] for i in client.get("/api/rating/queue").json()["items"]) == [ids[1], ids[2]]
+    with Session() as s:
+        assert {cid for cid, _ in blindset.pool(s)}.isdisjoint({ids[0], ids[3]})
+    f.write_text("call_ids: [abc]\n", encoding="utf-8")
+    from callsight.analysis.settings import ConfigError, rating_excluded
+    with pytest.raises(ConfigError):
+        rating_excluded()
+    monkeypatch.setenv("RATING_EXCLUDE_FILE", str(tmp_path / "missing.yaml"))
+    assert rating_excluded() == frozenset()

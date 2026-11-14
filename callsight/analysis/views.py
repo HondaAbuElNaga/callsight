@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from ..db.models import (BlindSet, Call, CallAnalysis, CallAudioMetrics, CallFlag, SatisfactionLabel, Transcript)
 from . import blindset
+from .settings import rating_excluded
 
 QUEUE_SIZE = 50
 ESTIMATE_LABEL = "تقدير أولي — غير معتمد — ليس لتقييم الموظفين"
@@ -102,7 +103,7 @@ def rating_queue(session: Session, user_id: int) -> dict:
     rows = session.execute(
         select(Call.id, Call.start_time, Call.talk_seconds, BlindSet.rank)
         .outerjoin(BlindSet, BlindSet.call_id == Call.id)
-        .where(_done_transcript(), ~mine, Call.status == "answered")
+        .where(_done_transcript(), ~mine, Call.status == "answered", Call.id.not_in(rating_excluded()))
         .order_by(BlindSet.rank.asc().nulls_last(), Call.start_time.desc(), Call.id.desc())
         .limit(QUEUE_SIZE)).all()
     rated = session.scalar(select(exists().where(SatisfactionLabel.user_id == user_id)))
