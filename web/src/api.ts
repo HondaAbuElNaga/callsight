@@ -56,6 +56,61 @@ export interface GoldClip {
   reference_text?: string;
 }
 
+export interface KpiSummary {
+  calls: number;
+  answered: number;
+  unanswered: number;
+  answer_rate: number | null;
+  aht: number | null;
+  avg_ring: number | null;
+  outbound: number;
+  outbound_answered: number;
+  outbound_aht: number | null;
+  repeats: number;
+  repeats_unattributed: number | null;
+  satisfaction: number | null;
+}
+
+export interface KpiAgent {
+  ext: string;
+  name: string;
+  team: string;
+  calls: number;
+  aht: number | null;
+  missed_rings: number;
+  outbound: number;
+  outbound_answered: number;
+  outbound_aht: number | null;
+  repeats: number;
+}
+
+export interface KpiPeriod { kind: "week" | "month"; start: string; end: string; partial: boolean }
+
+export interface KpiReport {
+  period: KpiPeriod;
+  previous_period: KpiPeriod;
+  scope: { team: string | null; agent: string | null };
+  trusted: boolean;
+  summary: KpiSummary;
+  previous: KpiSummary;
+  agents: KpiAgent[];
+  by_status: Record<Status, number> | null;
+  top_repeaters: { number: string; repeats: number }[];
+  days: { day: string; calls: number; answered: number; unanswered: number }[];
+}
+
+export interface KpiFilters { period: "week" | "month"; start: string; team: string; agent: string }
+
+export interface ArchivedReport {
+  id: number;
+  period_type: "week" | "month";
+  period_start: string;
+  period_end: string;
+  scope: string;
+  size_bytes: number;
+  generated_at: string;
+}
+
 export class Unauthorized extends Error {}
 
 async function get<T>(url: string): Promise<T> {
@@ -63,6 +118,13 @@ async function get<T>(url: string): Promise<T> {
   if (r.status === 401) throw new Unauthorized();
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json() as Promise<T>;
+}
+
+function kpiQuery(f: KpiFilters): string {
+  const p = new URLSearchParams({ period: f.period, start: f.start });
+  if (f.team) p.set("team", f.team);
+  if (f.agent) p.set("agent", f.agent);
+  return p.toString();
 }
 
 function query(f: Filters, extra: Record<string, string> = {}): string {
@@ -88,6 +150,10 @@ export const api = {
     if (r.ok) return { ok: true };
     return { ok: false, message: "اسم المستخدم أو كلمة المرور غير صحيحة، أو الحساب موقوف 15 دقيقة بعد 5 محاولات خاطئة" };
   },
+  kpi: (f: KpiFilters) => get<KpiReport>(`/api/kpi?${kpiQuery(f)}`),
+  reportPdfUrl: (f: KpiFilters) => `/api/reports/pdf?${kpiQuery(f)}`,
+  reports: () => get<ArchivedReport[]>("/api/reports"),
+  archivedPdfUrl: (id: number) => `/api/reports/${id}/pdf`,
   goldset: () => get<GoldClip[]>("/api/goldset"),
   goldClip: (id: number) => get<GoldClip>(`/api/goldset/${id}`),
   goldAudioUrl: (id: number) => `/api/goldset/${id}/audio`,

@@ -315,3 +315,13 @@ def test_mask_number():
     assert kpi.mask_number("0501234567") == "05XX…4567"
     assert kpi.mask_number("+966501234567") == "+966XX…4567"
     assert kpi.mask_number(None) == "–" and kpi.mask_number("123") == "XXX"
+
+
+def test_top_repeaters_are_masked(session):
+    week(session)
+    r = kpi.compute(session, *WEEK, teams=TEAM)
+    assert r["top_repeaters"][0] == {"number": "05XX…7777", "repeats": 2}           # C11, C12
+    assert len(r["top_repeaters"]) == 4                                                 # + C1, C6, C8 numbers
+    assert all("XX…" in x["number"] for x in r["top_repeaters"])
+    assert kpi.compute(session, *WEEK, teams=TEAM, agent="104")["top_repeaters"] == [
+        {"number": "00XX…1111", "repeats": 1}]                                         # C1 credited to 104 (via P1)

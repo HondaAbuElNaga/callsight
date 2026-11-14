@@ -163,7 +163,7 @@ def _missed_rings(s: Session, lo, hi, exts) -> dict[str, int]:
 
 _NORM = "right(regexp_replace({0}.customer_number, '[^0-9]', '', 'g'), 9)"
 _REPEATS = text(f"""
-SELECT c.id,
+SELECT c.id, c.customer_number, {_NORM.format('c')} AS num,
   (SELECT p.agent_ext FROM call p
     WHERE p.team = c.team AND p.direction IN ('inbound', 'outbound') AND p.status = 'answered'
       AND {_NORM.format('p')} = {_NORM.format('c')}
@@ -180,9 +180,18 @@ WHERE c.direction = 'inbound' AND c.status = 'answered' AND c.team IN :names
 """).bindparams(bindparam("names", expanding=True))
 
 
-def _repeats(s: Session, lo, hi, names) -> list[str | None]:
-    """One entry per repeat call: the extension credited (agent of the latest earlier answered call) or None."""
-    return [r.credited for r in s.execute(_REPEATS, {"names": names, "lo": lo, "hi": hi, "hours": REPEAT_HOURS})]
+def _repeats(s: Session, lo, hi, names) -> list:
+    """One row per repeat call: (id, customer_number, num, credited ext of the latest earlier answered call or None)."""
+    return list(s.execute(_REPEATS, {"names": names, "lo": lo, "hi": hi, "hours": REPEAT_HOURS}))
+
+
+def _top_repeaters(rows, n: int = 5) -> list[dict]:
+    """Most repeated callers, numbers masked (privacy: PDFs and the page never show full numbers)."""
+    by_num: dict[str, list] = {}
+    for r in rows:
+        by_num.setdefault(r.num, []).append(r)
+    top = sorted(by_num.values(), key=lambda rs: (-len(rs), rs[0].num))[:n]
+    return [{"number": mask_number(rs[0].customer_number), "repeats": len(rs)} for rs in top]
 
 
 def _days(s: Session, period_days: list[date], lo, hi, names, agent: str | None) -> list[dict]:
@@ -213,7 +222,8 @@ def compute(session: Session, start: date, end: date, *, teams: TeamConfig, team
     period_days = Period("custom", start, end).days()
     lo, hi = day_bounds(start)[0], day_bounds(end)[0]
     inbound, by_status = _team_inbound(session, lo, hi, names)
-    credited = _repeats(session, lo, hi, names)
+    repeat_rows = _repeats(session, lo, hi, names)
+    credited = [r.credited for r in repeat_rows]
     a_in, a_out = _agent_inbound(session, lo, hi, exts), _agent_outbound(session, lo, hi, exts)
     missed = _missed_rings(session, lo, hi, exts)
     names_by_ext = dict(session.execute(select(Agent.ext, Agent.name).where(Agent.ext.in_(exts))).all())
@@ -233,7 +243,9 @@ def compute(session: Session, start: date, end: date, *, teams: TeamConfig, team
                    "repeats": r["repeats"], "repeats_unattributed": None}
         by_status = None
     summary["satisfaction"] = None   # Phase 3: shown as "غير متاح", never 0
-    return {"summary": summary, "agents": rows, "by_status": by_status,
+    if agent is not None:
+        repeat_rows = [r for r in repeat_rows if r.credited == agent]
+    return {"summary": summary, "agents": rows, "by_status": by_status, "top_repeaters": _top_repeaters(repeat_rows),
             "days": _days(session, period_days, lo, hi, names, agent)}
 
 
@@ -258,3 +270,36 @@ def report(session: Session, period: Period, teams: TeamConfig, team: str | None
     return {"period": period.as_dict(now), "previous_period": prev_p.as_dict(now),
             "scope": {"team": team, "agent": agent}, "trusted": data_trusted(session),
             **cur, "previous": prev}
+
+
+# ---------- plain text (CLI, hand-calculation check) ----------
+
+def _txt(v, key: str) -> str:
+    if v is None:
+        return "n/a" if key == "satisfaction" else "-"
+    if key == "answer_rate":
+        return f"{v * 100:.1f}%"
+    if key in ("aht", "avg_ring", "outbound_aht"):
+        return f"{v:.1f}s"
+    return str(v)
+
+
+def format_text(data: dict) -> str:
+    p, pp, sc = data["period"], data["previous_period"], data["scope"]
+    scope = f"agent {sc['agent']}" if sc["agent"] else (sc["team"] or "all teams")
+    lines = [f"{p['kind']} {p['start']} .. {p['end']}{' (partial)' if p['partial'] else ''} | scope: {scope} | "
+             f"previous: {pp['start']} .. {pp['end']} | data trusted (7 OK reconciles): "
+             f"{'yes' if data['trusted'] else 'NO'}",
+             f"  {'KPI':22} {'period':>10} {'previous':>10}"]
+    for key, cur in data["summary"].items():
+        lines.append(f"  {key:22} {_txt(cur, key):>10} {_txt(data['previous'].get(key), key):>10}")
+    if data["by_status"]:
+        lines.append("  inbound by status: " + ", ".join(f"{k} {v}" for k, v in data["by_status"].items()))
+    lines.append("  per day: " + " ".join(f"{d['day']:%m-%d}:{d['calls']}/{d['answered']}" for d in data["days"]))
+    lines.append(f"  {'agent':12} {'team':17} {'calls':>5} {'aht':>7} {'missed':>6} {'out(ans)':>9} "
+                 f"{'out_aht':>7} {'repeats':>7}")
+    for a in data["agents"]:
+        lines.append(f"  {a['ext'] + ' ' + a['name'][:7]:12} {a['team']:17} {a['calls']:>5} {_txt(a['aht'], 'aht'):>7} "
+                     f"{a['missed_rings']:>6} {str(a['outbound']) + '(' + str(a['outbound_answered']) + ')':>9} "
+                     f"{_txt(a['outbound_aht'], 'aht'):>7} {a['repeats']:>7}")
+    return "\n".join(lines)

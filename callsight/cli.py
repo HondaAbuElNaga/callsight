@@ -13,6 +13,10 @@
   goldset pick [--n 30 --seconds 60 --seed 1]   choose + cut the ASR gold-set clips (once)
   goldset score [--bench-dir data/asr-bench --out docs/asr-benchmark.md]
                          WER/CER per model from the typed texts -> benchmark report
+  report --period week|month [--start YYYY-MM-DD] [--team T] [--agent EXT] [--pdf out.pdf]
+                         print the KPIs of the week (Sun-Sat) / month containing --start
+                         (default: the last closed one); --pdf also writes the PDF report
+  report-archive [--period week|month]   (re)build the archived PDF of the last closed period(s) now
 """
 from __future__ import annotations
 
@@ -52,7 +56,15 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--n", type=int, default=30); g.add_argument("--seconds", type=float, default=60.0)
     g.add_argument("--seed", type=int, default=1)
     g.add_argument("--bench-dir", default="data/asr-bench"); g.add_argument("--out", default="docs/asr-benchmark.md")
+    rp = sub.add_parser("report"); rp.add_argument("--period", choices=("week", "month"), default="week")
+    rp.add_argument("--start", type=date.fromisoformat); rp.add_argument("--team"); rp.add_argument("--agent")
+    rp.add_argument("--pdf", help="write the PDF report to this file")
+    ra = sub.add_parser("report-archive"); ra.add_argument("--period", choices=("week", "month"))
     a = p.parse_args(argv)
+    if a.cmd == "report":
+        return _report(a)
+    if a.cmd == "report-archive":
+        return _report_archive(a)
     if a.cmd == "goldset":
         return _goldset(a)
     if a.cmd in ("create-user", "set-password", "disable-user"):
@@ -166,4 +178,33 @@ def _goldset_score(a: argparse.Namespace) -> int:
     for r in results:
         print(f"{r.model}: {r.clips} clips, WER {r.score.wer:.1%}, CER {r.score.cer:.1%}")
     print(f"{len(refs)}/{len(clips)} texts typed; report written to {a.out}")
+    return 0
+
+
+def _report(a: argparse.Namespace) -> int:
+    from pathlib import Path
+    from . import kpi
+    period = kpi.period_for(a.period, a.start) if a.start else kpi.last_closed(a.period)
+    teams = wiring.teams()
+    try:
+        with wiring.session_factory()() as s:
+            data = kpi.report(s, period, teams, team=a.team, agent=a.agent)
+            print(kpi.format_text(data))
+            if a.pdf:
+                from .reports.pdf import make_pdf
+                Path(a.pdf).write_bytes(make_pdf(s, period, teams, team=a.team, agent=a.agent))
+                print(f"PDF written to {a.pdf}")
+    except ValueError as exc:
+        print("ERROR:", exc, file=sys.stderr)
+        return 1
+    return 0
+
+
+def _report_archive(a: argparse.Namespace) -> int:
+    from .reports import archive
+    kinds = [a.period] if a.period else ["week", "month"]
+    with wiring.session_factory()() as s:
+        for kind in kinds:
+            row = archive.generate(s, kind, wiring.teams(), wiring.reports_dir())
+            print(f"{kind} {row.period_start}: {row.file} ({row.size_bytes} bytes)")
     return 0
