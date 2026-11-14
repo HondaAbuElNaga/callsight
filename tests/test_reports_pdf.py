@@ -151,3 +151,19 @@ def test_real_archive_run(session, tmp_path):
     weasyprint_or_skip()
     row = archive.generate(session, "week", TEAM, tmp_path, now=NOW)
     assert (tmp_path / row.file).read_bytes().startswith(b"%PDF") and row.size_bytes > 10_000
+
+
+def test_pdf_refuses_local_files_and_network():
+    """Only bundled fonts may load: an injected <img src="file:///..."> or http URL is blocked."""
+    weasyprint_or_skip()
+    assert not pdf._allowed("file:///etc/passwd") and not pdf._allowed("http://192.168.50.151/x.png")
+    assert pdf._allowed(next(pdf.FONTS.glob("*.ttf")).resolve().as_uri())     # bundled font still loads
+    from weasyprint.urls import FatalURLFetchingError
+    with pytest.raises(FatalURLFetchingError):                              # fail_on_errors: rendering stops
+        pdf.render_pdf('<html><body><img src="file:///etc/passwd"></body></html>')
+    assert pdf.render_pdf("<html><body><p>مرحبا</p></body></html>").startswith(b"%PDF")
+
+
+def test_chart_axis_fits_stacked_bars():
+    svg = charts.day_bars([{"day": date(2026, 11, 1), "calls": 4, "answered": 4, "unanswered": 5}])
+    assert ">12<" in svg                                     # axis top (12) covers answered + missed (9), not 4

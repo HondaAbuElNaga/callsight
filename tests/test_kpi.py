@@ -70,7 +70,7 @@ def add(s, name, start, *, direction="inbound", team=CS, status="answered", agen
 
 def week(s):
     """The fixture: 2 calls before the week (look-back), 19 in/around it. Times are Riyadh."""
-    add(s, "P1", at(10, 30, 12), agent="104", cust="+966501111111", talk=100, wait=3)      # 70 h before C1
+    add(s, "P1", at(10, 30, 12), agent="104", cust="+966501111111", talk=100, wait=3)      # 46 h before C1
     add(s, "P2", at(10, 28, 9), agent="119", cust="0502222222", talk=50, wait=3)           # > 72 h before C2
     add(s, "C1", at(11, 1, 10), agent="119", cust="00966501111111", talk=200, wait=10)     # repeat of P1 -> 104
     add(s, "C2", at(11, 1, 10), agent="104", cust="0502222222", talk=300, wait=20, hold=30)  # not a repeat
@@ -286,6 +286,9 @@ def test_unknown_team_or_agent_rejected(session):
         kpi.compute(session, *WEEK, teams=TEAM, agent="114")
 
 
+TODAY = date(2026, 11, 9)
+
+
 def _runs(s, days_ok):
     for d, ok in days_ok:
         s.add(ReconcileRun(day=d, pbx_team_calls=1, pbx_team_legs=1, db_team_calls=1, missing_legs_before=0,
@@ -295,25 +298,33 @@ def _runs(s, days_ok):
 
 
 def test_trusted_needs_7_consecutive_ok_days(session):
-    assert kpi.data_trusted(session) is False
+    assert kpi.data_trusted(session, today=TODAY) is False
     _runs(session, [(date(2026, 11, d), True) for d in range(1, 7)])
-    assert kpi.data_trusted(session) is False                     # 6 days
+    assert kpi.data_trusted(session, today=TODAY) is False                     # 6 days
     _runs(session, [(date(2026, 11, 7), True)])
-    assert kpi.data_trusted(session) is True
+    assert kpi.data_trusted(session, today=TODAY) is True
     _runs(session, [(date(2026, 11, 8), False)])
-    assert kpi.data_trusted(session) is False                     # latest day failed
+    assert kpi.data_trusted(session, today=TODAY) is False                     # latest day failed
     _runs(session, [(date(2026, 11, 8), True)])                   # re-run of the same day OK -> latest counts
-    assert kpi.data_trusted(session) is True
+    assert kpi.data_trusted(session, today=TODAY) is True
+
+
+def test_trusted_needs_recent_days(session):
+    _runs(session, [(date(2026, 11, d), True) for d in range(1, 8)])
+    assert kpi.data_trusted(session, today=date(2026, 11, 9)) is True
+    assert kpi.data_trusted(session, today=date(2026, 11, 20)) is False    # reconcile stopped -> not trusted
 
 
 def test_trusted_breaks_on_gap(session):
     _runs(session, [(date(2026, 11, d), True) for d in (1, 2, 3, 5, 6, 7, 8)])
-    assert kpi.data_trusted(session) is False
+    assert kpi.data_trusted(session, today=TODAY) is False
 
 
 def test_mask_number():
     assert kpi.mask_number("0501234567") == "05XX…4567"
-    assert kpi.mask_number("+966501234567") == "+966XX…4567"
+    assert kpi.mask_number("+966501234567") == "96XX…4567"
+    assert kpi.mask_number("4123456") == "XX…456"                  # short numbers: >= 4 digits hidden
+    assert kpi.mask_number("41234567") == "XX…4567"
     assert kpi.mask_number(None) == "–" and kpi.mask_number("123") == "XXX"
 
 

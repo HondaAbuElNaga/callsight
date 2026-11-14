@@ -99,13 +99,18 @@ def _scope(teams: TeamConfig, team: str | None, agent: str | None) -> tuple[list
 
 
 def mask_number(number: str | None) -> str:
-    """Privacy in PDFs: '0501234567' -> '05XX…4567'."""
-    if not number:
+    """Privacy in PDFs: '0501234567' -> '05XX…4567'. Works on the digits only and always hides at least 4 of them:
+    the prefix is shown only for numbers of 10+ digits, shorter ones show just the last 3-4 digits."""
+    digits = "".join(ch for ch in (number or "") if ch.isdigit())
+    if not digits:
         return "–"
-    if len(number) < 7:
-        return "X" * len(number)
-    head = 4 if number.startswith("+") else 2
-    return f"{number[:head]}XX…{number[-4:]}"
+    if len(digits) >= 10:
+        return f"{digits[:2]}XX…{digits[-4:]}"
+    if len(digits) >= 8:
+        return f"XX…{digits[-4:]}"
+    if len(digits) >= 6:
+        return f"XX…{digits[-3:]}"
+    return "X" * len(digits)
 
 
 # ---------- queries (one per KPI group) ----------
@@ -233,8 +238,10 @@ def compute(session: Session, start: date, end: date, *, teams: TeamConfig, team
              "outbound_aht": a_out.get(e, (0, 0, None))[2], "repeats": sum(1 for c in credited if c == e)}
             for e in exts]
     if agent is None:
+        # credited to nobody, or to someone without an agent row (e.g. supervisor 114) -> "unattributed", so that
+        # repeats = sum of agent rows + unattributed always holds
         summary = {**inbound, **_team_outbound(session, lo, hi, names), "repeats": len(credited),
-                   "repeats_unattributed": sum(1 for c in credited if c is None)}
+                   "repeats_unattributed": sum(1 for c in credited if c not in exts)}
     else:
         r = rows[0]
         summary = {"calls": r["calls"], "answered": r["calls"], "unanswered": r["missed_rings"], "answer_rate": None,
@@ -249,7 +256,7 @@ def compute(session: Session, start: date, end: date, *, teams: TeamConfig, team
             "days": _days(session, period_days, lo, hi, names, agent)}
 
 
-def data_trusted(session: Session, need: int = TRUSTED_DAYS) -> bool:
+def data_trusted(session: Session, need: int = TRUSTED_DAYS, today: date | None = None) -> bool:
     """True when the latest `need` reconciled days are consecutive and OK (latest run of each day counts)."""
     latest: dict[date, bool] = {}
     for day, ok in session.execute(select(ReconcileRun.day, ReconcileRun.ok)
@@ -258,7 +265,9 @@ def data_trusted(session: Session, need: int = TRUSTED_DAYS) -> bool:
     days = sorted(latest, reverse=True)[:need]
     if len(days) < need:
         return False
-    return all(latest[d] for d in days) and (days[0] - days[-1]).days == need - 1
+    today = today or datetime.now(RIYADH).date()
+    recent = days[0] >= today - timedelta(days=2)   # reconcile stopped -> banner comes back
+    return recent and all(latest[d] for d in days) and (days[0] - days[-1]).days == need - 1
 
 
 def report(session: Session, period: Period, teams: TeamConfig, team: str | None = None, agent: str | None = None,

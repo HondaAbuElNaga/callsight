@@ -244,10 +244,33 @@ def build_html(session: Session, period: kpi.Period, teams: TeamConfig, team: st
     return Template(TEMPLATE.read_text(encoding="utf-8")).substitute(title=escape(title), body="\n".join(parts))
 
 
+def _allowed(url: str) -> bool:
+    """Only our bundled font files may load: no other local file, no network (SSRF / file-leak guard)."""
+    from urllib.parse import urlparse
+    from urllib.request import url2pathname
+    u = urlparse(url)
+    if u.scheme != "file":
+        return False
+    path = Path(url2pathname(u.path)).resolve()
+    return path.is_relative_to(FONTS.resolve()) and path.is_file()
+
+
+def _fetcher():
+    from weasyprint.urls import URLFetcher
+
+    class FontsOnly(URLFetcher):
+        def fetch(self, url, headers=None):
+            if not _allowed(url):
+                raise ValueError("blocked resource in report HTML")
+            return super().fetch(url, headers)
+
+    return FontsOnly(allowed_protocols=("file",), fail_on_errors=True)
+
+
 def render_pdf(html: str) -> bytes:
     """HTML -> PDF bytes. WeasyPrint needs Pango (in the Docker image; not on the Windows PC)."""
     from weasyprint import HTML
-    return HTML(string=html, base_url=FONTS.as_uri() + "/").write_pdf()
+    return HTML(string=html, base_url=FONTS.as_uri() + "/", url_fetcher=_fetcher()).write_pdf()
 
 
 def make_pdf(session: Session, period: kpi.Period, teams: TeamConfig, team: str | None = None,

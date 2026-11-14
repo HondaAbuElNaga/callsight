@@ -86,7 +86,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
     let alive = true;
     setLoading(true);
     setError("");
-    api.kpi(f).then((d) => alive && setData(d)).catch((e) => alive && fail(e)).finally(() => alive && setLoading(false));
+    api.kpi(f).then((d) => alive && setData(d)).catch((e) => { if (alive) { setData(null); fail(e); } }).finally(() => alive && setLoading(false));
     return () => { alive = false; };
   }, [f, fail]);
 
@@ -241,8 +241,8 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
               <h2>أكثر الأرقام تكراراً</h2>
               {data.top_repeaters.length === 0 ? <p className="muted">لا توجد مكالمات متكررة.</p> : (
                 <ul className="plain">
-                  {data.top_repeaters.map((r) => (
-                    <li key={r.number}><span dir="ltr" className="num">{r.number}</span> · {r.repeats}</li>
+                  {data.top_repeaters.map((r, i) => (
+                    <li key={i}><span dir="ltr" className="num">{r.number}</span> · {r.repeats}</li>
                   ))}
                 </ul>
               )}

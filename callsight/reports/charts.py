@@ -20,7 +20,7 @@ def day_bars(days: list[dict], width: int = 680, height: int = 190) -> str:
     n = max(len(days), 1)
     top, bottom, side = 12, 24, 28
     plot_h, plot_w = height - top - bottom, width - 2 * side
-    peak = _nice_max(max((d["calls"] for d in days), default=0) or 1)
+    peak = _nice_max(max((d["answered"] + d["unanswered"] for d in days), default=0) or 1)   # bars stack both
     slot = plot_w / n
     bar = max(2.0, slot * 0.62)
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '

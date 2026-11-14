@@ -44,7 +44,16 @@
          Repeats (72 h) 80, of which 30 unattributed; credited 104: 19, 119: 31. Per day (calls/answered):
          11-08 138/63, 11-09 90/39, 11-10 72/30, 11-11 79/52, 11-12 74/34. Missed rings: 0 for every agent (queue
          calls that nobody answered have no extension legs in the CDR, so who was rung is unknown).
-- [ ] 12. Review with 3 subagents (bugs, security, accuracy); fix confirmed findings
+- [x] 12. Review with 3 subagents (bugs, security, accuracy); fix confirmed findings
+         → 3 reviewers: 0 critical, 0 high, 1 medium, 8 low, 2 info. Accuracy reviewer re-derived the real week with
+           its own SQL: identical (453 / 218 / AHT 149.2 / 80 repeats, 30 unattributed). Fixed: KPI button only for
+           admin/supervisor (medium); WeasyPrint may load only the bundled fonts (fail on anything else, tested in
+           Docker); stronger number masking (≥ 4 digits always hidden); repeats credited to someone without an agent row
+           (e.g. 114) now count as unattributed so the totals add up; "trusted" banner needs recent reconciles; chart axis
+           covers stacked bars; React keys; old data cleared on error; test comment. Kept on purpose (user may change):
+           repeats only within the same team (Decision 3 said any team; real-week effect 0), the extra masked "top-5
+           repeat callers" list, pypdf in the app image (tests run there). 216 passed / 5 skipped on PC; PDF + KPI +
+           API tests in Docker: 12 + 90 passed.
 - [ ] 13. Spec status → done; roadmap Phase 4 items ticked ([~] while "Done when" unverified); merge to main (--no-ff)
 
 ## Assumptions made by the builder (user asleep)
