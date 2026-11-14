@@ -40,5 +40,5 @@ COPY alembic.ini pyproject.toml ./
 COPY callsight ./callsight
 COPY config ./config
 COPY --from=web /web/dist ./web/dist
-RUN useradd -m -u 1000 app && mkdir -p /data/audio /data/reports /backup && chown app /data/audio /data/reports /backup
+RUN useradd -m -u 1000 app && mkdir -p /data/audio /data/reports /backup /live-state && chown app /data/audio /data/reports /backup /live-state && chmod 700 /live-state
 USER app

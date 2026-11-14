@@ -199,3 +199,20 @@ table.health td { vertical-align: top; }
 .state.warn { background: var(--warn-bg); color: var(--warn); }
 .state.bad { background: var(--bad-bg); color: var(--bad); }
 .state.off { background: var(--neutral-bg); color: var(--neutral); }
+
+/* live board (live-board spec) */
+.live-notice { padding: 8px 12px; border-radius: var(--radius); margin-bottom: 12px; background: var(--warn-bg); color: var(--warn); }
+.live-notice.off { background: var(--neutral-bg); color: var(--neutral); }
+.live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.live-card { border: 1px solid var(--line); border-inline-start: 4px solid var(--neutral); border-radius: var(--radius); padding: 10px 12px; display: grid; gap: 4px; }
+.live-card.st-talking { border-inline-start-color: var(--ok); }
+.live-card.st-ringing { border-inline-start-color: var(--accent); }
+.live-card.st-holding { border-inline-start-color: var(--warn); }
+.live-card-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.live-timer { font-size: 18px; font-weight: 600; }
+.live-agent { font-weight: 600; }
+.badge.live-talking { background: var(--ok-bg); color: var(--ok); }
+.badge.live-ringing { background: #e6eefa; color: var(--accent); }
+.badge.live-holding { background: var(--warn-bg); color: var(--warn); }
+.live-queue { margin: 0; padding-inline-start: 18px; display: grid; gap: 4px; }
+.live-legal { border-top: 1px solid var(--line); padding-top: 10px; }

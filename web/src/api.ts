@@ -134,6 +134,29 @@ export interface ArchivedReport {
 export interface HealthItem { key: string; state: "ok" | "warn" | "bad" | "off"; [k: string]: unknown }
 export interface Health { ok: boolean; problems: string[]; checked_at: string; items: HealthItem[] }
 
+// Live board (WebSocket /api/live). Caller numbers arrive masked (last 4 digits) from the server.
+export interface LiveCall {
+  call_id: string;
+  state: "waiting" | "ringing" | "talking" | "holding";
+  direction: "inbound" | "outbound" | "internal";
+  agents: string[];            // extensions talking / holding
+  ringing: string[];           // extensions ringing
+  caller: string | null;       // masked, e.g. ••••4567
+  queue: string | null;
+  started_at: number;          // epoch seconds
+  answered_at: number | null;
+}
+
+export type LiveDelta =
+  | { op: "reset" }
+  | { op: "remove"; call_id: string }
+  | { op: "upsert"; call: LiveCall };
+
+export type LiveMessage =
+  | { type: "snapshot"; available: boolean; seq: number | null; status: string; calls: LiveCall[];
+      last_seen: number | null; server_time: number }
+  | { type: "delta"; seq: number; status: string; deltas: LiveDelta[]; published_at: number };
+
 export class Unauthorized extends Error {}
 export class NotFound extends Error {}
 export class BadRequest extends Error {}

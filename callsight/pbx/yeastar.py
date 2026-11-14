@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 import httpx
 
+from .authblock import AuthGuard
 from .base import AuthBlocked, AuthError, PbxAdapter, PbxError, PbxUnavailable, TokenLimit
 
 log = logging.getLogger(__name__)
@@ -39,7 +40,8 @@ class YeastarAdapter(PbxAdapter):
                  http: httpx.Client | None = None, max_login_failures: int = 3, retries: int = 3,
                  sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
                  max_pages: int = 300, cert_sha256: str | None = None,
-                 check_pin: Callable[[str, str], None] | None = None):
+                 check_pin: Callable[[str, str], None] | None = None, guard: AuthGuard | None = None,
+                 listen_enabled: bool = False, login_gate: Callable[[], None] | None = None):
         self.base_url = base_url.rstrip("/")
         self._id, self._secret = client_id, client_secret
         self.http = http or httpx.Client(verify=verify_ssl, timeout=60, headers={"User-Agent": USER_AGENT})
@@ -47,6 +49,9 @@ class YeastarAdapter(PbxAdapter):
         if check_pin is None:
             from .tls import check_pin
         self._check_pin = check_pin
+        self.guard = guard                   # shared pbx:auth_blocked switch (Redis); None = in-process limit only
+        self.listen_enabled = listen_enabled  # 2nd gate for call/listen; nothing sets it True yet (spec live-board)
+        self.login_gate = login_gate         # live service: raises when a login is not allowed yet (1 per 10 min)
         self.max_login_failures = max_login_failures
         self.login_failures = 0
         self.retries = retries
@@ -89,16 +94,25 @@ class YeastarAdapter(PbxAdapter):
         if self.login_failures >= self.max_login_failures:
             raise AuthBlocked(f"stopped after {self.login_failures} failed logins; check Client ID/Secret "
                               "and the PBX API IP allow-list, then restart")
+        if self.guard is not None and self.guard.blocked():
+            raise AuthBlocked("PBX logins are blocked (pbx:auth_blocked) after a refused login or the token limit; "
+                              "fix the cause, then run: python -m callsight pbx-unblock")
+        if self.login_gate is not None:
+            self.login_gate()
         if self.cert_sha256:                     # pinned: compare the certificate BEFORE sending the secret
             self._check_pin(self.base_url, self.cert_sha256)
         data = self._json(self._request("POST", self._url("get_token"),
                                         json={"username": self._id, "password": self._secret}), "get_token")
         if data.get("errcode") == TOKEN_LIMIT_ERRCODE:
+            if self.guard is not None:
+                self.guard.block("errcode 60002: token limit (max 8 open API logins)")
             # Not a wrong password: the PBX allows max 8 valid tokens per API app (30 min each).
             raise TokenLimit("PBX token limit reached (max 8 open API logins). Wait 30 minutes; "
                              "check no other program uses the same API Client ID.")
         if data.get("errcode") != 0:
             self.login_failures += 1
+            if self.guard is not None:
+                self.guard.block(f"get_token refused: errcode={data.get('errcode')}")
             raise AuthError(f"get_token refused: errcode={data.get('errcode')} errmsg={data.get('errmsg')}")
         self.login_failures = 0
         self._set_tokens(data)
@@ -121,6 +135,35 @@ class YeastarAdapter(PbxAdapter):
                 return
         self.access_token = None
         self._login()
+
+    def token(self) -> str:
+        """A valid access token (login / refresh only when needed). Used by the live service's WebSocket."""
+        self._ensure_token()
+        if not self.access_token:  # pragma: no cover - _ensure_token raises instead
+            raise AuthError("no access token")
+        return self.access_token
+
+    def token_state(self) -> dict | None:
+        """Tokens + their age, so a restarted live service can reuse them instead of logging in again."""
+        if not self.access_token:
+            return None
+        return {"access_token": self.access_token, "refresh_token": self.refresh_token,
+                "age": max(0.0, self._clock() - self._token_at)}
+
+    def restore_tokens(self, access_token: str, refresh_token: str | None, age: float) -> None:
+        self.access_token, self.refresh_token = access_token, refresh_token
+        self._token_at = self._clock() - age
+
+    def force_refresh(self) -> None:
+        """The next token() refreshes (refresh_token first; a new login only if that fails)."""
+        self._token_at = self._clock() - TOKEN_MAX_AGE
+
+    def listen(self, monitor_ext: str, call_id: str) -> dict:
+        """Silent listen (POST call/listen). Second gate: refuses unless this adapter was built with
+        listen_enabled=True, which no code does yet (feature paused by the user; legal steps first)."""
+        if not self.listen_enabled:
+            raise PbxError("listen is switched off in the PBX adapter")
+        raise PbxError("listen is not wired to the PBX yet")   # NEEDS USER before this is ever implemented
 
     def get(self, endpoint: str, **params: Any) -> dict:
         for attempt in (1, 2):
