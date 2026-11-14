@@ -3,10 +3,11 @@ import { api, type Me } from "./api";
 import { Login } from "./Login";
 import { CallsPage } from "./CallsPage";
 import { GoldsetPage } from "./GoldsetPage";
+import { KpiPage } from "./KpiPage";
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = still checking
-  const [view, setView] = useState<"calls" | "goldset">("calls");
+  const [view, setView] = useState<"calls" | "goldset" | "kpi">("calls");
 
   useEffect(() => {
     api.me().then(setMe).catch(() => setMe(null));
@@ -21,12 +22,15 @@ export function App() {
   };
   if (view === "goldset" && me.role === "admin")
     return <GoldsetPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
+  if (view === "kpi")
+    return <KpiPage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   return (
     <CallsPage
       me={me}
       onLogout={logout}
       onExpired={() => setMe(null)}
       onGoldset={me.role === "admin" ? () => setView("goldset") : undefined}
+      onKpi={me.role === "admin" || me.role === "supervisor" ? () => setView("kpi") : undefined}
     />
   );
 }

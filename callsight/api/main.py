@@ -16,8 +16,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import kpi
 from ..config import RIYADH
-from ..db.models import AppUser, Call, GoldClip, RecordingPlay
+from ..db.models import AppUser, Call, GoldClip, RecordingPlay, ReportArchive, ReportDownload
+from ..ingest.classify import TeamConfig
 from . import auth
 from .calls import DIRECTIONS, STATUSES, CallFilter, call_detail, list_calls, summary, team_agents
 
@@ -31,6 +33,8 @@ class ApiConfig:
     audio_dir: Path
     static_dir: Path | None = None
     cookie_secure: bool = False
+    teams: Callable[[], TeamConfig] = TeamConfig      # re-read per request (teams.yaml edits apply at once)
+    reports_dir: Path | None = None
 
 
 class LoginIn(BaseModel):
@@ -51,6 +55,29 @@ def audit_play(s: Session, user: AppUser, call_id: int) -> None:
     if recent is None:
         s.add(RecordingPlay(user_id=user.id, call_id=call_id, played_at=now))
         s.commit()
+
+
+def audit_report(s: Session, user: AppUser, period: kpi.Period, scope: str, archive_id: int | None = None) -> None:
+    """Every report download is logged (who, which report), like recording plays."""
+    s.add(ReportDownload(user_id=user.id, archive_id=archive_id, period_type=period.kind, period_start=period.start,
+                         scope=scope))
+    s.commit()
+
+
+@dataclass(frozen=True)
+class KpiQuery:
+    period: kpi.Period
+    team: str | None
+    agent: str | None
+
+    @property
+    def scope(self) -> str:
+        return f"agent:{self.agent}" if self.agent else (f"team:{self.team}" if self.team else "all")
+
+
+def pdf_response(data: bytes, name: str) -> Response:
+    return Response(data, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "private, no-store"})
 
 
 def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAPI:
@@ -104,6 +131,31 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         return f
 
     Filter = Annotated[CallFilter, Depends(call_filter)]
+
+    def manager(user: User) -> AppUser:
+        if user.role not in ("admin", "supervisor"):
+            raise HTTPException(403, "admin or supervisor only")
+        return user
+
+    Manager = Annotated[AppUser, Depends(manager)]
+
+    def kpi_query(
+        period: Annotated[str, Query(pattern=r"^(week|month)$")] = "week",
+        start: Annotated[date | None, Query()] = None,
+        team: Annotated[str | None, Query(pattern=r"^[a-z_]{1,50}$")] = None,
+        agent: Annotated[str | None, Query(pattern=r"^\d{1,6}$")] = None,
+    ) -> KpiQuery:
+        day = start or datetime.now(RIYADH).date()
+        if not date(2020, 1, 1) <= day <= date(2100, 1, 1):
+            raise HTTPException(422, "bad start date")
+        teams = cfg.teams()
+        if team and team not in kpi.team_names(teams):
+            raise HTTPException(422, "unknown team")
+        if agent and (agent not in teams.ext_team or (team and teams.ext_team[agent] != team)):
+            raise HTTPException(422, "extension is not a team agent (teams.yaml)")
+        return KpiQuery(kpi.period_for(period, day), team or None, agent or None)
+
+    Kpi = Annotated[KpiQuery, Depends(kpi_query)]
 
     # ---------- auth ----------
 
@@ -163,6 +215,39 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
             raise HTTPException(404, "no recording")
         audit_play(s, user, c.id)
         return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, no-store"})
+
+    # ---------- KPIs + reports (admin + supervisor) ----------
+
+    @app.get("/api/kpi")
+    def kpis(user: Manager, s: DB, q: Kpi) -> dict:
+        return kpi.report(s, q.period, cfg.teams(), team=q.team, agent=q.agent)
+
+    @app.get("/api/reports/pdf")
+    def report_pdf(user: Manager, s: DB, q: Kpi) -> Response:
+        from ..reports.pdf import filename, make_pdf
+        try:
+            data = make_pdf(s, q.period, cfg.teams(), team=q.team, agent=q.agent)
+        except (ImportError, OSError) as exc:     # WeasyPrint/Pango missing (only outside the Docker image)
+            raise HTTPException(503, "PDF engine not available") from exc
+        audit_report(s, user, q.period, q.scope)
+        return pdf_response(data, filename(q.period, q.team, q.agent))
+
+    @app.get("/api/reports")
+    def reports(user: Manager, s: DB) -> list[dict]:
+        from ..reports.archive import list_archive
+        return list_archive(s)
+
+    @app.get("/api/reports/{report_id}/pdf")
+    def archived_pdf(report_id: int, user: Manager, s: DB) -> Response:
+        r = s.get(ReportArchive, report_id)
+        if r is None or cfg.reports_dir is None:
+            raise HTTPException(404, "no such report")
+        root = cfg.reports_dir.resolve()
+        path = (root / r.file).resolve()
+        if not path.is_relative_to(root) or not path.is_file():
+            raise HTTPException(404, "report file missing")
+        audit_report(s, user, kpi.period_for(r.period_type, r.period_start), r.scope, r.id)
+        return pdf_response(path.read_bytes(), path.name)
 
     # ---------- gold set (admin only): reference texts for the ASR benchmark ----------
 
@@ -227,11 +312,11 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
 
 
 def _app_from_env() -> FastAPI:
-    from ..app import session_factory, settings
+    from ..app import reports_dir, session_factory, settings, teams
     secret = os.getenv("APP_SECRET", "")
     static = Path(os.getenv("WEB_DIST", str(Path(__file__).resolve().parents[2] / "web" / "dist")))
     return create_app(session_factory(), ApiConfig(
-        secret=secret, audio_dir=settings().audio_dir, static_dir=static,
+        secret=secret, audio_dir=settings().audio_dir, static_dir=static, teams=teams, reports_dir=reports_dir(),
         cookie_secure=os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes")))
 
 

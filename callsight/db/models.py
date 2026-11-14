@@ -4,13 +4,18 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import (BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text,
-                        func)
+                        UniqueConstraint, func)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     pass
+
+
+def norm_number(col):
+    """Customer number for matching repeat calls: digits only, last 9 (strips +966 / 00966 / leading 0)."""
+    return func.right(func.regexp_replace(col, "[^0-9]", "", "g"), 9)
 
 
 class Agent(Base):
@@ -65,7 +70,11 @@ class Call(Base):
         Index("ix_call_agent_ext", "agent_ext"),
         Index("ix_call_status", "status"),
         Index("ix_call_recording_status", "recording_status"),
+        Index("ix_call_customer_start", "customer_number", "start_time"),
     )
+
+
+Index("ix_call_norm_number", norm_number(Call.customer_number), Call.start_time)   # repeat-call look-back
 
 
 class CallLeg(Base):
@@ -145,3 +154,30 @@ class GoldClip(Base):
     typed_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     typed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReportArchive(Base):
+    """A generated weekly/monthly PDF (scheduled job). Re-running a period replaces the row and the file."""
+    __tablename__ = "report_archive"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    period_type: Mapped[str] = mapped_column(String(10))           # week / month
+    period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date)                  # exclusive
+    scope: Mapped[str] = mapped_column(String(60))                  # "all" (team summary + every agent)
+    file: Mapped[str] = mapped_column(String(300))                  # relative to REPORTS_DIR
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("period_type", "period_start", "scope", name="uq_report_archive_period"),)
+
+
+class ReportDownload(Base):
+    """Audit: who downloaded which report (reports contain personal performance data)."""
+    __tablename__ = "report_download"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    archive_id: Mapped[int | None] = mapped_column(ForeignKey("report_archive.id", ondelete="SET NULL"))
+    period_type: Mapped[str] = mapped_column(String(10))
+    period_start: Mapped[date] = mapped_column(Date)
+    scope: Mapped[str] = mapped_column(String(60))
+    downloaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

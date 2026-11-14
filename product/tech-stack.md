@@ -45,8 +45,9 @@ queue worker, so scaling = more workers / a second GPU box, not a rewrite.
 | Area | Choice | Status | Why |
 |---|---|---|---|
 | Web UI | React + Vite + TypeScript, RTL Arabic UI | 🔜 | Live board, call list, transcript player, report button |
-| Charts | Apache ECharts | 🔜 | Good RTL/Arabic support |
-| PDF reports | WeasyPrint (HTML → PDF) with an Arabic font (e.g. Noto Naskh / IBM Plex Sans Arabic) | 🔜 | Proper Arabic shaping and RTL |
+| Charts | Apache ECharts `echarts@6.1.0` (exact pin, npm) | ✅ | Adopted 2026-11-14 (kpi-reports spec). No native RTL: axes mirrored by hand, Arabic font set explicitly |
+| PDF reports | WeasyPrint `weasyprint==70.0` (HTML → PDF) + apt `libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0` in the app image; bundled IBM Plex Sans Arabic TTF (OFL, `callsight/reports/fonts/`, from the IBM plex GitHub release `@ibm/plex-sans-arabic@1.1.0`); charts are SVG bars drawn in Python | ✅ | Adopted 2026-11-14 (kpi-reports spec): proper Arabic shaping and RTL, no headless browser |
+| PDF test helper | `pypdf==6.21.0` (test only: extracts the Arabic text back from the PDF) | ✅ | Added 2026-11-14 (kpi-reports spec) |
 | Auth | Local users + roles (admin, supervisor, agent) with JWT | 🔜 | Agents see only their own calls |
 | Auth libraries | argon2-cffi (password hashing), PyJWT (signed login token in an HttpOnly cookie) | 🔜 | Added 2026-11-13 (web call list spec) |
 | Web server | uvicorn (runs the FastAPI app) | 🔜 | Added 2026-11-13; standard FastAPI server |

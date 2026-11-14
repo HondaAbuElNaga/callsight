@@ -1,9 +1,11 @@
 """Shared wiring for the CLI and the Celery worker: settings, DB sessions, one PBX adapter per process."""
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from pathlib import Path
 
-from .config import Settings, load_teams
+from .config import ROOT, Settings, load_teams
 from .db.session import make_session_factory
 from .ingest.classify import TeamConfig
 from .pbx.yeastar import YeastarAdapter
@@ -21,6 +23,11 @@ def session_factory():
 
 def teams() -> TeamConfig:
     return load_teams(settings().teams_file)   # re-read each time, so edits apply without restart
+
+
+def reports_dir() -> Path:
+    """Where scheduled PDF reports are archived (REPORTS_DIR; /data/reports in Docker)."""
+    return Path(os.getenv("REPORTS_DIR", str(ROOT / "data" / "reports")))
 
 
 @lru_cache(maxsize=1)
