@@ -332,7 +332,10 @@ def _maint_lock():
 def _retention(a: argparse.Namespace) -> int:
     from . import retention
     cfg = wiring.retention_config()
-    with wiring.session_factory()() as s:
+    with wiring.session_factory()() as s, _maint_lock() as got:
+        if not got:                              # same lock as the nightly backup/retention (asr waits too)
+            print("ERROR: another backup/retention run holds the maintenance lock", file=sys.stderr)
+            return 1
         r = retention.run(s, cfg, wiring.settings().audio_dir, wiring.backup_config().files_dir,
                           force_dry_run=a.dry_run)
     if not r.get("enabled"):

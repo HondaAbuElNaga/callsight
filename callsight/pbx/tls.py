@@ -4,7 +4,9 @@
   certificate, saved with `python -m callsight pbx-cert --fetch` + `--accept <sha256>`). A missing file is an error,
   not a fallback. YEASTAR_TLS_CHECK_HOSTNAME=false only when the certificate does not name the PBX's LAN address
   (the chain is still checked against that one certificate).
-- YEASTAR_CERT_SHA256: fingerprint pin, checked before every login (before the API secret is sent).
+- YEASTAR_CERT_SHA256: extra fingerprint pin, checked before every login. Only allowed together with
+  YEASTAR_CA_FILE: the pin is checked on a separate probe connection, so on its own (httpx verify=False) it would
+  give no protection against a man in the middle on the real connection. Pin without CA file = startup error.
 - Neither set and YEASTAR_VERIFY_SSL=false: today's setting; a warning is logged at every start.
 """
 from __future__ import annotations
@@ -26,8 +28,12 @@ class CertMismatch(PbxError):
     """The PBX presented a different certificate than the pinned/accepted one."""
 
 
-def verify_setting(ca_file: str | None, verify_ssl: bool, check_hostname: bool = True) -> ssl.SSLContext | bool:
+def verify_setting(ca_file: str | None, verify_ssl: bool, check_hostname: bool = True,
+                   cert_sha256: str | None = None) -> ssl.SSLContext | bool:
     """What to pass as httpx `verify=`."""
+    if cert_sha256 and not ca_file:
+        raise RuntimeError("YEASTAR_CERT_SHA256 alone does not protect the API secret: save the certificate with "
+                           "`pbx-cert --accept <sha256>` and set YEASTAR_CA_FILE as well")
     if ca_file:
         path = Path(ca_file)
         if not path.is_file():

@@ -98,3 +98,14 @@ def test_pin_ok_then_login():
                        sleep=lambda s: None, cert_sha256=FP, check_pin=lambda u, e: tls.check_pin(u, e, fake_fetch))
     a._login()
     assert fake.logins == 1 and a.access_token
+
+
+def test_pin_without_ca_file_is_refused():
+    """A pin checked on a probe socket protects nothing while httpx runs with verify=False."""
+    with pytest.raises(RuntimeError, match="YEASTAR_CA_FILE"):
+        tls.verify_setting(None, verify_ssl=False, cert_sha256="AA:" * 31 + "AA")
+
+
+def test_pin_with_ca_file_is_allowed():
+    import certifi
+    assert tls.verify_setting(certifi.where(), verify_ssl=False, cert_sha256="AA:" * 31 + "AA")

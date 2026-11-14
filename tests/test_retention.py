@@ -129,3 +129,14 @@ def test_transcripts_of_old_calls_are_deleted(env, engine):  # noqa: F811
     finally:
         with engine.begin() as c:
             c.execute(text("DELETE FROM transcript"))
+
+
+def test_deleted_backup_copies_leave_the_manifest(env):
+    from callsight.backup import MANIFEST, read_manifest, write_manifest
+    Session, audio, files, _ = env
+    write_manifest(files / MANIFEST, {"audio/old/a.wav": "aa", "audio/new/b.wav": "bb", "reports/x.pdf": "cc"})
+    with Session() as s:
+        retention.run(s, ON, audio, files, NOW)                       # dry run: manifest untouched
+        assert len(read_manifest(files / MANIFEST)) == 3
+        retention.run(s, ON, audio, files, NOW)
+    assert read_manifest(files / MANIFEST) == {"audio/new/b.wav": "bb", "reports/x.pdf": "cc"}

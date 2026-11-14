@@ -6,7 +6,7 @@ someone decides whether agents may use it.
 from datetime import datetime, timedelta
 
 import pytest
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, APIWebSocketRoute
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 from sqlalchemy.orm import sessionmaker
@@ -90,8 +90,21 @@ def today() -> dict:
 # ---------- route walk (deny by default) ----------
 
 def _api_routes(app) -> set[tuple[str, str]]:
-    return {(m, r.path) for r in app.routes if isinstance(r, APIRoute) and r.path.startswith("/api")
+    """HTTP routes as (method, path); WebSocket routes as ("WS", path) so they must be classified too."""
+    http = {(m, r.path) for r in app.routes if isinstance(r, APIRoute) and r.path.startswith("/api")
             for m in r.methods - {"HEAD", "OPTIONS"}}
+    ws = {("WS", r.path) for r in app.routes if isinstance(r, APIWebSocketRoute) and r.path.startswith("/api")}
+    return http | ws
+
+
+def test_route_walk_sees_websockets():
+    from fastapi import FastAPI
+    a = FastAPI()
+
+    @a.websocket("/api/live")
+    async def live(ws):  # noqa: ANN001
+        pass
+    assert ("WS", "/api/live") in _api_routes(a)
 
 
 def test_every_api_route_is_classified(env):

@@ -134,12 +134,28 @@ def fetch_recordings() -> dict:
     return {"ok": ok, "failed": failed}
 
 
-@celery.task(bind=True, max_retries=12)
+RECONCILE_WAIT_S = 600
+RECONCILE_MAX_WAITS = 40                      # 40 x 10 min > MAINT_TTL (6 h): outlasts even a stale lock
+
+
+@celery.task(bind=True, max_retries=RECONCILE_MAX_WAITS)
 def reconcile_yesterday(self) -> dict:
     from .locks import maint_busy
     if maint_busy(redis_client()):            # backup/retention running: try again in 10 minutes
-        raise self.retry(countdown=600)
+        if self.request.retries >= RECONCILE_MAX_WAITS:
+            _reconcile_gave_up()              # never silent: job_run -> error, health page red
+            raise RuntimeError("reconcile skipped: maintenance lock held for too long")
+        raise self.retry(countdown=RECONCILE_WAIT_S)
     return _reconcile()
+
+
+def _reconcile_gave_up() -> None:
+    from .health import record_job
+    try:
+        with wiring.session_factory()() as s:
+            record_job(s, "reconcile", "error")
+    except Exception:  # noqa: BLE001
+        log.warning("job_run update failed for reconcile")
 
 
 @tracked("reconcile")
@@ -210,6 +226,13 @@ def queue_transcripts() -> dict:
 
 @celery.task
 def reap_transcripts() -> dict:
+    from .locks import maint_busy
+    try:
+        busy = maint_busy(redis_client())
+    except Exception:                         # noqa: BLE001  Redis down: the queue length check below says so
+        busy = False
+    if busy:                                  # asr tasks are parked (countdown, LLEN 0) during backup: not lost
+        return {"skipped": "maint"}
     cfg = queueing.AsrConfig.from_env()
     ql = asr_queue_length()
     with wiring.session_factory()() as s:

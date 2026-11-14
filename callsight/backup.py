@@ -119,15 +119,20 @@ class Snapshot:
     def __init__(self, database_url: str):
         import psycopg
         self.conn = _connect(database_url)
-        self.conn.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
-        cur = self.conn.cursor()
-        cur.execute("SELECT pg_export_snapshot()")
-        self.id = cur.fetchone()[0]
-        tables = _tables(cur)
-        self.counts = count_rows(cur, tables)
-        self.alembic_version = _alembic_version(cur, tables)
-        cur.execute("SELECT current_setting('server_version_num')::int / 10000, pg_database_size(current_database())")
-        self.server_major, self.db_bytes = cur.fetchone()
+        try:
+            self.conn.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
+            cur = self.conn.cursor()
+            cur.execute("SELECT pg_export_snapshot()")
+            self.id = cur.fetchone()[0]
+            tables = _tables(cur)
+            self.counts = count_rows(cur, tables)
+            self.alembic_version = _alembic_version(cur, tables)
+            cur.execute("SELECT current_setting('server_version_num')::int / 10000, "
+                        "pg_database_size(current_database())")
+            self.server_major, self.db_bytes = cur.fetchone()
+        except BaseException:                    # __exit__ never runs when __init__ fails: close here
+            self.conn.close()
+            raise
 
     def close(self) -> None:
         try:
@@ -417,6 +422,8 @@ def verify(session: Session | None, cfg: BackupConfig, runner: Runner = subproce
     """Restore drill. Writes nothing to the live DB except (with `record`) verified_at/verify_ok on its row."""
     check_not_live(cfg.database_url)
     dump, meta = newest_dump(cfg.db_dir)
+    # Only the backup disk is checked here; the scratch DB itself lands in the Postgres volume (another disk,
+    # not visible from this container): keep the live DB size free there too (docs/scale-out.md, section 2).
     if free_bytes(cfg.backup_dir) < 4 * dump.stat().st_size:     # restored DB is several times the -Fc dump
         raise BackupError("not enough free disk space for the restore drill")
     if client_major(runner, "pg_restore") < 16:

@@ -9,6 +9,7 @@ ARG TORCH_REQS=
 COPY docker/asr-bench/*.txt ./reqs/
 RUN if [ -n "$TORCH_REQS" ]; then       pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu128 -r reqs/$TORCH_REQS; fi  && pip install --no-cache-dir -r reqs/$REQS
 COPY requirements.txt ./reqs/app.txt
+COPY requirements.in ./reqs/requirements.in
 RUN pip install --no-cache-dir -r reqs/app.txt
 COPY alembic.ini pyproject.toml ./
 COPY callsight ./callsight

@@ -103,6 +103,10 @@ def run(session: Session, cfg: RetentionConfig, audio_dir: Path, backup_files_di
                 "audit_rows": audit_rows}
 
     present = [t for t in CONTENT_TABLES if inspect(session.get_bind()).has_table(t)]
+    from .backup import MANIFEST, read_manifest, write_manifest
+    manifest_path = backup_files_dir / MANIFEST if backup_files_dir else None
+    manifest = read_manifest(manifest_path) if manifest_path else {}
+    pruned = False
     for i in range(0, len(calls), BATCH):
         for c in calls[i:i + BATCH]:
             what = []
@@ -112,12 +116,18 @@ def run(session: Session, cfg: RetentionConfig, audio_dir: Path, backup_files_di
                     p.unlink()
                     files += 1
                     what.append(label)
+                if p and label == "backup_copy":   # drop its manifest line too (PDPL: the name may hold a number)
+                    key = "audio/" + p.relative_to(root.resolve()).as_posix()
+                    pruned = manifest.pop(key, None) is not None or pruned
             for t in present:
                 if session.execute(text(f'DELETE FROM "{t}" WHERE call_id = :id'), {"id": c.id}).rowcount:
                     what.append(t)
             c.recording_status, c.recording_path = "deleted", None
             session.add(RetentionLog(run_id=r.id, call_id=c.id, deleted_at=now, what=",".join(what) or "nothing"))
         session.commit()
+        if pruned:
+            write_manifest(manifest_path, manifest)
+            pruned = False
     for model, where in audit_where:
         session.execute(delete(model).where(where))
     r.files = files

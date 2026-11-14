@@ -50,12 +50,26 @@
          PBX certificate, updating packages (short version).
 - [ ] 11. ⚠ NEEDS USER: encrypted 2nd disk/NAS for BACKUP_DIR (then `BACKUP_OFFSITE_CONFIRMED=true`); create agent
          accounts (`create-user NAME --role agent --ext …`); retention days + `RETENTION_ENABLED`; PBX fingerprint
-         (`pbx-cert --fetch` on the LAN, compare, `--accept`)
+         (`pbx-cert --fetch` on the LAN, compare, `--accept`); approve that retention keeps the gold set (benchmark
+         clips + typed texts) or delete it by hand after the benchmark; delete `D:/callsight-backup-test` (750 MB test
+         copy of real recordings, unencrypted) when no longer needed
 - [ ] 12. Verify; review with 3 subagents; fix; spec → done/[~]; roadmap; merge (--no-ff)
+         → 3 reviewers: 0 critical, 1 high, 5 medium, 8 low; all confirmed and fixed:
+           high: asr-worker image could not build (`requirements.in` not copied) → copied, image built OK;
+           medium: pin without CA file gave no MITM protection → refused at start; `pbx-cert --accept` couldn't write
+           to read-only `config/` → docs use `-v ./config:/app/config`; reconcile gave up silently after 2 h of maint
+           lock → 40 × 10 min (> 6 h TTL) + job_run error; reaper treated maint-parked asr tasks as lost → skips while
+           the lock is held + parked rows get `queued_at` moved; (accuracy) docs/tech-stack wording;
+           low: CLI `retention` now takes the maint lock; retention prunes `manifest.sha256`; Snapshot closes its
+           connection on error; verify free-space check documented as backup-disk only; route walk includes WebSocket
+           routes; gold set documented as a retention exception (⚠ NEEDS USER); restore guide no password on the
+           command line; models comment `deleted`; test counts updated.
 
 ## Test results (2026-11-14)
-- PC: `295 passed, 8 skipped` (skips: WeasyPrint/PDF + pg_dump-only tests).
-- Docker (`callsight-s7-test`, built with `--require-hashes`, `INSTALL_DEV=true`): `303 passed`.
+- PC, after merging main (transcription) + review fixes: `374 passed, 8 skipped` (skips: WeasyPrint/PDF + pg_dump-only
+  tests). Before the merge: 295 passed, 8 skipped.
+- Docker (`callsight-s7-test`, built with `--require-hashes`, `INSTALL_DEV=true`): `303 passed` (before the merge).
+- `docker compose --profile asr build asr-worker`: built OK after the fix.
 
 ## Assumptions / decisions made while building
 - Migration is **0006** (down_revision 0005 = transcription branch), not "0008" as in task 4's text. On this branch

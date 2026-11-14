@@ -21,6 +21,11 @@ Yeastar portal.
   not against disk loss or theft. Point `BACKUP_HOST_DIR` to an encrypted second disk / NAS, then set
   `BACKUP_OFFSITE_CONFIRMED=true` (the health page warning goes away).
 - Retention: deleted calls stay inside old DB dumps until rotation removes them (about 8 weeks).
+- Retention does **not** touch the gold set (`gold_clip`: cut audio clips under `AUDIO_DIR/goldset` + the typed
+  reference texts). They are kept for the speech-to-text benchmark. ⚠ NEEDS USER: approve that exception, or
+  delete the gold set by hand when the benchmark is finished.
+- `backup verify` checks free space on the **backup disk** only. The scratch restore is written into the Postgres
+  volume (Docker's disk): keep at least the live database size (health page) free there too.
 
 ## 3. Restore on a new machine (or after losing the database)
 
@@ -32,10 +37,12 @@ Yeastar portal.
    `docker compose up -d postgres redis`
 5. Restore the newest dump into the (empty) database:
    ```
-   docker compose run --rm --no-deps -e PGPASSWORD=<POSTGRES_PASSWORD> worker \
-     pg_restore --no-owner --no-acl --exit-on-error -h postgres -U callsight -d callsight \
-     /backup/db/callsight-YYYYMMDD-HHMMSS.dump
+   docker compose run --rm --no-deps worker sh -c \
+     'pg_restore --no-owner --no-acl --exit-on-error -d "$(echo "$DATABASE_URL" | sed s/+psycopg//)" \
+      /backup/db/callsight-YYYYMMDD-HHMMSS.dump'
    ```
+   The password comes from the worker's own `DATABASE_URL`. Never type it on the command line: it would stay in
+   the shell history.
 6. `docker compose up -d --build` — the worker runs `alembic upgrade head` on start.
 7. Check: log in, open "حالة النظام" (health page, admin), run `backup verify` once.
 
@@ -64,8 +71,11 @@ Yeastar portal.
 
 On the office LAN: `docker compose run --rm worker python -m callsight pbx-cert --fetch` prints the SHA-256
 fingerprint of the certificate the PBX presents. Compare it with the PBX web interface. Only when equal:
-`... pbx-cert --accept <fingerprint>` saves `config/pbx-ca.pem`; then set `YEASTAR_CA_FILE=/app/config/pbx-ca.pem`
+`docker compose run --rm -v ./config:/app/config worker python -m callsight pbx-cert --accept <fingerprint>`
+saves `config/pbx-ca.pem` (the extra `-v` makes `config/` writable for this one command; the services mount it
+read-only); then set `YEASTAR_CA_FILE=/app/config/pbx-ca.pem`
 in `.env` (and `YEASTAR_TLS_CHECK_HOSTNAME=false` if the certificate does not name the PBX's IP) and restart.
+`YEASTAR_CERT_SHA256` is only an extra check on top of `YEASTAR_CA_FILE`; set alone, the app refuses to start.
 
 ## 7. Updating Python packages
 
