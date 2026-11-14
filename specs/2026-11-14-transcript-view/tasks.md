@@ -35,10 +35,14 @@
          ⚠ NEEDS USER: needs the live DB migrated (0007) and the api image rebuilt; the Chrome extension was not
          connected for a synthetic run either. Check: open a transcribed call → click a line (audio jumps), highlight
          follows playback, "تنزيل النص (.txt)" opens right in Notepad, search "الفاتورة" finds the expected call.
-- [ ] 7. Verify; review with 3 subagents; fix; spec → done; roadmap; merge (--no-ff)
+- [x] 7. Verify; review with 3 subagents; fix; spec → done; roadmap; merge (--no-ff)
          Verify done: full pytest 305 passed, 5 skipped (4 WeasyPrint on Windows, pre-existing). Review + merge: orchestrator.
          → 3 reviewers: 0 critical, 0 high, 1 medium, 8 low; all fixed: pg_trgm row in tech-stack (M); roadmap
            redaction later-item; EXPLAIN claim reworded (index usable; real EXISTS goes call-first on small tables);
            auto-scroll pauses on focus; invalid words box clears the applied search; stale seek cleared on play/close;
            words 422 message only when a words search is applied; reindex locks + re-checks each row (new test).
            After fixes: pytest 306 passed, 5 skipped; frontend `npm run build` OK. Merge: orchestrator.
+         → merged after hardening: migration renumbered 0007 (down_revision 0006); agents get transcript + .txt of
+           their own calls (404 others, audited), word search staff-only; 391 passed, 8 skipped. pg_dump
+           `callsight-before-0007-20261114-1516.dump`; live DB at 0007, 5/5 real transcripts backfilled (search_text),
+           4 match a greeting word in SQL. Browser check (click-to-seek, highlight, .txt in Notepad): ⚠ NEEDS USER.

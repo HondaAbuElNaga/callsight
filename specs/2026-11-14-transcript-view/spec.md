@@ -1,7 +1,7 @@
 # Spec: Transcript view, export and search
 
 **Roadmap item:** Phase 2, "Transcript view next to the audio player; export transcript as .txt"
-**Status:** approved (by 2 judge agents on the user's behalf, 2026-11-14 — user may revise)
+**Status:** done (2026-11-14; browser screenshots ⚠ NEEDS USER)
 
 ## Goal
 A supervisor opens a call and reads what was said while listening, jumps in the audio by clicking a line, exports
