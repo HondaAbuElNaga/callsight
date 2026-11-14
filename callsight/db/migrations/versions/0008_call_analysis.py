@@ -4,7 +4,7 @@ blind_set. Additive only; every table goes with its call (ON DELETE CASCADE, dec
 Before running on the live DB: backup first (python -m callsight backup).
 
 Revision ID: 0008
-Revises: 0007
+Revises: 0009
 Create Date: 2026-11-14
 """
 from alembic import op

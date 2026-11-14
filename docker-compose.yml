@@ -293,14 +293,16 @@ services:
               count: 1
               capabilities: [gpu]
 
-  # Download an LLM into the models volume. Network ON, but NO call data mounted and no GPU. Pin the tag:
+  # Download an LLM into the models volume. Network ON (its own network: postgres and redis are NOT reachable),
+  # NO call data mounted and no GPU. Give the tag; afterwards compare the digest that `ollama list` prints (also
+  # shown by `python -m callsight analyze status`) with the one written in the call-analysis tasks.md:
   #   docker compose --profile llm-pull run --rm ollama-pull qwen2.5:7b
   ollama-pull:
     profiles: ["llm-pull"]
     image: ollama/ollama:0.40.13@sha256:b2f0122c476bc9fe7ce679d8bb4bd555351e25e2554eefb156f61cb0a89cf429
     entrypoint: ["/bin/sh", "-c", "ollama serve >/dev/null 2>&1 & sleep 3 && ollama pull \"$$0\" && ollama list"]
     command: ["qwen2.5:7b"]
-    networks: [default]
+    networks: [llm-pull]
     volumes:
       - ollama-models:/root/.ollama
 
@@ -334,6 +336,7 @@ services:
 networks:
   asr-internal:
     internal: true                         # no route to the internet: call audio + transcripts stay on this PC
+  llm-pull:                                # internet, but nothing else on it: only the one-off ollama-pull container
 
 volumes:
   live-state:

@@ -9,7 +9,8 @@ interface Props { me: Me; onBack: () => void; onLogout: () => void; onExpired: (
 const SCORES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 // "تقييم المكالمات": supervisors rate the CUSTOMER's satisfaction 1-10. Test-set (blind) calls come first and never
-// show the LLM estimate; the other calls show it as a starting point that the supervisor corrects.
+// show the LLM estimate or summary, and their rating is final; the other calls show the estimate as a starting
+// point that the supervisor corrects. Target: 500 calls = 400 for training + the 100 test-set calls.
 export function RatingPage({ me, onBack, onLogout, onExpired }: Props) {
   const [queue, setQueue] = useState<RatingQueue | null>(null);
   const [call, setCall] = useState<RatingCall | null>(null);
@@ -49,10 +50,10 @@ export function RatingPage({ me, onBack, onLogout, onExpired }: Props) {
   useEffect(() => { reload(true); }, [reload]);
 
   async function save() {
-    if (!call || score === null) return;
+    if (!call || score === null || call.locked) return;
     setBusy(true);
     try {
-      await api.saveRating(call.call_id, score, note);
+      await api.saveRating(call.call_id, score, note, call.estimate?.score ?? null);
       setMsg({ ok: true, text: `تم حفظ التقييم ${score}/10` });
       await reload(true);
     } catch (e) { fail(e); } finally { setBusy(false); }
@@ -77,7 +78,9 @@ export function RatingPage({ me, onBack, onLogout, onExpired }: Props) {
         </p>
         {p && (
           <p className="progress-line">
-            <span>التقييمات: <b className="num">{p.labels}</b> / {p.labels_target} مكالمة</span>
+            <span>التقييمات: <b className="num">{p.labels}</b> / {p.labels_target} مكالمة
+              <span className="muted"> ({p.labels_target - p.blind_target} للتدريب + {p.blind_target} مجموعة الاختبار)</span>
+            </span>
             <span>مجموعة الاختبار: <b className="num">{p.blind_rated}</b> / {p.blind_target}
               {!p.blind_frozen && <span className="muted"> (لم تُثبَّت بعد — لا تظهر تقديرات آلية حتى تثبيتها)</span>}
             </span>
@@ -129,7 +132,8 @@ export function RatingPage({ me, onBack, onLogout, onExpired }: Props) {
               <label className="note">ملاحظة (اختياري، بدون أرقام أو بيانات شخصية)
                 <textarea value={note} maxLength={500} rows={2} onChange={(e) => setNote(e.target.value)} />
               </label>
-              <button className="primary" disabled={busy || score === null} onClick={save}>حفظ والانتقال للتالية</button>
+              {call.locked && <p className="muted small">تقييم مجموعة الاختبار نهائي ولا يمكن تعديله.</p>}
+              <button className="primary" disabled={busy || score === null || call.locked} onClick={save}>حفظ والانتقال للتالية</button>
             </fieldset>
 
             <TranscriptPanel key={call.call_id} callId={call.call_id} canSeek={call.has_recording} time={pos}

@@ -160,14 +160,34 @@ def _maint_busy() -> bool:
 
 def _gpu_take(idle_unload_s: float) -> bool:
     """GPU lock for the asr worker (call-analysis spec, decision 6): held while the model is loaded, refreshed by
-    every task, released when the model is unloaded (idle), expires on its own if the worker dies.
-    Redis trouble never blocks transcription (same as the maintenance lock)."""
+    every task and again right before the model is loaded/used (ModelHolder.before_use), released when the model is
+    unloaded (idle), expires on its own if the worker dies.
+    DELIBERATE EXCEPTION to "never two models on the GPU": when Redis itself fails, transcription goes on without
+    the lock (same as the maintenance lock) - transcripts are the priority, and the nlp side fails closed (no
+    Redis = no Ollama answer), so both can only overlap if Redis fails in the middle of an Ollama answer."""
     from ..jobs import redis_client
-    from ..locks import gpu_acquire
+    from ..locks import gpu_acquire, gpu_unwant
     try:
-        return gpu_acquire(redis_client(), "asr", int(idle_unload_s + TASK_LIMIT_S + 60))
+        r = redis_client()
+        got = gpu_acquire(r, "asr", int(idle_unload_s + TASK_LIMIT_S + 60))
     except Exception:                            # noqa: BLE001
         return True
+    if got:
+        try:
+            gpu_unwant(r)                        # we have it: the nlp task may queue up behind us again
+        except Exception:                        # noqa: BLE001  the flag expires on its own
+            pass
+    return got
+
+
+def _gpu_want() -> None:
+    """Tell the nlp task that transcription is waiting for the GPU (it then stops taking the lock)."""
+    from ..jobs import redis_client
+    from ..locks import gpu_want
+    try:
+        gpu_want(redis_client(), GPU_WAIT_S * 2 + 60)
+    except Exception:                            # noqa: BLE001
+        pass
 
 
 def _gpu_free() -> None:
@@ -201,7 +221,8 @@ def holder():
     if _holder is None:
         from .engine import ModelHolder
         cfg = queueing.AsrConfig.from_env()
-        _holder = ModelHolder(cfg.model, idle_unload_s=cfg.idle_unload_s, on_unload=_gpu_free)
+        _holder = ModelHolder(cfg.model, idle_unload_s=cfg.idle_unload_s, on_unload=_gpu_free,
+                              before_use=lambda: _gpu_take(cfg.idle_unload_s))
     return _holder
 
 
@@ -221,6 +242,7 @@ def transcribe_call(call_id: int, model: str | None = None) -> dict:
         send_transcribe(call_id, model, countdown=MAINT_WAIT_S)
         return {"call_id": call_id, "status": "queued", "maint_wait": True}
     if not _gpu_take(getattr(h, "idle_unload_s", 300)):   # an Ollama answer is running: never two models at once
+        _gpu_want()                              # ... and transcription goes first once that answer is done
         _park(call_id, model, GPU_WAIT_S)
         send_transcribe(call_id, model, countdown=GPU_WAIT_S)
         return {"call_id": call_id, "status": "queued", "gpu_wait": True}

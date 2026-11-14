@@ -9,7 +9,8 @@ from sqlalchemy.orm import sessionmaker
 from callsight.analysis import blindset
 from callsight.api import auth
 from callsight.api.main import ApiConfig, create_app
-from callsight.db.models import BlindSet, CallAnalysis, CallAudioMetrics, CallFlag, SatisfactionLabel
+from callsight.db.models import (BlindSet, CallAnalysis, CallAudioMetrics, CallFlag, SatisfactionLabel,
+                                 TranscriptAccess)
 from test_call_analysis import PV, TOPICS, engine, make_call  # noqa: F401  (engine is a fixture)
 
 SECRET = "z" * 40
@@ -85,15 +86,70 @@ def test_blind_calls_never_show_the_estimate_on_the_rating_page(env):
     login(client)
     blind = client.get(f"/api/rating/calls/{ids[0]}").json()
     assert blind["blind"] is True and blind["estimate"] is None and "llm_score" not in str(blind)
+    assert blind["analysis"] is None and "ملخص" not in str(blind) and blind["locked"] is False   # no summary/escalation
+    detail = client.get(f"/api/calls/{ids[0]}/analysis").json()                 # call detail: nothing either,
+    assert detail["analysis"] is None and detail["estimate"] is None            # until this user has rated it
+    assert detail["flags"] and detail["silence"]                                # rule matches + silence: not LLM
     other = client.get(f"/api/rating/calls/{ids[1]}").json()
     assert other["blind"] is False and other["estimate"]["score"] == 4
     assert "ليس لتقييم الموظفين" in other["estimate"]["label"]
     assert client.get(f"/api/calls/{ids[0]}/analysis").json()["estimate_hidden"] == "blind"
     assert client.put(f"/api/rating/calls/{ids[0]}", json={"score": 6}).status_code == 200
-    assert client.get(f"/api/rating/calls/{ids[0]}").json()["estimate"] is None          # still hidden here
-    assert client.get(f"/api/calls/{ids[0]}/analysis").json()["estimate"]["score"] == 3  # rated: call detail ok
+    after = client.get(f"/api/rating/calls/{ids[0]}").json()
+    assert after["estimate"] is None and after["analysis"] is None and after["locked"] is True   # still hidden here
+    detail = client.get(f"/api/calls/{ids[0]}/analysis").json()                 # rated: call detail ok
+    assert detail["estimate"]["score"] == 3 and detail["analysis"]["summary"] == "<b>ملخص 0</b>"
     login(client, "admin")                                      # another rater: still hidden for them
-    assert client.get(f"/api/calls/{ids[0]}/analysis").json()["estimate"] is None
+    detail = client.get(f"/api/calls/{ids[0]}/analysis").json()
+    assert detail["estimate"] is None and detail["analysis"] is None
+
+
+def test_blind_label_is_final(env):
+    """After rating a blind call its rater may see the estimate (call detail): the label can't be changed then."""
+    client, Session, ids = env
+    freeze(Session, [ids[0]])
+    login(client)
+    assert client.put(f"/api/rating/calls/{ids[0]}", json={"score": 4, "note": "أول"}).status_code == 200
+    r = client.put(f"/api/rating/calls/{ids[0]}", json={"score": 3})            # = the LLM estimate, now visible
+    assert r.status_code == 409 and r.json()["detail"] == "blind-set rating is final"
+    assert client.put(f"/api/rating/calls/{ids[0]}", json={"score": 4, "note": "ثاني"}).status_code == 409
+    with Session() as s:
+        lab = s.scalars(select(SatisfactionLabel)).one()
+    assert (lab.score, lab.note, lab.prefill, lab.blind) == (4, "أول", None, True)
+    login(client, "admin")                                      # another rater still gives their own blind label
+    assert client.put(f"/api/rating/calls/{ids[0]}", json={"score": 6}).status_code == 200
+
+
+def test_reading_the_analysis_is_audited(env):
+    client, Session, ids = env
+    freeze(Session, [ids[0]])
+    login(client)
+
+    def kinds():
+        with Session() as s:
+            return [(a.call_id, a.kind) for a in s.scalars(select(TranscriptAccess).order_by(TranscriptAccess.id))]
+    client.get(f"/api/calls/{ids[0]}/analysis")                 # blind, not rated: no LLM text returned -> no row
+    client.get(f"/api/rating/calls/{ids[0]}")
+    assert kinds() == []
+    client.get(f"/api/calls/{ids[1]}/analysis")
+    client.get(f"/api/calls/{ids[1]}/analysis")                 # same user + call within the window: one row
+    client.get(f"/api/rating/calls/{ids[1]}")
+    assert kinds() == [(ids[1], "analysis")]
+    client.get(f"/api/rating/calls/{ids[2]}")                   # the rating page shows the summary too
+    assert kinds() == [(ids[1], "analysis"), (ids[2], "analysis")]
+
+
+def test_silence_reports_the_threshold_it_was_computed_with(env):
+    from callsight.analysis import views
+    from callsight.analysis.settings import SilenceRules
+    assert views._long_s(SilenceRules(long_silence_s=15).version) == 15
+    assert views._long_s(SilenceRules().version) == 10 and views._long_s("m") is None and views._long_s(None) is None
+    client, Session, ids = env
+    with Session() as s:
+        s.get(CallAudioMetrics, ids[0]).metrics_version = SilenceRules(long_silence_s=12.5).version
+        s.commit()
+    login(client)
+    assert client.get(f"/api/calls/{ids[0]}/analysis").json()["silence"]["long_s"] == 12.5
 
 
 def test_queue_blind_first_and_progress(env):
@@ -118,21 +174,32 @@ def test_label_records_prefill_and_upserts(env):
     client, Session, ids = env
     freeze(Session, [ids[0]])
     login(client)
-    assert client.put(f"/api/rating/calls/{ids[1]}", json={"score": 4, "note": "عميل مرتاح"}).json() == \
-        {"score": 4, "note": "عميل مرتاح"}
-    client.put(f"/api/rating/calls/{ids[1]}", json={"score": 7})            # re-rate: same row
-    client.put(f"/api/rating/calls/{ids[0]}", json={"score": 3})            # blind call
+    shown = client.get(f"/api/rating/calls/{ids[1]}").json()["estimate"]["score"]        # what the page displays
+    assert shown == 4
+    assert client.put(f"/api/rating/calls/{ids[1]}", json={"score": 4, "note": "عميل مرتاح", "prefill_shown": shown}
+                      ).json() == {"score": 4, "note": "عميل مرتاح"}
+    with Session() as s:                                        # a re-score lands AFTER the rating was given
+        s.add(CallAnalysis(call_id=ids[1], model="qwen2.5:7b", prompt_version="ca1-new", status="done", summary="s",
+                           topic="other", action_items=[], llm_score=9, reason="r", escalation=False))
+        s.commit()
+    client.put(f"/api/rating/calls/{ids[1]}", json={"score": 7, "prefill_shown": 9})     # re-rate: same row
+    client.put(f"/api/rating/calls/{ids[0]}", json={"score": 3, "prefill_shown": 3})     # blind call: never a pre-fill
+    client.put(f"/api/rating/calls/{ids[2]}", json={"score": 5})                         # page showed no estimate
+    client.put(f"/api/rating/calls/{ids[3]}", json={"score": 5, "prefill_shown": 1})     # not a stored estimate
     with Session() as s:
         rows = {r.call_id: r for r in s.scalars(select(SatisfactionLabel))}
-    assert len(rows) == 2
+    assert len(rows) == 4
     assert (rows[ids[1]].score, rows[ids[1]].prefill, rows[ids[1]].changed_from_prefill, rows[ids[1]].blind,
-            rows[ids[1]].note) == (7, 4, True, False, None)
+            rows[ids[1]].note) == (7, 4, True, False, None)     # the FIRST pre-fill is kept, not the re-score's 9
     assert (rows[ids[0]].prefill, rows[ids[0]].changed_from_prefill, rows[ids[0]].blind) == (None, None, True)
+    assert (rows[ids[2]].prefill, rows[ids[2]].changed_from_prefill) == (None, None)     # nothing shown = no pre-fill
+    assert (rows[ids[3]].prefill, rows[ids[3]].changed_from_prefill) == (None, None)     # made-up value: ignored
     assert client.get(f"/api/rating/calls/{ids[1]}").json()["my_label"] == {"score": 7, "note": None}
 
 
 @pytest.mark.parametrize("body", [{"score": 0}, {"score": 11}, {"score": "7"}, {"score": 7.5}, {},
-                                  {"score": 5, "note": "x" * 501}, {"score": 5, "extra": 1}])
+                                  {"score": 5, "note": "x" * 501}, {"score": 5, "extra": 1},
+                                  {"score": 5, "prefill_shown": 11}, {"score": 5, "prefill_shown": "4"}])
 def test_bad_labels_are_refused(env, body):
     client, _, ids = env
     login(client)

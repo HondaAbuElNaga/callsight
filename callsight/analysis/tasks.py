@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -183,16 +183,17 @@ def _redis():
 
 
 def _gpu_lock(ttl: int):
-    """GPU lock for one Ollama answer. Redis trouble = no lock = wait (never risk two models on 8 GB)."""
+    """GPU lock for one Ollama answer. Redis trouble = no lock = wait (never risk two models on 8 GB).
+    Transcription goes first: while an asr task is waiting for the GPU (`gpu_wanted`), the lock is not taken."""
     from contextlib import contextmanager
 
-    from ..locks import gpu_acquire, gpu_release
+    from ..locks import gpu_acquire, gpu_release, gpu_wanted
 
     @contextmanager
     def cm():
         try:
             r = _redis()
-            got = gpu_acquire(r, "nlp", ttl)
+            got = False if gpu_wanted(r) else gpu_acquire(r, "nlp", ttl)
         except Exception as exc:                 # noqa: BLE001
             log.warning("GPU lock not available: %s", type(exc).__name__)
             yield False
@@ -225,11 +226,25 @@ def _maint_busy() -> bool:
         return False
 
 
+def _park(call_id: int, model: str, pv: str, due_in_s: int) -> None:
+    """A parked (countdown) message is outside the Redis list: move `queued_at` to when it is due, so the reaper
+    doesn't count the row as lost while backup/retention runs (same as the asr task). Never fails the task."""
+    try:
+        with wiring.session_factory()() as s:
+            s.execute(update(CallAnalysis).where(CallAnalysis.call_id == call_id, CallAnalysis.model == model,
+                                                 CallAnalysis.prompt_version == pv, CallAnalysis.status == "queued")
+                      .values(queued_at=_utcnow() + timedelta(seconds=due_in_s)))
+            s.commit()
+    except Exception:                            # noqa: BLE001
+        log.warning("call %s: queued_at not moved while waiting for maintenance", call_id)
+
+
 @celery.task(name=queueing.TASK_NAME, soft_time_limit=15 * 60, time_limit=16 * 60, ignore_result=False)
 def analyze_call(call_id: int, model: str | None = None, prompt_version: str | None = None) -> dict:
     deps = deps_from_env()
     model, pv = model or deps.cfg.model, prompt_version or deps.prompt_version
     if _maint_busy():
+        _park(call_id, model, pv, MAINT_WAIT_S)
         send_analyze(call_id, model, pv, countdown=MAINT_WAIT_S)
         return {"call_id": call_id, "status": "queued", "maint_wait": True}
     with wiring.session_factory()() as s:

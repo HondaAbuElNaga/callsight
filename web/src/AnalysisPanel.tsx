@@ -92,7 +92,8 @@ export function AnalysisPanel({ callId, onSeek, onExpired }:
       {d.silence && (
         <p className="small">
           الصمت: <b className="num">{Math.round(d.silence.share * 100)}%</b> من المكالمة · أطول صمت{" "}
-          <b className="num">{Math.round(d.silence.longest)}</b> ث · صمت أطول من 10 ث:{" "}
+          <b className="num">{Math.round(d.silence.longest)}</b> ث · صمت أطول من{" "}
+          <span className="num">{d.silence.long_s ?? 10}</span> ث:{" "}
           <b className="num">{d.silence.long_count}</b>
           <span className="muted"> (موسيقى الانتظار لا تُحسب صمتاً)</span>
         </p>

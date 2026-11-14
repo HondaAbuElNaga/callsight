@@ -153,7 +153,9 @@ export interface CallAnalysis {
   estimate: Estimate | null;
   estimate_hidden: "blind" | "not_frozen" | null;
   flags: { kind: string; phrase: string; start: number; end: number }[];
-  silence: { share: number; seconds: number; longest: number; count: number; long_count: number } | null;
+  // long_s = the "long silence" threshold (seconds) these numbers were computed with (config/rules.yaml)
+  silence: { share: number; seconds: number; longest: number; count: number; long_count: number;
+             long_s: number | null } | null;
 }
 export interface RatingProgress {
   labels: number; labels_target: number; blind_frozen: boolean; blind_rated: number; blind_target: number; mine: boolean;
@@ -166,9 +168,10 @@ export interface RatingCall {
   talk_seconds: number;
   has_recording: boolean;
   blind: boolean;
-  analysis: AnalysisContent | null;
+  analysis: AnalysisContent | null;   // always null for blind-set calls (no LLM judgement before the rating)
   estimate: Estimate | null;     // always null for blind-set calls
   my_label: { score: number; note: string | null } | null;
+  locked: boolean;               // blind-set call already rated by me: the rating is final
 }
 
 
@@ -263,12 +266,13 @@ export const api = {
   analysis: (id: number) => get<CallAnalysis>(`/api/calls/${id}/analysis`),
   ratingQueue: () => get<RatingQueue>("/api/rating/queue"),
   ratingCall: (id: number) => get<RatingCall>(`/api/rating/calls/${id}`),
-  async saveRating(id: number, score: number, note: string): Promise<void> {
+  // prefillShown = the LLM estimate the page displayed when the rating was given (the server checks it)
+  async saveRating(id: number, score: number, note: string, prefillShown: number | null): Promise<void> {
     const r = await fetch(`/api/rating/calls/${id}`, {
       method: "PUT",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ score, note: note.trim() || null }),
+      body: JSON.stringify({ score, note: note.trim() || null, prefill_shown: prefillShown }),
     });
     if (r.status === 401) throw new Unauthorized();
     if (!r.ok) throw new Error(`HTTP ${r.status}`);

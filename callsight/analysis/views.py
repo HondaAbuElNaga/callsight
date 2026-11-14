@@ -1,10 +1,15 @@
 """API data for the call-detail analysis block and the rating page (staff only; agents see nothing, decision 9).
 
-The LLM estimate is shown only when `blindset.estimate_hidden` allows it. Summary / reason / action items are
-returned as plain strings; the web page renders them as text (React escapes), never as HTML.
+The LLM estimate is shown only when `blindset.estimate_hidden` allows it. For blind-set calls the WHOLE analysis
+block (summary, topic, action items, escalation) is hidden too - on the rating page always, in call detail until
+the viewing user has rated the call: the LLM's judgement must not anchor the human score (review 2026-11-14).
+A blind label is final: once given it can't be changed (the rater may have seen the estimate afterwards).
+Summary / reason / action items are returned as plain strings; the web page renders them as text (React escapes),
+never as HTML.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import case, exists, select
@@ -16,6 +21,17 @@ from . import blindset
 
 QUEUE_SIZE = 50
 ESTIMATE_LABEL = "تقدير أولي — غير معتمد — ليس لتقييم الموظفين"
+_LONG_S = re.compile(r"l([0-9]+(?:\.[0-9]+)?)$")     # SilenceRules.version ends with l<long_silence_s>
+
+
+class LabelLocked(Exception):
+    """A blind-set call already rated by this user: the label can't be changed any more (-> HTTP 409)."""
+
+
+def _long_s(metrics_version: str | None) -> float | None:
+    """The "long silence" threshold the stored metrics were computed with (rules.yaml may have changed since)."""
+    m = _LONG_S.search(metrics_version or "")
+    return float(m.group(1)) if m else None
 
 
 def shown_analysis(session: Session, call_id: int, model: str | None = None, pv: str | None = None
@@ -57,15 +73,23 @@ def call_analysis(session: Session, call_id: int, user_id: int, topics: dict[str
     m = session.get(CallAudioMetrics, call_id)
     return {
         "call_id": call_id,
-        "analysis": _content(a, topics),
+        # blind call not yet rated by this user: no LLM judgement at all (summary/escalation would anchor the score)
+        "analysis": None if hidden == "blind" else _content(a, topics),
         "estimate": _estimate(a, hidden),
         "estimate_hidden": hidden if a is not None and a.status == "done" else None,
         "flags": [{"kind": f.kind, "phrase": f.phrase, "start": f.start_seconds, "end": f.end_seconds}
                   for f in flags],
         "silence": None if m is None else {
             "share": m.silence_share, "seconds": m.silence_seconds, "longest": m.longest_silence_s,
-            "count": m.silences, "long_count": m.long_silences, "version": m.metrics_version},
+            "count": m.silences, "long_count": m.long_silences, "version": m.metrics_version,
+            "long_s": _long_s(m.metrics_version)},
     }
+
+
+def has_done_analysis(result: dict) -> bool:
+    """True when `call_analysis` returned LLM text (summary / reason): that read is audited by the API."""
+    a = result.get("analysis")
+    return bool(a and a.get("status") == "done") or result.get("estimate") is not None
 
 
 def _done_transcript():
@@ -92,11 +116,15 @@ def _label(session: Session, call_id: int, user_id: int) -> SatisfactionLabel | 
                                                            SatisfactionLabel.user_id == user_id)).first()
 
 
-def _prefill(session: Session, call_id: int, user_id: int, a: CallAnalysis | None) -> int | None:
-    """The LLM estimate offered as pre-fill on the rating page: never for blind calls / before the freeze."""
-    if a is None or a.status != "done":
+def _prefill(session: Session, call_id: int, user_id: int, shown: int | None) -> int | None:
+    """The pre-fill this rating was given with = what the page says it displayed (`shown`), accepted only when
+    it really is a stored LLM estimate of this call and estimates may be shown for it on the rating page.
+    (The current DB state is not used: the analysis may have finished, or been re-scored, after the page loaded.)"""
+    if shown is None or blindset.estimate_hidden(session, call_id, user_id, rating_page=True) is not None:
         return None
-    return a.llm_score if blindset.estimate_hidden(session, call_id, user_id, rating_page=True) is None else None
+    known = session.scalar(select(CallAnalysis.id).where(
+        CallAnalysis.call_id == call_id, CallAnalysis.status == "done", CallAnalysis.llm_score == shown).limit(1))
+    return shown if known is not None else None
 
 
 def rating_call(session: Session, call: Call, user_id: int, topics: dict[str, str],
@@ -104,22 +132,31 @@ def rating_call(session: Session, call: Call, user_id: int, topics: dict[str, st
     a = shown_analysis(session, call.id, model, pv)
     hidden = blindset.estimate_hidden(session, call.id, user_id, rating_page=True)
     lab = _label(session, call.id, user_id)
+    blind = blindset.is_blind(session, call.id)
     return {
         "call_id": call.id, "start_time": call.start_time.isoformat(), "talk_seconds": call.talk_seconds,
-        "has_recording": call.recording_status == "ok", "blind": blindset.is_blind(session, call.id),
-        "analysis": _content(a, topics),
+        "has_recording": call.recording_status == "ok", "blind": blind,
+        "analysis": None if blind else _content(a, topics),   # blind: no summary / escalation either
         "estimate": _estimate(a, hidden),            # omitted (None) for every blind call, always (requirement 5)
         "my_label": None if lab is None else {"score": lab.score, "note": lab.note},
+        "locked": blind and lab is not None,         # a blind label is final
     }
 
 
 def save_label(session: Session, call: Call, user_id: int, score: int, note: str | None,
-               model: str | None = None, pv: str | None = None) -> dict:
-    """Upsert this user's rating of the call. `prefill` = what the page showed (server side, not trusted input)."""
-    a = shown_analysis(session, call.id, model, pv)
-    prefill = _prefill(session, call.id, user_id, a)
+               prefill_shown: int | None = None) -> dict:
+    """Upsert this user's rating of the call.
+    - Blind-set call already rated by this user -> LabelLocked (after rating, call detail shows the estimate: a
+      later change would be a "blind" label given with the estimate in view).
+    - `prefill` = the estimate the page displayed, checked against the stored estimates; on an update the FIRST
+      pre-fill is kept (what the rater saw when deciding), and `changed_from_prefill` compares with it."""
+    blind = blindset.is_blind(session, call.id)
+    old = _label(session, call.id, user_id)
+    if old is not None and (blind or old.blind):
+        raise LabelLocked()
+    prefill = old.prefill if old is not None else _prefill(session, call.id, user_id, prefill_shown)
     note = (note or "").strip() or None
-    values = dict(score=score, note=note, blind=blindset.is_blind(session, call.id), prefill=prefill,
+    values = dict(score=score, note=note, blind=blind, prefill=prefill,
                   changed_from_prefill=None if prefill is None else score != prefill,
                   updated_at=datetime.now(timezone.utc))
     session.execute(insert(SatisfactionLabel).values(call_id=call.id, user_id=user_id, **values)

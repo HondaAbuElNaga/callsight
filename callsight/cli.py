@@ -245,6 +245,8 @@ def _analyze(a: argparse.Namespace, p: argparse.ArgumentParser) -> int:
             counts = nlpq.status_counts(s, cfg.model, pv)
             auto = "on" if cfg.enabled else "OFF (set NLP_ENABLED=true)"
             print(f"model: {cfg.model}   prompt: {pv}   automatic: {auto}")
+            digest = llm.Ollama(cfg).model_digest()     # a tag can be re-pointed: compare this with the report
+            print(f"model digest: {digest[:12] if digest else 'unknown (Ollama not reachable from here, or model not pulled)'}")
             print(f"nlp queue length: {jobs.asr_queue_length(jobs.NLP_QUEUE)}")
             print("analyses: " + (", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "none yet"))
             return 0

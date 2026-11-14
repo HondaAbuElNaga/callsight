@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import Annotated, Callable
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
 
 from .settings import LlmConfig
 
@@ -29,6 +29,9 @@ TRIM_MARK = "[… حُذف جزء من وسط المكالمة لطولها …]
 HEAD_SHARE = 0.6
 _DELIMS = re.compile(r"<{2,}|>{2,}|TRANSCRIPT", re.IGNORECASE)
 _SENTENCE_END = re.compile(r"[.!?؟۔]+(?=\s|$)")
+# 7+ digits (ASCII, Arabic-Indic, Persian), single spaces/dashes between them allowed: phone, ID, card, IBAN
+_LONG_NUMBER = re.compile(r"(?:[0-9\u0660-\u0669\u06F0-\u06F9][ \-]?){7,}")
+RETRY_NOTE = "إجابتك السابقة خالفت المخطط المطلوب في: {fields}. أعد الإجابة بكائن JSON صحيح فقط يلتزم بكل الشروط."
 
 SYSTEM_PROMPT = """أنت محلل جودة لمكالمات خدمة العملاء في شركة سعودية.
 ستصلك تفريغات آلية لمكالمات هاتفية باللهجة السعودية، وقد تحتوي أخطاء في التفريغ، ولا تميز بين صوت الموظف وصوت العميل.
@@ -45,7 +48,12 @@ SYSTEM_PROMPT = """أنت محلل جودة لمكالمات خدمة العمل
 
 
 class LlmError(Exception):
-    """The model's answer can't be used (bad JSON, schema, context full). Message names no content."""
+    """The model's answer can't be used (bad JSON, schema, context full). Message names no content.
+    `fields` = our own field names that failed (never model-written text): used for the retry note."""
+
+    def __init__(self, message: str, fields: tuple[str, ...] = ()):
+        super().__init__(message)
+        self.fields = fields
 
 
 class LlmUnavailable(Exception):
@@ -75,13 +83,18 @@ def json_schema(topics: dict[str, str]) -> dict:
     }
 
 
+def _text(max_length: int):
+    """Stripped first, so a whitespace-only answer fails the minimum length."""
+    return StringConstraints(strip_whitespace=True, min_length=1, max_length=max_length)
+
+
 class Output(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    summary: str = Field(min_length=1, max_length=600)
+    summary: Annotated[str, _text(600)]
     topic: str
-    action_items: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(max_length=5)
+    action_items: list[Annotated[str, _text(200)]] = Field(max_length=5)
     satisfaction: int = Field(ge=1, le=10)
-    reason: str = Field(min_length=1, max_length=200)
+    reason: Annotated[str, _text(200)]
     escalation: bool
 
     @field_validator("summary")
@@ -91,22 +104,39 @@ class Output(BaseModel):
             raise ValueError("more than 3 sentences")
         return v.strip()
 
+    @field_validator("summary", "reason")
+    @classmethod
+    def _no_long_number(cls, v: str) -> str:
+        if _LONG_NUMBER.search(v):               # the prompt forbids copying ID/phone/card numbers: enforce it
+            raise ValueError("long number")
+        return v
+
+    @field_validator("action_items")
+    @classmethod
+    def _no_long_number_in_items(cls, v: list[str]) -> list[str]:
+        if any(_LONG_NUMBER.search(x) for x in v):
+            raise ValueError("long number")
+        return v
+
 
 def validate(content: str, topics: dict[str, str]) -> Output:
     """Model answer -> Output, or LlmError naming only the failing fields."""
     try:
         data = json.loads(content)
     except (json.JSONDecodeError, TypeError):
-        raise LlmError("answer is not valid JSON") from None
+        raise LlmError("answer is not valid JSON", ("json",)) from None
     if not isinstance(data, dict):
-        raise LlmError("answer is not a JSON object")
+        raise LlmError("answer is not a JSON object", ("json",))
     try:
         out = Output.model_validate(data)
     except ValidationError as exc:
-        fields = sorted({".".join(str(p) for p in e["loc"][:1]) or "?" for e in exc.errors()})
-        raise LlmError(f"answer breaks the schema ({', '.join(fields)[:120]})") from None
+        # An unknown key's name is written by the MODEL (it may quote the call): only our own field names are
+        # reported; anything else becomes the fixed word `extra_field`.
+        fields = tuple(sorted({str(e["loc"][0]) if e["loc"] and str(e["loc"][0]) in Output.model_fields
+                               else "extra_field" for e in exc.errors()}))
+        raise LlmError(f"answer breaks the schema ({', '.join(fields)})", fields) from None
     if out.topic not in topics:
-        raise LlmError("answer breaks the schema (topic)")
+        raise LlmError("answer breaks the schema (topic)", ("topic",))
     return out
 
 
@@ -187,9 +217,9 @@ class Ollama:
         except ValueError:
             raise LlmUnavailable("ollama answer is not JSON") from None
 
-    def chat(self, msgs: list[dict], schema: dict) -> Answer:
+    def chat(self, msgs: list[dict], schema: dict, seed: int = 1) -> Answer:
         body = {"model": self.cfg.model, "messages": msgs, "stream": False, "format": schema, "keep_alive": 0,
-                "options": {"num_ctx": self.cfg.num_ctx, "temperature": 0, "seed": 1}}
+                "options": {"num_ctx": self.cfg.num_ctx, "temperature": 0, "seed": seed}}
         if self.cfg.think is not None:
             body["think"] = self.cfg.think
         t0 = time.perf_counter()
@@ -199,6 +229,19 @@ class Ollama:
             raise LlmError("ollama answer has no message")
         return Answer(content=msg.get("content") or "", prompt_tokens=int(data.get("prompt_eval_count") or 0),
                       output_tokens=int(data.get("eval_count") or 0), seconds=round(time.perf_counter() - t0, 2))
+
+    def model_digest(self) -> str | None:
+        """Digest of the configured model tag (GET /api/tags): a tag can be re-pointed, the digest can't.
+        None when Ollama is unreachable or the model isn't pulled."""
+        import httpx
+        try:
+            r = httpx.get(self.cfg.ollama_url + "/api/tags", timeout=5)
+            for m in r.json().get("models", []):
+                if self.cfg.model in (m.get("name"), m.get("model")):
+                    return str(m.get("digest") or "") or None
+        except Exception:                        # noqa: BLE001
+            return None
+        return None
 
     def loaded_models(self) -> list[str]:
         """Models Ollama holds in memory now (GET /api/ps); [] when unreachable."""
@@ -220,15 +263,21 @@ class Analysis:
 
 
 def analyze(segments, topics: dict[str, str], client: Ollama, cfg: LlmConfig) -> Analysis:
-    """Up to MAX_TRIES answers. A prompt that filled the context is retried with half the transcript budget."""
+    """Up to MAX_TRIES answers. A prompt that filled the context is retried with half the transcript budget.
+    The retry after an invalid answer is a DIFFERENT request (temperature 0 + the same seed would repeat the same
+    answer): new seed, plus a note naming the fields that failed (our field names only, never model text)."""
     lines = transcript_lines(segments)
     if not lines:
         raise LlmError("no kept transcript text")
     schema, budget, last = json_schema(topics), cfg.max_chars, None
     total_s = 0.0
+    note: str | None = None
     for attempt in range(1, MAX_TRIES + 1):
         text, trimmed = fit(lines, budget)
-        ans = client.chat(messages(text, topics), schema)
+        msgs = messages(text, topics)
+        if note:
+            msgs.append({"role": "user", "content": note})
+        ans = client.chat(msgs, schema, seed=attempt)
         total_s += ans.seconds
         if ans.prompt_tokens and ans.prompt_tokens > cfg.num_ctx - OUTPUT_RESERVE:
             last = LlmError(f"prompt filled the context ({ans.prompt_tokens} tokens)")
@@ -238,6 +287,7 @@ def analyze(segments, topics: dict[str, str], client: Ollama, cfg: LlmConfig) ->
             out = validate(ans.content, topics)
         except LlmError as exc:
             last = exc
+            note = RETRY_NOTE.format(fields=", ".join(exc.fields) or "json")
             continue
         return Analysis(output=out, trimmed=trimmed, prompt_tokens=ans.prompt_tokens, seconds=round(total_s, 2),
                         tries=attempt)

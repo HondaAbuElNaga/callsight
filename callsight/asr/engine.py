@@ -163,9 +163,13 @@ class ModelHolder:
 
     def __init__(self, name: str, idle_unload_s: float = 300, factory: Callable | None = None,
                  clock: Callable[[], float] = time.monotonic, start_timer: bool = True, load_retry_s: float = 120,
-                 on_unload: Callable[[], None] | None = None):
+                 on_unload: Callable[[], None] | None = None,
+                 before_use: Callable[[], bool] | None = None):
         self.name, self.idle_unload_s, self.clock, self.load_retry_s = name, idle_unload_s, clock, load_retry_s
         self.on_unload = on_unload               # e.g. release the GPU lock (call-analysis spec, decision 6)
+        # e.g. take/refresh the GPU lock. Called INSIDE self.lock right before the model is loaded or used, so the
+        # idle-unload thread (which releases that lock, also inside self.lock) can't slip in between.
+        self.before_use = before_use
         self.failed_at: float | None = None
         self.factory = factory or self._from_registry
         self.adapter = None
@@ -208,14 +212,20 @@ class ModelHolder:
             self.adapter = adapter
         return self.adapter
 
+    def _claim(self) -> None:
+        if self.before_use is not None and not self.before_use():
+            raise ModelNotReady("the GPU is in use by another job")     # not a load failure: no retry pause
+
     def ensure_loaded(self) -> None:
         with self.lock:
+            self._claim()
             self.get()
             self.last_used = self.clock()
 
     @contextmanager
     def use(self):
         with self.lock:
+            self._claim()
             self.busy = True
             try:
                 yield self.get()

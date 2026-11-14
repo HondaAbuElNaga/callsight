@@ -46,7 +46,7 @@ def sample(calls: list[tuple[int, str]], n: int, salt: str = DEFAULT_SALT) -> li
         by_agent[ext].append(cid)
     total = len(calls)
     n = min(n, total)
-    if not n:
+    if n < 1:
         return []
     exact = {ext: n * len(ids) / total for ext, ids in by_agent.items()}
     quota = {ext: math.floor(x) for ext, x in exact.items()}
@@ -68,6 +68,8 @@ def size(session: Session) -> int:
 
 def freeze(session: Session, n: int = DEFAULT_N, salt: str = DEFAULT_SALT, min_pool: int = DEFAULT_N) -> int:
     """Create the blind set once. Raises ValueError when it exists already or the pool is too small."""
+    if n < 1:
+        raise ValueError("the blind set needs at least 1 call (n >= 1)")   # a negative n would freeze nearly all
     if is_frozen(session):
         raise ValueError("the blind set is already frozen (it never changes)")
     calls = pool(session)

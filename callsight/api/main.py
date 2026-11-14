@@ -68,6 +68,7 @@ class LabelIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     score: StrictInt = Field(ge=1, le=10)
     note: str | None = Field(default=None, max_length=500)
+    prefill_shown: StrictInt | None = Field(default=None, ge=1, le=10)   # estimate the page displayed (checked)
 
 
 def audit_play(s: Session, user: AppUser, call_id: int) -> None:
@@ -82,9 +83,10 @@ def audit_play(s: Session, user: AppUser, call_id: int) -> None:
 
 
 def audit_transcript(s: Session, user: AppUser, call_id: int, kind: str) -> None:
-    """Transcripts are personal data: views (deduplicated within AUDIT_WINDOW, like plays) and every export."""
+    """Transcripts are personal data: views (deduplicated within AUDIT_WINDOW, like plays) and every export.
+    kind "analysis" = the LLM summary/reason of the call was read (derived personal data; deduplicated too)."""
     now = datetime.now(timezone.utc)
-    if kind == "view" and s.scalar(select(TranscriptAccess.id).where(
+    if kind in ("view", "analysis") and s.scalar(select(TranscriptAccess.id).where(
             TranscriptAccess.user_id == user.id, TranscriptAccess.call_id == call_id, TranscriptAccess.kind == kind,
             TranscriptAccess.accessed_at > now - AUDIT_WINDOW).limit(1)) is not None:
         return
@@ -406,7 +408,10 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         from ..analysis import views
         staff_call(s, call_id)
         topics, pv = analysis_setup()
-        return views.call_analysis(s, call_id, user.id, topics, cfg.llm_model, pv)
+        result = views.call_analysis(s, call_id, user.id, topics, cfg.llm_model, pv)
+        if views.has_done_analysis(result):      # summary/reason = derived personal data: audited like a view
+            audit_transcript(s, user, call_id, "analysis")
+        return result
 
     @app.get("/api/rating/queue")
     def rating_queue(user: Manager, s: DB) -> dict:
@@ -417,7 +422,10 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
     def rating_call(call_id: int, user: Manager, s: DB) -> dict:
         from ..analysis import views
         topics, pv = analysis_setup()
-        return views.rating_call(s, staff_call(s, call_id), user.id, topics, cfg.llm_model, pv)
+        result = views.rating_call(s, staff_call(s, call_id), user.id, topics, cfg.llm_model, pv)
+        if views.has_done_analysis(result):
+            audit_transcript(s, user, call_id, "analysis")
+        return result
 
     @app.put("/api/rating/calls/{call_id}")
     def save_rating(call_id: int, body: LabelIn, user: Manager, s: DB) -> dict:
@@ -426,8 +434,10 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         if not s.scalar(select(Transcript.id).where(Transcript.call_id == c.id, Transcript.status == "done")
                         .limit(1)):
             raise HTTPException(409, "call has no transcript to rate")
-        _, pv = analysis_setup()
-        return views.save_label(s, c, user.id, body.score, body.note, cfg.llm_model, pv)
+        try:
+            return views.save_label(s, c, user.id, body.score, body.note, body.prefill_shown)
+        except views.LabelLocked:
+            raise HTTPException(409, "blind-set rating is final") from None
 
     # ---------- health (admin only; no paths, hostnames or error texts in the answer) ----------
 

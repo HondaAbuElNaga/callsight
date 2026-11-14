@@ -707,6 +707,7 @@ def test_cli_analyze_flags_blindset(Session, engine, monkeypatch, capsys):
     monkeypatch.setattr(jobs, "asr_queue_length", lambda q="asr": 0)
     monkeypatch.setenv("LLM_MODEL", "qwen2.5:7b")
     monkeypatch.delenv("OLLAMA_URL", raising=False)
+    monkeypatch.setattr(llm.Ollama, "model_digest", lambda self: "845dbda0ea48" + "0" * 52)   # no HTTP in tests
     with Session() as s:
         c = make_call(s, start=datetime.now(RIYADH) - timedelta(hours=1))
         c2 = make_call(s, start=datetime.now(RIYADH) - timedelta(hours=2))
@@ -715,13 +716,15 @@ def test_cli_analyze_flags_blindset(Session, engine, monkeypatch, capsys):
     assert cli.main(["analyze", "--days", "2", "--limit", "5"]) == 0 and sent[-1][0] == c2.id
     assert cli.main(["analyze", "--days", "2", "--limit", "5", "--rescore"]) == 0 and len(sent) == 2
     assert cli.main(["analyze", "status"]) == 0
-    assert "queued 2" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "queued 2" in out and "model digest: 845dbda0ea48\n" in out
     with pytest.raises(SystemExit):
         cli.main(["analyze", "--days", "2"])
     assert cli.main(["analyze", "--call", "999999"]) == 1
     assert cli.main(["flags", "--recompute"]) == 0
     assert "flags recomputed for 2 call(s)" in capsys.readouterr().out
     assert cli.main(["blindset", "create", "--n", "5"]) == 1          # pool of 2 is too small
+    assert cli.main(["blindset", "create", "--n", "-1", "--min-pool", "1"]) == 1   # would freeze nearly everything
     assert cli.main(["blindset", "create", "--n", "2", "--min-pool", "2"]) == 0
     assert cli.main(["blindset", "status"]) == 0
     assert "frozen, 2 calls" in capsys.readouterr().out

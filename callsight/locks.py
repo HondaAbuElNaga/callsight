@@ -32,7 +32,11 @@ def maint_busy(redis) -> bool:
 # One 8 GB GPU for the asr worker (holds it while its model is loaded) and the nlp task (holds it for one Ollama
 # answer, keep_alive=0). They never hold the GPU together. The value is the owner ("asr" / "nlp"); the same owner
 # may take it again (refreshes the expiry). Expires on its own if a holder dies.
+# Priority: transcription first. An asr task that finds the GPU taken by the nlp task sets GPU_WANTED (short TTL)
+# and parks; while that key exists the nlp task does not take the lock again (it requeues itself), so a long nlp
+# backlog can't starve transcription (review 2026-11-14).
 GPU_LOCK = "callsight:lock:gpu"
+GPU_WANTED = "callsight:lock:gpu:wanted"
 
 
 def _owner_of(value) -> str | None:
@@ -57,3 +61,16 @@ def gpu_release(redis, owner: str) -> bool:
 
 def gpu_holder(redis) -> str | None:
     return _owner_of(redis.get(GPU_LOCK))
+
+
+def gpu_want(redis, ttl: int) -> None:
+    """The asr worker is waiting for the GPU (expires on its own)."""
+    redis.set(GPU_WANTED, "asr", ex=ttl)
+
+
+def gpu_unwant(redis) -> None:
+    redis.delete(GPU_WANTED)
+
+
+def gpu_wanted(redis) -> bool:
+    return bool(redis.exists(GPU_WANTED))
