@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import RIYADH
-from ..db.models import AppUser, Call, RecordingPlay
+from ..db.models import AppUser, Call, GoldClip, RecordingPlay
 from . import auth
 from .calls import DIRECTIONS, STATUSES, CallFilter, call_detail, list_calls, summary, team_agents
 
@@ -36,6 +36,21 @@ class ApiConfig:
 class LoginIn(BaseModel):
     username: str = Field(min_length=1, max_length=50)
     password: str = Field(min_length=1, max_length=200)
+
+
+class GoldTextIn(BaseModel):
+    text: str = Field(max_length=10_000)
+
+
+def audit_play(s: Session, user: AppUser, call_id: int) -> None:
+    """Audit every recording access, whatever the Range header; seeks within AUDIT_WINDOW count as the same play."""
+    now = datetime.now(timezone.utc)
+    recent = s.scalar(select(RecordingPlay.id).where(
+        RecordingPlay.user_id == user.id, RecordingPlay.call_id == call_id,
+        RecordingPlay.played_at > now - AUDIT_WINDOW).limit(1))
+    if recent is None:
+        s.add(RecordingPlay(user_id=user.id, call_id=call_id, played_at=now))
+        s.commit()
 
 
 def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAPI:
@@ -146,14 +161,59 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         path = (root / c.recording_path).resolve()
         if not path.is_relative_to(root) or not path.is_file():
             raise HTTPException(404, "no recording")
-        # Audit every access, whatever the Range header; seeks within AUDIT_WINDOW count as the same play.
-        now = datetime.now(timezone.utc)
-        recent = s.scalar(select(RecordingPlay.id).where(
-            RecordingPlay.user_id == user.id, RecordingPlay.call_id == c.id,
-            RecordingPlay.played_at > now - AUDIT_WINDOW).limit(1))
-        if recent is None:
-            s.add(RecordingPlay(user_id=user.id, call_id=c.id, played_at=now))
-            s.commit()
+        audit_play(s, user, c.id)
+        return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, no-store"})
+
+    # ---------- gold set (admin only): reference texts for the ASR benchmark ----------
+
+    def admin(user: User) -> AppUser:
+        if user.role != "admin":
+            raise HTTPException(403, "admin only")
+        return user
+
+    Admin = Annotated[AppUser, Depends(admin)]
+
+    def clip_dict(c: GoldClip, call: Call | None, with_text: bool) -> dict:
+        d = {"id": c.id, "call_id": c.call_id, "seconds": c.seconds, "has_text": bool(c.reference_text),
+             "typed_at": c.typed_at.isoformat() if c.typed_at else None,
+             "agent_ext": call.agent_ext if call else None, "direction": call.direction if call else None}
+        if with_text:
+            d["reference_text"] = c.reference_text or ""
+        return d
+
+    @app.get("/api/goldset")
+    def goldset(user: Admin, s: DB) -> list[dict]:
+        rows = s.execute(select(GoldClip, Call).join(Call, Call.id == GoldClip.call_id).order_by(GoldClip.id)).all()
+        return [clip_dict(c, call, False) for c, call in rows]
+
+    @app.get("/api/goldset/{clip_id}")
+    def gold_clip(clip_id: int, user: Admin, s: DB) -> dict:
+        c = s.get(GoldClip, clip_id)
+        if c is None:
+            raise HTTPException(404, "no such clip")
+        return clip_dict(c, s.get(Call, c.call_id), True)
+
+    @app.put("/api/goldset/{clip_id}")
+    def save_gold_clip(clip_id: int, body: GoldTextIn, user: Admin, s: DB) -> dict:
+        c = s.get(GoldClip, clip_id)
+        if c is None:
+            raise HTTPException(404, "no such clip")
+        text = body.text.strip()
+        c.reference_text = text or None
+        c.typed_by, c.typed_at = (user.id, datetime.now(timezone.utc)) if text else (None, None)
+        s.commit()
+        return clip_dict(c, s.get(Call, c.call_id), True)
+
+    @app.get("/api/goldset/{clip_id}/audio")
+    def gold_audio(clip_id: int, user: Admin, s: DB) -> Response:
+        c = s.get(GoldClip, clip_id)
+        if c is None:
+            raise HTTPException(404, "no such clip")
+        root = cfg.audio_dir.resolve()
+        path = (root / c.file).resolve()
+        if not path.is_relative_to(root) or not path.is_file():
+            raise HTTPException(404, "no audio")
+        audit_play(s, user, c.call_id)
         return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, no-store"})
 
     @app.get("/api/{rest:path}")

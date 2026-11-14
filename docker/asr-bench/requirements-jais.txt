@@ -1,0 +1,8 @@
+# Jais-ASR image (after requirements-jais-torch.txt). Its remote code needs transformers 5 (model card: 5.16.1);
+# 4-bit weights load via compressed-tensors. Exact versions (security review 2026-11-14); PyPI only.
+transformers==5.16.1
+accelerate==1.15.0
+compressed-tensors==0.20.1
+soundfile==0.14.0
+soxr==1.1.0
+numpy==2.3.2

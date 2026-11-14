@@ -6,7 +6,7 @@
 web call list ([spec](../specs/2026-11-13-web-call-list/spec.md)), Arabic page on http://127.0.0.1:8080 (this PC only; accounts admin + supervisor 114).
 **Phase 1 "Done when" still open:** 7 consecutive days of nightly reconcile = OK. Needs the PC on the office LAN as 192.168.50.189
 (on 2026-11-13/14 it was on another network, 192.168.100.x, so ingest paused; it catches up automatically).
-**Next:** Phase 2 (transcription): first item = gold set of 30 hand-corrected calls; ASR benchmark needs a GPU (server not bought yet).
+**Next:** Phase 2 started: gold set + ASR benchmark spec approved 2026-11-14, testing on this PC (RTX 5050, 8 GB).
 **Phase 0 leftovers (parallel):** live-events test, silent listen (paused), server purchase, legal recording announcement.
 
 ## Phase 0: PBX discovery & server (week 1)
@@ -46,8 +46,8 @@ and each call has ring/talk/hold time + status (answered / no-answer / abandoned
 **Done when:** chosen model WER ≤ 25% on 30 hand-corrected own calls; every new answered
 call has a transcript within 15 min of hang-up.
 
-- [ ] Collect & hand-correct 30 representative calls (gold set) (idea: user)
-- [ ] Benchmark Jais-ASR / Audar-ASR / Whisper-large-v3 on gold set, pick the winner (source: [echonova-ai-solutions/arabic-asr-benchmark](https://github.com/echonova-ai-solutions/arabic-asr-benchmark))
+- [~] Collect & hand-correct 30 representative calls (gold set: 30 × 60 s clips cut ✅; ⚠ typing by user open) ([spec](../specs/2026-11-14-asr-benchmark/spec.md)) (idea: user)
+- [~] Benchmark Jais-ASR / Audar-ASR / Whisper-large-v3 on gold set, pick the winner (runner + scoring built, all 3 models run on 30 clips; winner after typing) (source: [echonova-ai-solutions/arabic-asr-benchmark](https://github.com/echonova-ai-solutions/arabic-asr-benchmark))
 - [ ] Local OpenAI-compatible STT server, model chosen by config (source: [speaches-ai/speaches](https://github.com/speaches-ai/speaches))
 - [ ] `asr` worker queue: split stereo channels → transcribe → store segments with speaker + timestamps (idea: user)
 - [ ] Transcript view next to the audio player; export transcript as .txt (idea: user)
