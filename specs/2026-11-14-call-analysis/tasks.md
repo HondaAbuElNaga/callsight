@@ -64,8 +64,11 @@
          ⚠ If retention is ever switched on: ratings are deleted together with the call content, so finish the
          rating AND the training inside the retention window (else the test set drops below 100). Orchestrator/user: backup → `alembic upgrade head`
          on the live DB → rebuild → `--profile llm up -d ollama nlp-worker` → `NLP_ENABLED=true`.
-- [ ] 11. Verify (pytest done: see below); review with 3 subagents; fix; spec → done/[~]; merge (--no-ff) — left to the
-         orchestrator.
+- [x] 11. Verify (pytest done: see below); review with 3 subagents; fix; spec → done/[~]; merge (--no-ff).
+         → After the fixes: 566 passed, 9 skipped; web build OK. Backup `callsight-before-0008-20261114-1947.dump`,
+           merged (935f5c7), live DB at 0008. Live run through the nlp worker (qwen2.5:7b): 5 real calls → 4 done
+           (26–82 s each), 1 skipped by the quality gate (67% dropped windows); Ollama + nlp worker stopped after.
+           Not checked: the pages in a browser (⚠ NEEDS USER), the Docker self-test of train.py after the fixes.
          → 3 reviewers (bugs, security, accuracy): 0 critical, 0 high, 8 medium, ~19 low; all confirmed. Fixed:
            **medium** — schema errors never echo a model-written key (`extra_field`); a blind label is final (409 on a
            second PUT); the retry is a different request (new seed + field-name note); GPU priority for transcription

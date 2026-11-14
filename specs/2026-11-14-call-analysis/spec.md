@@ -3,7 +3,7 @@
 **Roadmap items:** Phase 3: "Labelling tool", "LLM call summary", "Bad words / escalation flags", "Silence,
 interruption & talk-ratio metrics", "`nlp` worker", and the training code for "Fine-tune MARBERT / CAMeLBERT-DA"
 (the training *run* and "Label ≥ 500 calls" need the user's labels).
-**Status:** approved (by 2 judge agents on the user's behalf, 2026-11-14 — user may revise)
+**Status:** built, merged, live at 0008 (approved by 2 judge agents on the user's behalf, 2026-11-14 — user may revise). Open: task 10 (⚠ NEEDS USER: ratings, word lists, legal OK, training)
 
 ## Goal
 Every transcribed call gets a short Arabic summary, a topic, action items, warning flags and a **first
