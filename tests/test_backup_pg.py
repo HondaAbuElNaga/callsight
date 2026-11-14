@@ -1,5 +1,6 @@
 """Real pg_dump / pg_restore round trip against the test DB (runs only where postgresql-client-16 is installed,
 i.e. inside the app image). Restores into the scratch DB callsight_restore_check and checks it is dropped after."""
+import json
 import shutil
 from datetime import datetime, timezone
 
@@ -49,7 +50,7 @@ def test_backup_and_restore_drill(env):
         assert run.counts["call"] == 25
         res = backup.verify(s, cfg)
     assert res.ok, res.mismatches
-    assert res.tables == len(run.counts)
+    assert res.tables == len(run.counts) and res.dump_file == run.dump_file
     assert not _scratch_exists(eng)                       # personal data copy removed after the drill
     with Session() as s:
         assert s.get(BackupRun, run.id).verify_ok is True
@@ -59,8 +60,11 @@ def test_restore_drill_detects_wrong_counts(env):
     Session, cfg, eng = env
     with Session() as s:
         run = backup.run_backup(s, cfg)
-        run.counts = {**run.counts, "call": 999}
-        s.commit()
+        side = cfg.db_dir / (run.dump_file + ".json")
+        meta = json.loads(side.read_text(encoding="utf-8"))
+        meta["counts"]["call"] = 999
+        side.write_text(json.dumps(meta), encoding="utf-8")
         res = backup.verify(s, cfg)
+        assert s.get(BackupRun, run.id).verify_ok is False
     assert not res.ok and res.mismatches["call"] == (999, 25)
     assert not _scratch_exists(eng)

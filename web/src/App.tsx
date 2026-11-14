@@ -4,14 +4,25 @@ import { Login } from "./Login";
 import { CallsPage } from "./CallsPage";
 import { GoldsetPage } from "./GoldsetPage";
 import { KpiPage } from "./KpiPage";
+import { HealthPage } from "./HealthPage";
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = still checking
-  const [view, setView] = useState<"calls" | "goldset" | "kpi">("calls");
+  const [view, setView] = useState<"calls" | "goldset" | "kpi" | "health">("calls");
+  const [problems, setProblems] = useState(0);
+  const isAdmin = me?.role === "admin";
 
   useEffect(() => {
     api.me().then(setMe).catch(() => setMe(null));
   }, []);
+
+  useEffect(() => {   // admins only: red banner on every page when a health check fails
+    if (!isAdmin) { setProblems(0); return; }
+    const check = () => api.health().then((h) => setProblems(h.problems.length)).catch(() => undefined);
+    check();
+    const t = setInterval(check, 120_000);
+    return () => clearInterval(t);
+  }, [isAdmin]);
 
   if (me === undefined) return <div className="center muted">…</div>;
   if (me === null) return <Login onLogin={() => api.me().then(setMe).catch(() => setMe(null))} />;
@@ -20,17 +31,28 @@ export function App() {
     setMe(null);
     setView("calls");
   };
-  if (view === "goldset" && me.role === "admin")
-    return <GoldsetPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
-  if (view === "kpi")
-    return <KpiPage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
-  return (
-    <CallsPage
-      me={me}
-      onLogout={logout}
-      onExpired={() => setMe(null)}
-      onGoldset={me.role === "admin" ? () => setView("goldset") : undefined}
-      onKpi={() => setView("kpi")}
-    />
-  );
+  const banner = isAdmin && problems > 0 && view !== "health" ? (
+    <button className="health-banner" onClick={() => setView("health")}>
+      تنبيه: يوجد {problems} خلل في النظام (قرص، عامل، نسخ احتياطي…) — افتح صفحة حالة النظام
+    </button>
+  ) : null;
+  let page;
+  if (view === "health" && isAdmin)
+    page = <HealthPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
+  else if (view === "goldset" && isAdmin)
+    page = <GoldsetPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
+  else if (view === "kpi")
+    page = <KpiPage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
+  else
+    page = (
+      <CallsPage
+        me={me}
+        onLogout={logout}
+        onExpired={() => setMe(null)}
+        onGoldset={isAdmin ? () => setView("goldset") : undefined}
+        onKpi={() => setView("kpi")}
+        onHealth={isAdmin ? () => setView("health") : undefined}
+      />
+    );
+  return <>{banner}{page}</>;
 }

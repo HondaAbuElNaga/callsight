@@ -6,8 +6,12 @@ with status ok + archived reports are copied into BACKUP_DIR/files when new or c
 written as `.tmp` and renamed, with a sha256 manifest. The backup never deletes a file on its own. 3) Rotation keeps
 14 daily + 8 weekly dumps and deletes only dumps with our own name pattern.
 
+Each dump gets a sidecar `<dump>.json` (row counts, alembic version): the restore drill needs no live database row,
+so it also works when the live DB is gone or still on an older schema (the "backup before every migration" step).
+The backup_run table is written only when it exists (`record`).
+
 verify (the restore drill): restores the newest dump into the hard-coded scratch DB `callsight_restore_check`
-(dropped before and after: it holds personal data), compares row counts + alembic version with the backup_run row.
+(dropped before and after: it holds personal data), compares row counts + alembic version with the sidecar.
 
 Not encrypted, and by default on the same disk as the audio: protects against mistakes, not against disk loss.
 `.env` (secrets) is not in the backup: keep a copy of it somewhere safe (docs/scale-out.md).
@@ -15,6 +19,7 @@ Not encrypted, and by default on the same disk as the audio: protects against mi
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -25,7 +30,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
@@ -181,6 +186,9 @@ def rotate(db_dir: Path) -> list[str]:
     victims = rotation_victims(p.name for p in db_dir.iterdir() if p.is_file())
     for name in victims:
         (db_dir / name).unlink()
+        sidecar = db_dir / (name + ".json")
+        if sidecar.is_file():
+            sidecar.unlink()
     return victims
 
 
@@ -306,13 +314,29 @@ def _pg_dump(cfg: BackupConfig, snapshot_id: str, out: Path, runner: Runner) -> 
         raise BackupError(f"pg_dump failed (exit {r.returncode})")
 
 
+def has_backup_table(session: Session) -> bool:
+    return inspect(session.get_bind()).has_table("backup_run")
+
+
+def write_sidecar(dump: Path, counts: dict, alembic_version: str | None, started_at: datetime) -> None:
+    side = dump.with_name(dump.name + ".json")
+    tmp = side.with_name(side.name + ".tmp")
+    tmp.write_text(json.dumps({"counts": counts, "alembic_version": alembic_version,
+                               "started_at": started_at.isoformat()}, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, side)
+
+
 def run_backup(session: Session, cfg: BackupConfig, runner: Runner = subprocess.run,
                snapshot: Callable[[str], Snapshot] = Snapshot, now: Callable[[], datetime] = _now,
-               free_bytes: Callable[[Path], int] = lambda p: shutil.disk_usage(p).free) -> BackupRun:
-    """DB dump first, then files, then rotation. Always leaves a backup_run row (ok / error)."""
+               free_bytes: Callable[[Path], int] = lambda p: shutil.disk_usage(p).free,
+               record: bool | None = None) -> BackupRun:
+    """DB dump first, then files, then rotation. With `record` (default: when the table exists) a backup_run row
+    says ok / error; without it nothing at all is written to the database."""
+    record = has_backup_table(session) if record is None else record
     run = BackupRun(started_at=now(), status="running", files_copied=0, files_bytes=0)
-    session.add(run)
-    session.commit()
+    if record:
+        session.add(run)
+        session.commit()
     try:
         cfg.db_dir.mkdir(parents=True, exist_ok=True)
         major = client_major(runner)
@@ -329,22 +353,28 @@ def run_backup(session: Session, cfg: BackupConfig, runner: Runner = subprocess.
             finally:
                 if tmp.exists():
                     tmp.unlink()
+            write_sidecar(final, snap.counts, snap.alembic_version, run.started_at)
             run.dump_file, run.dump_bytes = name, final.stat().st_size
             run.counts, run.alembic_version = snap.counts, snap.alembic_version
-        session.commit()
+        if record:
+            session.commit()
         files = copy_files(session, cfg)
+        session.rollback()                  # end the read transaction of the file list
         run.files_copied, run.files_bytes = files.copied, files.bytes
         removed = rotate(cfg.db_dir)
         run.status, run.finished_at = "ok", now()
-        session.commit()
+        if record:
+            session.commit()
         log.info("backup ok: dump %s bytes, %s tables, %s files copied (%s unchanged, %s missing), %s old dumps removed",
                  run.dump_bytes, len(run.counts or {}), files.copied, files.unchanged, files.missing, len(removed))
     except Exception as exc:  # noqa: BLE001  the row must say "error" whatever happened
         session.rollback()
-        run = session.get(BackupRun, run.id)
+        if record:
+            run = session.get(BackupRun, run.id)
         run.status, run.finished_at = "error", now()
         run.error = str(exc)[:300] if isinstance(exc, BackupError) else f"backup failed ({type(exc).__name__})"
-        session.commit()
+        if record:
+            session.commit()
         log.warning("backup failed: %s", run.error)
     return run
 
@@ -354,7 +384,7 @@ def run_backup(session: Session, cfg: BackupConfig, runner: Runner = subprocess.
 @dataclass
 class VerifyResult:
     ok: bool
-    run_id: int | None = None
+    dump_file: str = ""
     tables: int = 0
     mismatches: dict[str, tuple] = field(default_factory=dict)
     message: str = ""
@@ -369,17 +399,24 @@ def check_not_live(database_url: str) -> None:
         raise BackupError(f"refusing: the live database is named {SCRATCH_DB}")
 
 
-def verify(session: Session, cfg: BackupConfig, runner: Runner = subprocess.run,
+def newest_dump(db_dir: Path) -> tuple[Path, dict]:
+    """The newest of our dumps that has its sidecar (= pg_dump finished), and the sidecar data."""
+    names = sorted((n for n in (p.name for p in db_dir.iterdir()) if DUMP_RE.match(n)), reverse=True) \
+        if db_dir.is_dir() else []
+    for name in names:
+        side = db_dir / (name + ".json")
+        if side.is_file():
+            return db_dir / name, json.loads(side.read_text(encoding="utf-8"))
+    raise BackupError("no backup dump to verify")
+
+
+def verify(session: Session | None, cfg: BackupConfig, runner: Runner = subprocess.run,
            connect: Callable = _connect, now: Callable[[], datetime] = _now,
-           free_bytes: Callable[[Path], int] = lambda p: shutil.disk_usage(p).free) -> VerifyResult:
+           free_bytes: Callable[[Path], int] = lambda p: shutil.disk_usage(p).free,
+           record: bool | None = None) -> VerifyResult:
+    """Restore drill. Writes nothing to the live DB except (with `record`) verified_at/verify_ok on its row."""
     check_not_live(cfg.database_url)
-    run = session.scalars(select(BackupRun).where(BackupRun.status == "ok", BackupRun.dump_file.is_not(None))
-                          .order_by(BackupRun.id.desc()).limit(1)).first()
-    if run is None:
-        raise BackupError("no successful backup to verify")
-    dump = cfg.db_dir / run.dump_file
-    if not dump.is_file():
-        raise BackupError("the newest dump file is missing")
+    dump, meta = newest_dump(cfg.db_dir)
     if free_bytes(cfg.backup_dir) < 4 * dump.stat().st_size:     # restored DB is several times the -Fc dump
         raise BackupError("not enough free disk space for the restore drill")
     if client_major(runner, "pg_restore") < 16:
@@ -410,14 +447,18 @@ def verify(session: Session, cfg: BackupConfig, runner: Runner = subprocess.run,
     finally:
         admin.close()
 
-    want = run.counts or {}
+    want = meta.get("counts") or {}
     mismatches = {t: (want.get(t), got.get(t)) for t in sorted(set(want) | set(got)) if want.get(t) != got.get(t)}
-    if version != run.alembic_version:
-        mismatches["alembic_version"] = (run.alembic_version, version)
-    res = VerifyResult(ok=not mismatches and bool(want), run_id=run.id, tables=len(want), mismatches=mismatches)
-    res.message = (f"restore drill OK: {len(want)} tables, row counts equal" if res.ok
-                   else f"restore drill FAILED: {len(mismatches)} differences")
-    run.verified_at, run.verify_ok = now(), res.ok
-    session.commit()
+    if version != meta.get("alembic_version"):
+        mismatches["alembic_version"] = (meta.get("alembic_version"), version)
+    res = VerifyResult(ok=not mismatches and bool(want), dump_file=dump.name, tables=len(want), mismatches=mismatches)
+    res.message = (f"restore drill OK ({dump.name}): {len(want)} tables, row counts equal" if res.ok
+                   else f"restore drill FAILED ({dump.name}): {len(mismatches)} differences")
+    if session is not None and (has_backup_table(session) if record is None else record):
+        row = session.scalars(select(BackupRun).where(BackupRun.dump_file == dump.name)
+                              .order_by(BackupRun.id.desc()).limit(1)).first()
+        if row is not None:
+            row.verified_at, row.verify_ok = now(), res.ok
+            session.commit()
     log.info("%s", res.message)
     return res

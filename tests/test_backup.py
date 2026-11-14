@@ -1,6 +1,7 @@
 """Backup logic (spec 2026-11-14-hardening, decisions 2-3) with fake pg_dump/pg_restore: rotation, file copy +
 manifest + tmp/rename, snapshot counts against the test DB, verify refusals and scratch-DB clean-up.
 The real pg_dump/pg_restore round trip is in test_backup_pg.py (Docker image only)."""
+import json
 import os
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -227,10 +228,35 @@ def test_verify_refuses_live_db_named_like_scratch(tmp_path):
         backup.verify(None, cfg, runner=never, connect=never)
 
 
-def test_verify_needs_a_successful_backup(db):
+def test_verify_needs_a_finished_dump(db):
     Session, cfg = db
-    with Session() as s, pytest.raises(BackupError, match="no successful backup"):
+    with Session() as s, pytest.raises(BackupError, match="no backup dump"):
         backup.verify(s, cfg, runner=FakePg(), connect=lambda *a, **k: None)
+    cfg.db_dir.mkdir(parents=True)
+    (cfg.db_dir / "callsight-20261114-013000.dump").write_bytes(b"half")      # no sidecar = pg_dump never finished
+    with Session() as s, pytest.raises(BackupError, match="no backup dump"):
+        backup.verify(s, cfg, runner=FakePg(), connect=lambda *a, **k: None)
+
+
+def test_backup_without_record_writes_nothing_to_the_db(db):
+    Session, cfg = db
+    with Session() as s:
+        run = backup.run_backup(s, cfg, runner=FakePg(), record=False)
+        assert run.status == "ok" and run.id is None
+        assert s.scalar(select(BackupRun.id)) is None
+    meta = json.loads((cfg.db_dir / (run.dump_file + ".json")).read_text(encoding="utf-8"))
+    assert meta["counts"]["call"] == 3 and meta["alembic_version"] is None
+
+
+def test_rotation_removes_sidecars_too(tmp_path):
+    start = datetime(2026, 1, 1)
+    for i in range(40):
+        n = _name(start + timedelta(days=i))
+        (tmp_path / n).write_bytes(b"x")
+        (tmp_path / (n + ".json")).write_text("{}")
+    removed = backup.rotate(tmp_path)
+    assert all(not (tmp_path / (n + ".json")).exists() for n in removed)
+    assert len(list(tmp_path.glob("*.json"))) == 40 - len(removed)
 
 
 class FakeConn:

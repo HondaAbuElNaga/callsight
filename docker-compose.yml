@@ -48,7 +48,21 @@ services:
 
   worker:
     <<: *app
-    command: sh -c "alembic upgrade head && celery -A callsight.jobs worker -Q ingest,reports --concurrency=1 -l info"
+    # maint = nightly backup (01:30) + retention; concurrency 1, so they never overlap ingest work on this worker.
+    # Backup by hand / before every migration:  docker compose run --rm worker python -m callsight backup
+    command: sh -c "alembic upgrade head && celery -A callsight.jobs worker -Q ingest,reports,maint --concurrency=1 -l info"
+    environment:
+      DATABASE_URL: postgresql+psycopg://callsight:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/callsight
+      REDIS_URL: redis://redis:6379/0
+      AUDIO_DIR: /data/audio
+      REPORTS_DIR: /data/reports
+      TEAMS_FILE: /app/config/teams.yaml
+      BACKUP_DIR: /backup
+    volumes:
+      - ${AUDIO_HOST_DIR:-./data/audio}:/data/audio
+      - ${REPORTS_HOST_DIR:-./data/reports}:/data/reports
+      - ./config:/app/config:ro
+      - ${BACKUP_HOST_DIR:-./data/backup}:/backup        # DB dumps + copies of recordings/reports (not encrypted)
     healthcheck:
       test: ["CMD-SHELL", "celery -A callsight.jobs inspect ping -d celery@$$HOSTNAME --timeout 5 || exit 1"]
       interval: 60s
@@ -59,6 +73,11 @@ services:
   api:
     <<: *app
     command: uvicorn callsight.api.main:app --host 0.0.0.0 --port 8080 --no-server-header --no-access-log   # access log would hold searched phone numbers
+    volumes:
+      - ${AUDIO_HOST_DIR:-./data/audio}:/data/audio
+      - ${REPORTS_HOST_DIR:-./data/reports}:/data/reports
+      - ./config:/app/config:ro
+      - ${BACKUP_HOST_DIR:-./data/backup}:/backup:ro     # health page: free space of the backup disk only
     ports:
       - "127.0.0.1:${WEB_PORT:-8080}:8080"   # this PC only (spec decision 2)
     depends_on:

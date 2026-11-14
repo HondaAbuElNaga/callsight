@@ -70,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("--pdf", help="write the PDF report to this file")
     ra = sub.add_parser("report-archive"); ra.add_argument("--period", choices=("week", "month"))
     bk = sub.add_parser("backup"); bk.add_argument("action", nargs="?", choices=("run", "verify"), default="run")
+    bk.add_argument("--no-record", action="store_true", help="write nothing to the database (no backup_run row)")
     rt = sub.add_parser("retention"); rt.add_argument("--dry-run", action="store_true")
     pc = sub.add_parser("pbx-cert"); g2 = pc.add_mutually_exclusive_group(required=True)
     g2.add_argument("--fetch", action="store_true"); g2.add_argument("--accept", metavar="SHA256")
@@ -242,7 +243,7 @@ def _backup(a: argparse.Namespace) -> int:
     with wiring.session_factory()() as s:
         if a.action == "verify":
             try:
-                res = backup.verify(s, cfg)
+                res = backup.verify(s, cfg, record=False if a.no_record else None)
             except backup.BackupError as exc:
                 print("ERROR:", exc, file=sys.stderr)
                 return 1
@@ -254,7 +255,7 @@ def _backup(a: argparse.Namespace) -> int:
             if not got:
                 print("ERROR: another backup/retention run holds the maintenance lock", file=sys.stderr)
                 return 1
-            run = backup.run_backup(s, cfg)
+            run = backup.run_backup(s, cfg, record=False if a.no_record else None)
     if run.status != "ok":
         print(f"ERROR: backup failed: {run.error}", file=sys.stderr)
         return 1
