@@ -429,3 +429,30 @@ def test_migration_0005_up_and_down(engine):
         assert "transcript" not in names and "call" in names       # additive: nothing else touched
     finally:
         Base.metadata.create_all(engine)
+
+
+# ---------- CLI ----------
+
+def test_cli_backfill_call_and_status(session, engine, monkeypatch, capsys):
+    from callsight import app as wiring, cli, jobs
+    sent = []
+    monkeypatch.setattr(wiring, "session_factory", lambda: sessionmaker(engine, expire_on_commit=False))
+    monkeypatch.setattr(jobs, "send_transcribe", lambda cid, model, countdown=None: sent.append((cid, model)))
+    monkeypatch.setattr(jobs, "asr_queue_length", lambda: 3)
+    monkeypatch.setenv("ASR_MODEL", "whisper-large-v3")
+    now = datetime.now(timezone.utc)
+    calls = [make_call(session, start=now - timedelta(hours=i + 1)) for i in range(7)]
+    assert cli.main(["transcribe", "--days", "2", "--limit", "5"]) == 0
+    assert [c for c, _ in sent] == [c.id for c in calls[:5]]
+    assert cli.main(["transcribe", "--call", str(calls[0].id)]) == 0          # already queued: not re-sent
+    assert len(sent) == 5
+    assert cli.main(["transcribe", "--call", str(calls[6].id)]) == 0
+    assert len(sent) == 6
+    assert cli.main(["transcribe", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "asr queue length: 3" in out and "queued 6" in out
+    with pytest.raises(SystemExit):
+        cli.main(["transcribe", "--days", "2"])
+    with pytest.raises(SystemExit):
+        cli.main(["transcribe", "status", "--call", "1"])
+    assert cli.main(["transcribe", "--days", "2", "--limit", "501"]) == 1
