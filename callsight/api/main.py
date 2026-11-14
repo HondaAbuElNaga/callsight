@@ -21,7 +21,8 @@ from ..config import RIYADH
 from ..db.models import AppUser, Call, GoldClip, RecordingPlay, ReportArchive, ReportDownload
 from ..ingest.classify import TeamConfig
 from . import auth
-from .calls import DIRECTIONS, STATUSES, CallFilter, call_detail, list_calls, summary, team_agents
+from .calls import (DIRECTIONS, STATUSES, CallFilter, call_detail, list_calls, summary, team_agents, visible_call,
+                    visible_scope)
 
 MAX_RANGE_DAYS = 400
 AUDIT_WINDOW = timedelta(minutes=10)   # one audit row per user + call within this window
@@ -35,6 +36,7 @@ class ApiConfig:
     cookie_secure: bool = False
     teams: Callable[[], TeamConfig] = TeamConfig      # re-read per request (teams.yaml edits apply at once)
     reports_dir: Path | None = None
+    health: Callable[[Session], dict] | None = None    # health page data (callsight.health.collect)
 
 
 class LoginIn(BaseModel):
@@ -112,6 +114,7 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
     User = Annotated[AppUser, Depends(current_user)]
 
     def call_filter(
+        user: User,
         date_from: Annotated[date | None, Query(alias="from")] = None,
         date_to: Annotated[date | None, Query(alias="to")] = None,
         agent: Annotated[str | None, Query(pattern=r"^\d{1,6}$")] = None,
@@ -120,7 +123,10 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         q: Annotated[str | None, Query(pattern=r"^\+?\d{1,20}$")] = None,
     ) -> CallFilter:
         today = datetime.now(RIYADH).date()
-        f = CallFilter(date_from or today, date_to or date_from or today, agent or None,
+        scope = visible_scope(user)
+        if scope.is_agent:
+            agent = scope.agent_ext          # the server decides an agent's filter, whatever the URL says
+        f = CallFilter(scope, date_from or today, date_to or date_from or today, agent or None,
                        status or None, direction or None, q or None)
         if f.date_to < f.date_from or (f.date_to - f.date_from).days > MAX_RANGE_DAYS:
             raise HTTPException(422, "bad date range")
@@ -133,13 +139,21 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
     Filter = Annotated[CallFilter, Depends(call_filter)]
 
     def manager(user: User) -> AppUser:
-        if user.role not in ("admin", "supervisor"):
+        if user.role not in auth.STAFF_ROLES:
             raise HTTPException(403, "admin or supervisor only")
         return user
 
     Manager = Annotated[AppUser, Depends(manager)]
 
+    def admin(user: User) -> AppUser:
+        if user.role != "admin":
+            raise HTTPException(403, "admin only")
+        return user
+
+    Admin = Annotated[AppUser, Depends(admin)]
+
     def kpi_query(
+        user: User,
         period: Annotated[str, Query(pattern=r"^(week|month)$")] = "week",
         start: Annotated[date | None, Query()] = None,
         team: Annotated[str | None, Query(pattern=r"^[a-z_]{1,50}$")] = None,
@@ -149,6 +163,11 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         if not date(2020, 1, 1) <= day <= date(2100, 1, 1):
             raise HTTPException(422, "bad start date")
         teams = cfg.teams()
+        scope = visible_scope(user)
+        if scope.is_agent:                   # own KPIs only: no team view, no comparison with colleagues
+            if not scope.agent_ext or scope.agent_ext not in teams.ext_team:
+                raise HTTPException(403, "your extension is not a team agent (teams.yaml)")
+            team, agent = None, scope.agent_ext
         if team and team not in kpi.team_names(teams):
             raise HTTPException(422, "unknown team")
         if agent and (agent not in teams.ext_team or (team and teams.ext_team[agent] != team)):
@@ -187,7 +206,7 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
 
     @app.get("/api/agents")
     def agents(user: User, s: DB) -> list[dict]:
-        return team_agents(s)
+        return team_agents(s, visible_scope(user))
 
     @app.get("/api/calls")
     def calls(user: User, s: DB, f: Filter, page: Annotated[int, Query(ge=1, le=10_000)] = 1) -> dict:
@@ -199,14 +218,14 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
 
     @app.get("/api/calls/{call_id}")
     def call(call_id: int, user: User, s: DB) -> dict:
-        d = call_detail(s, call_id)
+        d = call_detail(s, call_id, visible_scope(user))
         if d is None:
             raise HTTPException(404, "no such call")
         return d
 
     @app.get("/api/calls/{call_id}/recording")
     def recording(call_id: int, request: Request, user: User, s: DB) -> Response:
-        c = s.get(Call, call_id)
+        c = visible_call(s, call_id, visible_scope(user))
         if c is None or c.recording_status != "ok" or not c.recording_path:
             raise HTTPException(404, "no recording")
         root = cfg.audio_dir.resolve()
@@ -216,10 +235,10 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         audit_play(s, user, c.id)
         return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, no-store"})
 
-    # ---------- KPIs + reports (admin + supervisor) ----------
+    # ---------- KPIs (agents: their own only) + reports (admin + supervisor) ----------
 
     @app.get("/api/kpi")
-    def kpis(user: Manager, s: DB, q: Kpi) -> dict:
+    def kpis(user: User, s: DB, q: Kpi) -> dict:
         return kpi.report(s, q.period, cfg.teams(), team=q.team, agent=q.agent)
 
     @app.get("/api/reports/pdf")
@@ -250,13 +269,6 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         return pdf_response(path.read_bytes(), path.name)
 
     # ---------- gold set (admin only): reference texts for the ASR benchmark ----------
-
-    def admin(user: User) -> AppUser:
-        if user.role != "admin":
-            raise HTTPException(403, "admin only")
-        return user
-
-    Admin = Annotated[AppUser, Depends(admin)]
 
     def clip_dict(c: GoldClip, call: Call | None, with_text: bool) -> dict:
         d = {"id": c.id, "call_id": c.call_id, "seconds": c.seconds, "has_text": bool(c.reference_text),
@@ -301,6 +313,14 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         audit_play(s, user, c.call_id)
         return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, no-store"})
 
+    # ---------- health (admin only; no paths, hostnames or error texts in the answer) ----------
+
+    @app.get("/api/health")
+    def health(user: Admin, s: DB) -> dict:
+        if cfg.health is None:
+            raise HTTPException(503, "health checks not configured")
+        return cfg.health(s)
+
     @app.get("/api/{rest:path}")
     def api_404(rest: str) -> None:
         raise HTTPException(404, "not found")
@@ -317,7 +337,31 @@ def _app_from_env() -> FastAPI:
     static = Path(os.getenv("WEB_DIST", str(Path(__file__).resolve().parents[2] / "web" / "dist")))
     return create_app(session_factory(), ApiConfig(
         secret=secret, audio_dir=settings().audio_dir, static_dir=static, teams=teams, reports_dir=reports_dir(),
-        cookie_secure=os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes")))
+        cookie_secure=os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes"),
+        health=_health_from_env()))
+
+
+def _health_from_env(cache_seconds: float = 15.0) -> Callable[[Session], dict]:
+    """Real disks / Redis / Celery for the health page; answers cached a few seconds (worker ping takes 1 s)."""
+    import time
+
+    import redis
+
+    from .. import health
+    from ..app import settings
+    from ..jobs import celery
+    st = settings()
+    deps = health.HealthDeps(
+        disk_paths={"system": Path("/"), "audio": st.audio_dir, "backup": st.backup_dir},
+        redis=redis.Redis.from_url(st.redis_url, socket_timeout=1, socket_connect_timeout=1),
+        ping=lambda: celery.control.ping(timeout=1.0), offsite_confirmed=health.offsite_confirmed())
+    cached: dict = {}
+
+    def get(s: Session) -> dict:
+        if not cached or time.monotonic() - cached["t"] > cache_seconds:
+            cached.update(t=time.monotonic(), data=health.collect(s, deps))
+        return cached["data"]
+    return get
 
 
 def __getattr__(name: str):   # `uvicorn callsight.api.main:app` builds the app lazily (tests import without .env)

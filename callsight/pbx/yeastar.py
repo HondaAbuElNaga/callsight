@@ -9,6 +9,7 @@ import logging
 import time
 from datetime import datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
+import ssl
 from typing import Any, Callable
 
 import httpx
@@ -34,13 +35,18 @@ def safe_recording_name(file: str) -> str:
 
 
 class YeastarAdapter(PbxAdapter):
-    def __init__(self, base_url: str, client_id: str, client_secret: str, verify_ssl: bool = True,
+    def __init__(self, base_url: str, client_id: str, client_secret: str, verify_ssl: bool | ssl.SSLContext = True,
                  http: httpx.Client | None = None, max_login_failures: int = 3, retries: int = 3,
                  sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
-                 max_pages: int = 300):
+                 max_pages: int = 300, cert_sha256: str | None = None,
+                 check_pin: Callable[[str, str], None] | None = None):
         self.base_url = base_url.rstrip("/")
         self._id, self._secret = client_id, client_secret
         self.http = http or httpx.Client(verify=verify_ssl, timeout=60, headers={"User-Agent": USER_AGENT})
+        self.cert_sha256 = cert_sha256
+        if check_pin is None:
+            from .tls import check_pin
+        self._check_pin = check_pin
         self.max_login_failures = max_login_failures
         self.login_failures = 0
         self.retries = retries
@@ -83,6 +89,8 @@ class YeastarAdapter(PbxAdapter):
         if self.login_failures >= self.max_login_failures:
             raise AuthBlocked(f"stopped after {self.login_failures} failed logins; check Client ID/Secret "
                               "and the PBX API IP allow-list, then restart")
+        if self.cert_sha256:                     # pinned: compare the certificate BEFORE sending the secret
+            self._check_pin(self.base_url, self.cert_sha256)
         data = self._json(self._request("POST", self._url("get_token"),
                                         json={"username": self._id, "password": self._secret}), "get_token")
         if data.get("errcode") == TOKEN_LIMIT_ERRCODE:
@@ -188,7 +196,10 @@ class YeastarAdapter(PbxAdapter):
         except OSError as exc:              # disk full, no permission on the audio folder, ...
             raise PbxError(f"cannot write recording to disk: {exc}") from exc
         finally:
-            tmp.unlink(missing_ok=True)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:                 # Linux: parent is not a folder -> ENOTDIR; the PbxError above stands
+                pass
         return dest
 
     # ---------- agents ----------

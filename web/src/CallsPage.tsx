@@ -5,7 +5,9 @@ import {
 } from "./api";
 import { DIRECTION_LABEL, LEG_LABEL, STATUS_LABEL, STATUS_ORDER, duration, formatDateTime, riyadhToday } from "./format";
 
-interface Props { me: Me; onLogout: () => void; onExpired: () => void; onGoldset?: () => void; onKpi?: () => void }
+interface Props {
+  me: Me; onLogout: () => void; onExpired: () => void; onGoldset?: () => void; onKpi?: () => void; onHealth?: () => void;
+}
 
 // A function, not a constant: the page may stay open past midnight.
 const emptyFilters = (): Filters => {
@@ -13,7 +15,7 @@ const emptyFilters = (): Filters => {
   return { from: today, to: today, agent: "", status: "", direction: "", q: "" };
 };
 
-export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi }: Props) {
+export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth }: Props) {
   const [filters, setFilters] = useState<Filters>(emptyFilters); // applied as soon as a field changes
   const [qText, setQText] = useState("");                  // number box: applied after typing stops
   const [page, setPage] = useState(1);
@@ -83,6 +85,7 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi }: Props) 
         <div className="who">
           {onKpi && <button className="link" onClick={onKpi}>المؤشرات</button>}
           {onGoldset && <button className="link" onClick={onGoldset}>النصوص المرجعية</button>}
+          {onHealth && <button className="link" onClick={onHealth}>حالة النظام</button>}
           <span className="muted">{me.username}{me.ext ? ` · تحويلة ${me.ext}` : ""}</span>
           <button className="link" onClick={onLogout}>خروج</button>
         </div>

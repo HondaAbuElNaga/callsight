@@ -33,7 +33,22 @@ def reports_dir() -> Path:
 @lru_cache(maxsize=1)
 def pbx() -> YeastarAdapter:
     """One adapter per process: the token is reused and the failed-login counter survives between jobs."""
+    from .pbx.tls import verify_setting
     s = settings()
     s.require_pbx()
+    verify = verify_setting(s.yeastar_ca_file, s.yeastar_verify_ssl, s.yeastar_check_hostname,
+                            cert_sha256=s.yeastar_cert_sha256)
     return YeastarAdapter(s.yeastar_base_url, s.yeastar_client_id, s.yeastar_client_secret,
-                          verify_ssl=s.yeastar_verify_ssl)
+                          verify_ssl=verify, cert_sha256=s.yeastar_cert_sha256)
+
+
+def backup_config():
+    from .backup import BackupConfig
+    s = settings()
+    return BackupConfig(database_url=s.database_url, backup_dir=s.backup_dir, audio_dir=s.audio_dir,
+                        reports_dir=reports_dir())
+
+
+def retention_config():
+    from .retention import RetentionConfig
+    return RetentionConfig.load(Path(os.getenv("RETENTION_FILE", str(ROOT / "config" / "retention.yaml"))))

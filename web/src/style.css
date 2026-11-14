@@ -169,3 +169,18 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .notes { padding-inline-start: 18px; display: grid; gap: 4px; }
 @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
+
+/* health page + admin banner (hardening spec) */
+.health-banner {
+  display: block; width: 100%; border: 0; border-radius: 0; padding: 10px 16px; text-align: center;
+  background: var(--bad); color: #fff; font-weight: 600;
+}
+.health-sum { font-weight: 600; padding: 10px 14px; border-radius: var(--radius); }
+.health-sum.ok { background: var(--ok-bg); color: var(--ok); }
+.health-sum.bad { background: var(--bad-bg); color: var(--bad); }
+table.health td { vertical-align: top; }
+.state { display: inline-block; min-width: 56px; text-align: center; padding: 2px 8px; border-radius: 999px; font-size: 13px; }
+.state.ok { background: var(--ok-bg); color: var(--ok); }
+.state.warn { background: var(--warn-bg); color: var(--warn); }
+.state.bad { background: var(--bad-bg); color: var(--bad); }
+.state.off { background: var(--neutral-bg); color: var(--neutral); }

@@ -1,0 +1,5 @@
+# Test-only tools. Locked into requirements-dev.lock (hashes, same versions as the app lock).
+# Installed in the image only with: docker build --build-arg INSTALL_DEV=true ...  (test images)
+-c requirements.lock
+pytest>=8
+pypdf==6.21.0         # reads the PDF text back in the report tests

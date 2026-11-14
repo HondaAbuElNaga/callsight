@@ -232,11 +232,12 @@ def reconcile_day(session: Session, pbx: PbxAdapter, team: TeamConfig, audio_dir
     # colleagues are not recorded by the PBX, so they are not expected.
     expected = session.scalars(select(Call).where(
         Call.uid.in_(team_uids), Call.status == "answered", Call.direction != "internal")).all() if team_uids else []
-    rec_before = [c for c in expected if c.recording_status != "ok"]
+    # "deleted" = removed by the retention policy on purpose: never fetched again, not counted as missing
+    rec_before = [c for c in expected if c.recording_status not in ("ok", "deleted")]
     for c in rec_before:                       # one more try, even for calls that hit the retry limit
         if c.recording_file:
             fetch_one_recording(session, pbx, audio_dir, c)
-    rec_after = sum(1 for c in expected if c.recording_status != "ok")
+    rec_after = sum(1 for c in expected if c.recording_status not in ("ok", "deleted"))
     db_calls = session.scalar(select(func.count()).select_from(Call).where(Call.uid.in_(team_uids))) if team_uids else 0
 
     run = ReconcileRun(day=day, pbx_team_calls=len(team_uids), pbx_team_legs=len(team_leg_ids),

@@ -1,15 +1,5 @@
-httpx>=0.27
-websockets>=13
-python-dotenv>=1.0
-sqlalchemy>=2.0.36
-alembic>=1.14
-psycopg[binary]>=3.2
-pyyaml>=6.0
-celery[redis]>=5.4
+# For the dev venv on this PC only (ranges). The Docker app image installs requirements.lock instead:
+# exact versions + sha256 hashes, `pip install --require-hashes` (hardening spec, decision 7).
+-r requirements.in
 pytest>=8
-fastapi>=0.115
-uvicorn>=0.32
-argon2-cffi>=23.1
-pyjwt>=2.9
-weasyprint==70.0      # PDF reports (needs Pango: apt libs in the Dockerfile)
 pypdf==6.21.0         # test only: read the PDF text back
