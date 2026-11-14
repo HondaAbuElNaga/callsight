@@ -162,8 +162,7 @@ def _goldset_score(a: argparse.Namespace) -> int:
         print("ERROR: no gold set or no benchmark results folder", file=sys.stderr)
         return 1
     text, results = build_report(refs, bench_dir, len(clips))
-    Path(a.out).write_text(text + "
-", encoding="utf-8")
+    Path(a.out).write_text(text + "\n", encoding="utf-8")
     for r in results:
         print(f"{r.model}: {r.clips} clips, WER {r.score.wer:.1%}, CER {r.score.cer:.1%}")
     print(f"{len(refs)}/{len(clips)} texts typed; report written to {a.out}")
