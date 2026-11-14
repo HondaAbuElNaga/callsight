@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import secrets
 import string
+from collections.abc import Collection
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -18,7 +19,8 @@ TOKEN_HOURS = 8
 MAX_FAILED = 5
 LOCK_MINUTES = 15
 MIN_PASSWORD = 10
-ROLES = ("admin", "supervisor")
+ROLES = ("admin", "supervisor", "agent")
+STAFF_ROLES = ("admin", "supervisor")          # see every team call; agents see only their own (calls.visible_scope)
 
 _ph = PasswordHasher()
 _DUMMY_HASH = _ph.hash("timing-equaliser-not-a-password")
@@ -99,10 +101,22 @@ def user_from_token(session: Session, token: str | None, secret: str) -> AppUser
 
 # ---------- account management (CLI) ----------
 
-def create_user(session: Session, username: str, password: str, role: str, ext: str | None = None) -> AppUser:
+def _check_agent_ext(role: str, ext: str | None, team_exts: Collection[str] | None) -> None:
+    """An agent account must name its own extension, and it must be a team extension in teams.yaml."""
+    if role != "agent":
+        return
+    if not ext:
+        raise ValueError("an agent account needs --ext (the agent's own extension)")
+    if team_exts is None or ext not in team_exts:
+        raise ValueError(f"extension {ext!r} is not a team extension in teams.yaml")
+
+
+def create_user(session: Session, username: str, password: str, role: str, ext: str | None = None,
+                team_exts: Collection[str] | None = None) -> AppUser:
     username = username.strip().lower()
     if role not in ROLES:
         raise ValueError(f"role must be one of {ROLES}")
+    _check_agent_ext(role, ext, team_exts)
     if not username or not username.replace("_", "").replace(".", "").isalnum() or len(username) > 50:
         raise ValueError("username: letters, digits, '.', '_' only (max 50)")
     if session.scalars(select(AppUser).where(AppUser.username == username)).first():
@@ -119,6 +133,15 @@ def set_password(session: Session, username: str, password: str) -> None:
     user.password_hash = hash_password(password)
     user.token_version += 1
     user.failed_logins, user.locked_until = 0, None
+    session.commit()
+
+
+def set_ext(session: Session, username: str, ext: str | None, team_exts: Collection[str] | None = None) -> None:
+    """New extension for a user. Ends that user's open logins: an agent's scope must never be stale."""
+    user = _get(session, username)
+    _check_agent_ext(user.role, ext, team_exts)
+    user.ext = ext
+    user.token_version += 1
     session.commit()
 
 

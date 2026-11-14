@@ -30,7 +30,7 @@ export function App() {
       onLogout={logout}
       onExpired={() => setMe(null)}
       onGoldset={me.role === "admin" ? () => setView("goldset") : undefined}
-      onKpi={me.role === "admin" || me.role === "supervisor" ? () => setView("kpi") : undefined}
+      onKpi={() => setView("kpi")}
     />
   );
 }

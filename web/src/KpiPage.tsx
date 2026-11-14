@@ -77,10 +77,13 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
     else setError("تعذر تحميل المؤشرات. تأكد أن الخدمة تعمل ثم أعد المحاولة.");
   }, [onExpired]);
 
+  const staff = me.role === "admin" || me.role === "supervisor";   // agents: own KPIs only (server enforces it)
+
   useEffect(() => {
+    if (!staff) return;
     api.agents().then(setAgents).catch(fail);
     api.reports().then(setArchive).catch(fail);
-  }, [fail]);
+  }, [fail, staff]);
 
   useEffect(() => {   // filters apply at once (no "show" button)
     let alive = true;
@@ -149,6 +152,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
           <button type="button" onClick={() => set({ start: shift(f, -1) })}>→ السابق</button>
           <button type="button" onClick={() => set({ start: shift(f, 1) })}>التالي ←</button>
         </div>
+        {staff && <>
         <label>الفريق
           <select value={f.team} onChange={(e) => set({ team: e.target.value, agent: "" })}>
             <option value="">كل الفرق</option>
@@ -164,6 +168,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
         <div className="filter-actions">
           <a className="button primary" href={api.reportPdfUrl(f)} download>تصدير PDF</a>
         </div>
+        </>}
       </form>
 
       {error && <div className="error">{error}</div>}
@@ -217,7 +222,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                 </thead>
                 <tbody>
                   {data.agents.map((a) => (
-                    <tr key={a.ext} onClick={() => set({ agent: a.ext, team: f.team && a.team })}>
+                    <tr key={a.ext} onClick={staff ? () => set({ agent: a.ext, team: f.team && a.team }) : undefined}>
                       <td>{a.ext} <span className="muted">{a.name}</span></td>
                       <td>{TEAM_LABEL[a.team] ?? a.team}</td>
                       <td className="num">{a.calls}</td>
@@ -247,7 +252,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                 </ul>
               )}
             </section>
-            <section className="panel wide">
+            {staff && <section className="panel wide">
               <h2>التقارير المحفوظة</h2>
               {archive.length === 0 ? <p className="muted">لا توجد تقارير محفوظة بعد (تُنشأ الأحد 7:00 وأول كل شهر 7:00).</p> : (
                 <ul className="plain">
@@ -260,7 +265,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                   ))}
                 </ul>
               )}
-            </section>
+            </section>}
           </div>
 
           <ol className="notes muted small">

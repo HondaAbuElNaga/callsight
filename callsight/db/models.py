@@ -181,3 +181,55 @@ class ReportDownload(Base):
     period_start: Mapped[date] = mapped_column(Date)
     scope: Mapped[str] = mapped_column(String(60))
     downloaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------- hardening (spec 2026-11-14-hardening) ----------
+
+class BackupRun(Base):
+    """One `python -m callsight backup` run. `counts` = rows per table in the dump's snapshot (restore drill check)."""
+    __tablename__ = "backup_run"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(10), default="running")       # running / ok / error
+    dump_file: Mapped[str | None] = mapped_column(String(200))              # name inside BACKUP_DIR/db
+    dump_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    counts: Mapped[dict | None] = mapped_column(JSONB)
+    alembic_version: Mapped[str | None] = mapped_column(String(50))
+    files_copied: Mapped[int] = mapped_column(Integer, default=0)
+    files_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    error: Mapped[str | None] = mapped_column(String(300))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verify_ok: Mapped[bool | None] = mapped_column(Boolean)
+
+
+class JobRun(Base):
+    """Last start / success / failure of each scheduled job (health page)."""
+    __tablename__ = "job_run"
+    job: Mapped[str] = mapped_column(String(50), primary_key=True)
+    last_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_ok_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_status: Mapped[str | None] = mapped_column(String(10))               # ok / error
+
+
+class RetentionRun(Base):
+    """One retention run (PDPL). The first run for a given number of days is always a dry run."""
+    __tablename__ = "retention_run"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ran_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    dry_run: Mapped[bool] = mapped_column(Boolean)
+    days: Mapped[int] = mapped_column(Integer)
+    calls: Mapped[int] = mapped_column(Integer, default=0)
+    files: Mapped[int] = mapped_column(Integer, default=0)
+    audit_rows: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class RetentionLog(Base):
+    """Audit: one row per call whose recording/transcripts were deleted by retention (call metadata is kept)."""
+    __tablename__ = "retention_log"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("retention_run.id"), index=True)
+    call_id: Mapped[int] = mapped_column(BigInteger, index=True)           # no FK: the audit outlives the call
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    what: Mapped[str] = mapped_column(String(100))                         # e.g. "recording,backup_copy,transcripts"

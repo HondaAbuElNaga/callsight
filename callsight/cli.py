@@ -6,8 +6,10 @@
   reconcile --date D     check one day (YYYY-MM-DD, default yesterday) against the PBX and fill gaps
   sync-agents            refresh agents/queues from the PBX
   stats --date D         calls per direction / status / agent for one day
-  create-user NAME --role admin|supervisor [--ext 114] [--generate]
-                         new web login; asks for the password, or with --generate prints a random one
+  create-user NAME --role admin|supervisor|agent [--ext 114] [--generate]
+                         new web login; asks for the password, or with --generate prints a random one.
+                         An agent needs --ext (a team extension in teams.yaml) and sees only their own calls
+  set-ext NAME --ext 104 new extension for a user (ends that user's open logins)
   set-password NAME [--generate]   new password (ends that user's open logins)
   disable-user NAME      block a web login
   goldset pick [--n 30 --seconds 60 --seed 1]   choose + cut the ASR gold-set clips (once)
@@ -47,11 +49,12 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("sync-agents")
     st = sub.add_parser("stats"); st.add_argument("--date")
     cu = sub.add_parser("create-user"); cu.add_argument("username")
-    cu.add_argument("--role", choices=("admin", "supervisor"), required=True); cu.add_argument("--ext")
+    cu.add_argument("--role", choices=("admin", "supervisor", "agent"), required=True); cu.add_argument("--ext")
     cu.add_argument("--generate", action="store_true", help="random password, printed once")
     sp = sub.add_parser("set-password"); sp.add_argument("username")
     sp.add_argument("--generate", action="store_true", help="random password, printed once")
     du = sub.add_parser("disable-user"); du.add_argument("username")
+    se = sub.add_parser("set-ext"); se.add_argument("username"); se.add_argument("--ext", required=True)
     g = sub.add_parser("goldset"); g.add_argument("action", choices=("pick", "score"))
     g.add_argument("--n", type=int, default=30); g.add_argument("--seconds", type=float, default=60.0)
     g.add_argument("--seed", type=int, default=1)
@@ -67,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         return _report_archive(a)
     if a.cmd == "goldset":
         return _goldset(a)
-    if a.cmd in ("create-user", "set-password", "disable-user"):
+    if a.cmd in ("create-user", "set-password", "disable-user", "set-ext"):
         return _users(a)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)   # URLs contain the access token
@@ -127,9 +130,13 @@ def _users(a: argparse.Namespace) -> int:
                 auth.disable_user(s, a.username)
                 print(f"user {a.username} disabled")
                 return 0
+            if a.cmd == "set-ext":
+                auth.set_ext(s, a.username, a.ext, wiring.teams().ext_team)
+                print(f"user {a.username} now has extension {a.ext} (open logins ended)")
+                return 0
             pw, generated = _ask_password(a.generate)
             if a.cmd == "create-user":
-                auth.create_user(s, a.username, pw, a.role, a.ext)
+                auth.create_user(s, a.username, pw, a.role, a.ext, wiring.teams().ext_team)
                 print(f"user {a.username.lower()} created ({a.role})")
             else:
                 auth.set_password(s, a.username, pw)

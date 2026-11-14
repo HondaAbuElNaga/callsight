@@ -4,19 +4,52 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, false, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
-from ..db.models import Agent, Call, CallLeg
+from ..db.models import Agent, AppUser, Call, CallLeg
 from ..ingest.service import day_bounds
+from .auth import STAFF_ROLES
 
 STATUSES = ("answered", "abandoned_queue", "abandoned_ivr", "no_answer", "busy", "voicemail")
 DIRECTIONS = ("inbound", "outbound", "internal")
 PAGE_SIZE = 50
 
 
+@dataclass(frozen=True)
+class Scope:
+    """Which calls a user may see. Staff: all. Agent: only calls they answered/made (`agent_ext`). Else: none."""
+    everything: bool = False
+    agent_ext: str | None = None
+
+    def where(self, stmt: Select) -> Select:
+        if self.everything:
+            return stmt
+        if self.agent_ext:
+            return stmt.where(Call.agent_ext == self.agent_ext)
+        return stmt.where(false())
+
+    def allows(self, call: Call) -> bool:
+        return self.everything or (bool(self.agent_ext) and call.agent_ext == self.agent_ext)
+
+    @property
+    def is_agent(self) -> bool:
+        return not self.everything
+
+
+def visible_scope(user: AppUser) -> Scope:
+    """The one place that decides call visibility (deny by default: an unknown role or an agent without ext sees
+    nothing). Used by CallFilter.apply (list, summary, search, exports) and by every single-call endpoint."""
+    if user.role in STAFF_ROLES:
+        return Scope(everything=True)
+    if user.role == "agent" and user.ext:
+        return Scope(agent_ext=user.ext)
+    return Scope()
+
+
 @dataclass
 class CallFilter:
+    scope: Scope                       # required: no query without a visibility scope
     date_from: date
     date_to: date
     agent: str | None = None
@@ -27,6 +60,7 @@ class CallFilter:
     def apply(self, stmt: Select) -> Select:
         start, _ = day_bounds(self.date_from)
         _, end = day_bounds(self.date_to)
+        stmt = self.scope.where(stmt)
         stmt = stmt.where(Call.start_time >= start, Call.start_time < end)
         if self.agent:
             stmt = stmt.where(or_(Call.agent_ext == self.agent, Call.missed_agent_ext == self.agent))
@@ -76,19 +110,29 @@ def summary(session: Session, f: CallFilter) -> dict:
     return {"total": sum(counts.values()), "by_status": {s: counts.get(s, 0) for s in STATUSES}}
 
 
-def call_detail(session: Session, call_id: int) -> dict | None:
+def visible_call(session: Session, call_id: int, scope: Scope) -> Call | None:
+    """The call if this scope may see it; None (-> 404, so other agents' call ids are not even confirmed)."""
     call = session.get(Call, call_id)
+    return call if call is not None and scope.allows(call) else None
+
+
+def call_detail(session: Session, call_id: int, scope: Scope) -> dict | None:
+    call = visible_call(session, call_id, scope)
     if call is None:
         return None
     ext = call.agent_ext or call.missed_agent_ext
     name = session.get(Agent, ext).name if ext and session.get(Agent, ext) else None
     legs = session.scalars(select(CallLeg).where(CallLeg.call_id == call_id).order_by(CallLeg.id)).all()
+    if scope.is_agent:   # an agent never sees which colleague rang before them
+        legs = [leg for leg in legs if leg.kind not in ("extension", "voicemail") or leg.to_number == scope.agent_ext]
     return {**_row(call, name), "legs": [{
         "id": leg.id, "kind": leg.kind, "start_time": leg.start_time.isoformat(), "to_number": leg.to_number,
         "disposition": leg.disposition, "duration": leg.duration, "ring_duration": leg.ring_duration,
         "talk_duration": leg.talk_duration, "reason": leg.reason} for leg in legs]}
 
 
-def team_agents(session: Session) -> list[dict]:
-    return [{"ext": a.ext, "name": a.name, "team": a.team}
-            for a in session.scalars(select(Agent).where(Agent.in_team).order_by(Agent.ext))]
+def team_agents(session: Session, scope: Scope) -> list[dict]:
+    stmt = select(Agent).where(Agent.in_team).order_by(Agent.ext)
+    if not scope.everything:
+        stmt = stmt.where(Agent.ext == scope.agent_ext) if scope.agent_ext else stmt.where(false())
+    return [{"ext": a.ext, "name": a.name, "team": a.team} for a in session.scalars(stmt)]
