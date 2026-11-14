@@ -54,7 +54,8 @@
            repeats only within the same team (Decision 3 said any team; real-week effect 0), the extra masked "top-5
            repeat callers" list, pypdf in the app image (tests run there). 216 passed / 5 skipped on PC; PDF + KPI +
            API tests in Docker: 12 + 90 passed.
-- [ ] 13. Spec status → done; roadmap Phase 4 items ticked ([~] while "Done when" unverified); merge to main (--no-ff)
+- [x] 13. Spec status → done; roadmap Phase 4 items ticked ([~] while "Done when" unverified); merge to main (--no-ff)
+          → merged; live DB migrated to 0004 (pg_dump first); stack rebuilt; beat catch-up made week 2026-11-01 + month 2026-10 PDFs in D:/callsight-data/reports
 
 ## Assumptions made by the builder (user asleep)
 - Repeat look-back counts earlier calls of the **same team** only (keeps "all teams = sum of teams").

@@ -1,7 +1,7 @@
 # Spec: KPI engine, dashboard and PDF reports
 
 **Roadmap items:** Phase 4, all four items (KPI engine, KPI dashboard, "Export report" PDF, scheduled reports)
-**Status:** approved (by 2 judge agents on the user's behalf, 2026-11-14 — user may revise)
+**Status:** done (built + reviewed + merged 2026-11-14; hand check of one week ⚠ NEEDS USER)
 
 ## Goal
 One click gives a correct weekly or monthly report per agent and for the team (mission: "Reports are manual" →

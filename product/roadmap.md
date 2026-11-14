@@ -65,16 +65,16 @@ call has a transcript within 15 min of hang-up.
 - [ ] Bad words / escalation flags (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
 - [ ] Silence, interruption & talk-ratio metrics from channel timings (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
 
-## Phase 4: KPI engine & reports
+## Phase 4: KPI engine & reports ([spec](../specs/2026-11-14-kpi-reports/spec.md); built 2026-11-14, "Done when" hand check ⚠ open)
 
 **Goal:** One click gives a correct weekly or monthly PDF per agent and for the team.
 **Done when:** KPIs for a test week match a hand calculation exactly; PDF (Arabic RTL)
 generates in < 30 s; weekly/monthly reports also auto-generate on schedule.
 
-- [ ] KPI engine (SQL views): calls, unanswered, AHT, avg satisfaction, repeat calls in 72h — definitions in mission.md (idea: user)
-- [ ] KPI dashboard: filter by week/month, agent, team (CS vs after-sales), charts + trend vs previous period (idea: user)
-- [ ] "Export report" button → PDF per agent + team summary, week or month (idea: user)
-- [ ] Scheduled reports: Sunday morning weekly, 1st of month monthly, saved in archive (idea: user)
+- [x] KPI engine: calls, unanswered, AHT, avg satisfaction, repeat calls in 72h — definitions in mission.md (idea: user)
+- [x] KPI dashboard: filter by week/month, agent, team (CS vs after-sales), charts + trend vs previous period (idea: user)
+- [x] "Export report" button → PDF per agent + team summary, week or month (idea: user)
+- [x] Scheduled reports: Sunday morning weekly, 1st of month monthly, saved in archive (idea: user)
 
 ## Phase 5: Live calls & silent listen
 
