@@ -48,8 +48,8 @@ call has a transcript within 15 min of hang-up.
 
 - [ ] Collect & hand-correct 30 representative calls (gold set: 30 × 60 s clips, typed by user) ([spec](../specs/2026-11-14-asr-benchmark/spec.md)) (idea: user)
 - [ ] Benchmark Jais-ASR / Audar-ASR / Whisper-large-v3 on gold set, pick the winner (source: [echonova-ai-solutions/arabic-asr-benchmark](https://github.com/echonova-ai-solutions/arabic-asr-benchmark))
-- [ ] Local OpenAI-compatible STT server, model chosen by config (source: [speaches-ai/speaches](https://github.com/speaches-ai/speaches))
-- [ ] `asr` worker queue: split stereo channels → transcribe → store segments with speaker + timestamps (idea: user)
+- [ ] STT model chosen by config (`ASR_MODEL`), served by our own `asr` worker, not a separate server (changed 2026-11-14, decision R2; speaches can't run Audar/Jais) ([spec](../specs/2026-11-14-transcription/spec.md)) (source: [speaches-ai/speaches](https://github.com/speaches-ai/speaches))
+- [ ] `asr` worker queue: mono recording → 30 s windows → transcribe → store segments with timestamps; speaker split via diarization later (recordings are mono, not stereo) ([spec](../specs/2026-11-14-transcription/spec.md)) (idea: user)
 - [ ] Transcript view next to the audio player; export transcript as .txt (idea: user)
 
 ## Phase 3: Satisfaction score 1–10 (fine-tuned model)
