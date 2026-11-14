@@ -1,0 +1,28 @@
+# Rules for call flags and silence metrics (spec 2026-11-14-call-analysis, decisions 10 + 11). No LLM involved.
+# Edits apply to new analyses at once; recompute old calls with: python -m callsight flags --recompute
+#
+# Phrases are matched as whole words on the normalised transcript (same normalisation as the word search:
+# hamza/alif forms, ة/ه and ى/ي are folded). Only kept windows are searched (silence/hallucination windows never).
+# Every flag means "needs listening": dialect, negation ("ما ابي المدير") and ASR errors give false hits.
+# ⚠ SMALL SEED LIST ONLY: the real bad-word, escalation and competitor lists must come from the manager.
+flags:
+  bad_words: []
+  escalation:
+    - ابي المدير
+    - ابغى المدير
+    - ابي اكلم المدير
+    - بشتكي
+    - بقدم شكوى
+    - وزارة التجارة
+  competitor: []
+
+# Silence metrics from the recording (RMS per frame, no diarization). Hold music is NOT silence.
+silence:
+  threshold_dbfs: -40        # frame quieter than this = silent
+  frame_ms: 50
+  min_silence_s: 2           # shorter pauses are normal speech gaps
+  long_silence_s: 10         # "hold-like" silence
+
+# A call whose transcript lost more than this share of its duration to dropped windows is not analysed (skipped).
+analysis:
+  max_dropped_share: 0.30

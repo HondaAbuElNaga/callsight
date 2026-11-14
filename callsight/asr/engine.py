@@ -162,8 +162,10 @@ class ModelHolder:
     (so a later Ollama job can use the 8 GB GPU; decision 8)."""
 
     def __init__(self, name: str, idle_unload_s: float = 300, factory: Callable | None = None,
-                 clock: Callable[[], float] = time.monotonic, start_timer: bool = True, load_retry_s: float = 120):
+                 clock: Callable[[], float] = time.monotonic, start_timer: bool = True, load_retry_s: float = 120,
+                 on_unload: Callable[[], None] | None = None):
         self.name, self.idle_unload_s, self.clock, self.load_retry_s = name, idle_unload_s, clock, load_retry_s
+        self.on_unload = on_unload               # e.g. release the GPU lock (call-analysis spec, decision 6)
         self.failed_at: float | None = None
         self.factory = factory or self._from_registry
         self.adapter = None
@@ -230,6 +232,11 @@ class ModelHolder:
             self.adapter = None
             free_gpu()
             log.info("asr model %s unloaded after %.0f s idle", self.name, self.idle_unload_s)
+            if self.on_unload is not None:
+                try:
+                    self.on_unload()
+                except Exception:                      # noqa: BLE001  the lock expires on its own
+                    log.warning("on_unload hook failed")
             return True
         finally:
             self.lock.release()

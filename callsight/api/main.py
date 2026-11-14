@@ -12,13 +12,13 @@ from typing import Annotated, Callable, Iterator
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import kpi, transcripts
 from ..config import RIYADH
-from ..db.models import (Agent, AppUser, Call, GoldClip, RecordingPlay, ReportArchive, ReportDownload,
+from ..db.models import (Agent, AppUser, Call, GoldClip, RecordingPlay, ReportArchive, ReportDownload, Transcript,
                          TranscriptAccess)
 from ..ingest.classify import TeamConfig
 from . import auth
@@ -39,6 +39,8 @@ class ApiConfig:
     reports_dir: Path | None = None
     asr_model: str = "whisper-large-v3"   # ASR_MODEL: its done transcript is the one displayed
     health: Callable[[Session], dict] | None = None    # health page data (callsight.health.collect)
+    llm_model: str = "qwen2.5:7b"                       # LLM_MODEL: its analysis (current prompt) is shown first
+    topics: Callable[[], dict] | None = None            # config/topics.yaml, re-read per request
 
 
 class LoginIn(BaseModel):
@@ -48,6 +50,12 @@ class LoginIn(BaseModel):
 
 class GoldTextIn(BaseModel):
     text: str = Field(max_length=10_000)
+
+
+class LabelIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    score: StrictInt = Field(ge=1, le=10)
+    note: str | None = Field(default=None, max_length=500)
 
 
 def audit_play(s: Session, user: AppUser, call_id: int) -> None:
@@ -364,6 +372,51 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         audit_play(s, user, c.call_id)
         return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, no-store"})
 
+    # ---------- call analysis + rating (spec 2026-11-14-call-analysis): admin + supervisor only ----------
+    # Agents get 403 for all of it (decision 9). The LLM estimate is blind-aware (decision 8).
+
+    def analysis_setup() -> tuple[dict, str]:
+        from ..analysis.llm import prompt_version
+        from ..analysis.settings import load_topics
+        from ..config import ROOT
+        topics = cfg.topics() if cfg.topics else load_topics(Path(os.getenv("TOPICS_FILE",
+                                                                            str(ROOT / "config" / "topics.yaml"))))
+        return topics, prompt_version(topics)
+
+    def staff_call(s: Session, call_id: int) -> Call:
+        c = s.get(Call, call_id)
+        if c is None:
+            raise HTTPException(404, "no such call")
+        return c
+
+    @app.get("/api/calls/{call_id}/analysis")
+    def call_analysis(call_id: int, user: Manager, s: DB) -> dict:
+        from ..analysis import views
+        staff_call(s, call_id)
+        topics, pv = analysis_setup()
+        return views.call_analysis(s, call_id, user.id, topics, cfg.llm_model, pv)
+
+    @app.get("/api/rating/queue")
+    def rating_queue(user: Manager, s: DB) -> dict:
+        from ..analysis import views
+        return views.rating_queue(s, user.id)
+
+    @app.get("/api/rating/calls/{call_id}")
+    def rating_call(call_id: int, user: Manager, s: DB) -> dict:
+        from ..analysis import views
+        topics, pv = analysis_setup()
+        return views.rating_call(s, staff_call(s, call_id), user.id, topics, cfg.llm_model, pv)
+
+    @app.put("/api/rating/calls/{call_id}")
+    def save_rating(call_id: int, body: LabelIn, user: Manager, s: DB) -> dict:
+        from ..analysis import views
+        c = staff_call(s, call_id)
+        if not s.scalar(select(Transcript.id).where(Transcript.call_id == c.id, Transcript.status == "done")
+                        .limit(1)):
+            raise HTTPException(409, "call has no transcript to rate")
+        _, pv = analysis_setup()
+        return views.save_label(s, c, user.id, body.score, body.note, cfg.llm_model, pv)
+
     # ---------- health (admin only; no paths, hostnames or error texts in the answer) ----------
 
     @app.get("/api/health")
@@ -389,6 +442,7 @@ def _app_from_env() -> FastAPI:
     return create_app(session_factory(), ApiConfig(
         secret=secret, audio_dir=settings().audio_dir, static_dir=static, teams=teams, reports_dir=reports_dir(),
         asr_model=os.getenv("ASR_MODEL", "whisper-large-v3").strip(),
+        llm_model=os.getenv("LLM_MODEL", "qwen2.5:7b").strip(),
         cookie_secure=os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes"),
         health=_health_from_env()))
 

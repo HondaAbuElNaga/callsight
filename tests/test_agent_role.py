@@ -28,6 +28,9 @@ STAFF_ONLY = {
     ("GET", "/api/reports/pdf"), ("GET", "/api/reports"), ("GET", "/api/reports/{report_id}/pdf"),
     ("GET", "/api/goldset"), ("GET", "/api/goldset/{clip_id}"), ("PUT", "/api/goldset/{clip_id}"),
     ("GET", "/api/goldset/{clip_id}/audio"), ("GET", "/api/health"),
+    # call analysis (spec 2026-11-14-call-analysis, decision 9): agents see nothing of it
+    ("GET", "/api/calls/{call_id}/analysis"), ("GET", "/api/rating/queue"), ("GET", "/api/rating/calls/{call_id}"),
+    ("PUT", "/api/rating/calls/{call_id}"),
 }
 CATCH_ALL = {("GET", "/api/{rest:path}")}       # plain 404 for unknown /api paths
 
@@ -116,11 +119,11 @@ def test_every_api_route_is_classified(env):
 
 
 def test_staff_only_routes_refuse_agents(env):
-    client, *_, app = env
+    client, _, ids, app = env
     login(client)
     for method, path in sorted(_api_routes(app) & STAFF_ONLY):
-        url = path.replace("{report_id}", "1").replace("{clip_id}", "1")
-        r = client.request(method, url, json={"text": "x"} if method == "PUT" else None)
+        url = path.replace("{report_id}", "1").replace("{clip_id}", "1").replace("{call_id}", str(ids["own"]))
+        r = client.request(method, url, json={"text": "x", "score": 5} if method == "PUT" else None)
         assert r.status_code == 403, (method, path, r.status_code)
 
 
