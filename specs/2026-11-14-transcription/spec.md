@@ -3,7 +3,7 @@
 **Roadmap items:** Phase 2, "Local OpenAI-compatible STT server, model chosen by config" (changed: no separate server,
 see decision R2 in `docs/overnight-plan.md`) and "`asr` worker queue: … transcribe → store segments with speaker +
 timestamps"
-**Status:** approved (by 2 judge agents on the user's behalf, 2026-11-14 — user may revise)
+**Status:** done (2026-11-14; automatic transcription waits for `ASR_START_DATE` ⚠ NEEDS USER)
 
 ## Goal
 Readable text for every answered team call, so supervisors can read/search calls and Phase 3 can score them.

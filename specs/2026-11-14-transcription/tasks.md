@@ -31,15 +31,19 @@
            `docker compose config` OK; default services = postgres, redis, worker, api, beat (no GPU).
            Note: postgres + redis now also join network `asr-internal` → next `up -d` recreates them (data in
            volume, safe). Jais image not built (server only, untested on this PC).
-- [ ] 10. Run on this PC: 5 real calls transcribed (after the benchmark run frees the GPU); `transcribe status`
+- [x] 10. Run on this PC: 5 real calls transcribed (after the benchmark run frees the GPU); `transcribe status`
          → orchestrator, once the GPU is free (after merging 0004 + this branch, pg_dump first):
            `docker compose up -d --build worker api beat` (runs alembic 0005), then
            `docker compose --profile asr up -d --build asr-worker`,
            `docker compose --profile asr exec asr-worker python -m callsight transcribe --days 2 --limit 5`,
            wait ~2 min, `docker compose --profile asr exec asr-worker python -m callsight transcribe status`,
            then `docker compose --profile asr stop asr-worker` and check `nvidia-smi` shows the memory freed.
+           → done 2026-11-14 on the live DB (alembic 0005): 5/5 `done` (calls 3783, 3622, 3254, 3071, 2865);
+           model load 125 s, then 187 s audio in 45 s, 494 s in 63 s, 51 s in 6.5 s (RTF 0.13–0.24); logs carry
+           ids/counts only; after `stop` nvidia-smi = 252 MiB. 4 of 30 windows were dropped (repetition/low-confidence
+           filter) — watch this on the gold set.
 - [ ] 11. ⚠ NEEDS USER: set `ASR_START_DATE` in `.env` when you want automatic transcription; check latency on LAN
-- [ ] 12. Verify acceptance criteria; review with 3 subagents; fix; spec → done; roadmap; merge (--no-ff)
+- [x] 12. Verify acceptance criteria; review with 3 subagents; fix; spec → done; roadmap; merge (--no-ff)
          → [x] review part done (3 reviewers, findings verified by the orchestrator, all fixed 2026-11-14):
            HIGH model-load failure / wrong model no longer terminal (row stays queued, no try used, holder
            back-off, unknown ASR_MODEL refuses worker start) + `transcribe --retry-errors --since D [--limit N]`;
@@ -67,3 +71,4 @@
 - Latency in `status` = only transcripts queued within 1 h of hang-up (live calls), last 7 days; backfills excluded.
 - A task whose row was queued for another model than the worker's `ASR_MODEL` marks the row `error`.
 - Unknown model errors store only `model failed (<ExceptionType>)` (exception text could quote transcript words).
+         → 289 passed, 5 skipped; 3 reviewers × 2 rounds, all findings fixed (e9e08df, fa9c5a6); merged 9623394.
