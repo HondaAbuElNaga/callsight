@@ -2,7 +2,7 @@
 
 **Roadmap items:** Phase 2, "Collect & hand-correct 30 representative calls (gold set)" and
 "Benchmark Jais-ASR / Audar-ASR / Whisper-large-v3 on gold set, pick the winner"
-**Status:** approved
+**Status:** built — waiting for the user (30 reference texts); then `goldset score` names the winner
 
 ## Goal
 Choose the speech-to-text model for our own Saudi calls by measuring it, not by trusting public numbers. Our recordings are

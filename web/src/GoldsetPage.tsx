@@ -52,7 +52,7 @@ export function GoldsetPage({ me, onBack, onLogout, onExpired }: Props) {
   }
 
   async function save(): Promise<boolean> {
-    if (current === null) return false;
+    if (current === null) return true;                // nothing open = nothing to save (logout/back must work)
     if (text.trim() === savedText.trim()) return true;
     setBusy(true);
     try {
