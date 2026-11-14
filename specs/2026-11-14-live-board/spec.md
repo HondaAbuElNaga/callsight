@@ -2,7 +2,7 @@
 
 **Roadmap items:** Phase 5: "Live event stream from PBX adapter → WebSocket → live board", "Listen button"
 (built behind a switch that stays OFF: the user paused silent listen), "Access control + audit log of who listened".
-**Status:** draft
+**Status:** approved (by 2 judge agents on the user's behalf, 2026-11-14 — user may revise)
 
 ## Goal
 The supervisor sees all active team calls (who is talking, caller, duration, queue waiting) updating within 2 s
@@ -54,3 +54,39 @@ connects silently").
 2. **Push:** API WebSocket (recommended; FastAPI has it) vs polling every 2 s.
 3. **Caller number on the board:** masked (last 4 digits) by default (recommended) vs full.
 4. **Build Listen code now** behind an OFF switch (recommended, roadmap) vs not at all until the user un-pauses.
+
+## Decisions (2 judges, 2026-11-14; override the text above where different)
+1. **Token:** no sharing (ingest keeps its token in process memory; sharing = refresh races). The live service does its
+   **own single login**, refreshes only via refresh_token, reconnects the WebSocket with the new token every ~25 min,
+   reuses a saved token (< 25 min old) after a restart, at most 1 login per 10 min, calls `del_token` on clean
+   shutdown. New Redis key **`pbx:auth_blocked`**: set by ANY process (ingest, CLI, live) on a failed login or errcode
+   60002, cleared only by hand (`python -m callsight pbx-unblock`); every process checks it before logging in. Token
+   budget documented: worker + CLI + live ≤ 3 of 8.
+2. **Push:** API WebSocket with an exact **Origin allowlist** from config (rejected before accept; SameSite doesn't
+   cover other localhost ports); `token_version`/expiry re-checked, sockets closed on logout/disable/8 h. One Redis
+   subscriber per API process fanning out; snapshot + deltas carry a sequence number, the client re-fetches the
+   snapshot on a gap; browser back-off 1 → 30 s with jitter; max 3 sockets per user / 20 total; bounded send queue,
+   slow clients dropped.
+3. **Masking:** caller numbers masked (last 4) **before** publishing to Redis, for every role and in logs; raw
+   payloads and the `wss://…?access_token=` URL are never logged.
+4. **Listen:** server-side stub only: `POST /api/live/{call}/listen` → 403 unless `LISTEN_ENABLED=true` (read on every
+   request) and the PBX adapter's `listen()` refuses too (2nd gate); **no button markup ships while off**; append-only
+   `listen_audit` (pending row before the PBX call, result after; denied/403 attempts audited too; user, ext, IP, call,
+   agent, times). Before Listen is ever enabled ⚠ NEEDS USER: IVR notice "calls may be recorded or monitored", a
+   written staff monitoring policy, user/lawyer confirmation (PDPL; Anti-Cyber Crime Law art. 3). Notice on the page.
+5. **Events (Yeastar docs):** 30011 Call State Changed (`msg` may be a JSON string; `call_id`, `members[]` typed
+   extension/inbound/outbound/internal with `channel_id` + `member_status` ALERT/RING/ANSWERED/ANSWER/HOLD/BYE/
+   EARLYMEDIA; `call_path` only for queue/IVR/ring group), 30012 Call End Details. Subscribe URL needs the HTTPS port;
+   success = errcode 0; heartbeat every **30 s** (connection closes after 60 s idle), reply "heartbeat response";
+   heartbeat timeout detection. TLS via `YEASTAR_CA_FILE` when S7 adds it. Fixtures labelled **synthetic**.
+6. **No snapshot API assumed:** a (re)connect clears the state and shows "جاري المزامنة" until events arrive.
+   Agent status (30007/30008/30009/30029) and the queue waiting list = **cut first** (payloads uncaptured; queue list
+   best effort from `call_path`).
+7. **Off by default, double gate:** the `live` service exits 0 unless `LIVE_ENABLED=true`, `restart: on-failure`
+   with a cap (not unless-stopped); test: default `compose up` makes no PBX connection.
+8. **Memory caps:** ≤ 500 active calls, prune calls older than 4 h.
+9. ⚠ NEEDS USER (office LAN): enable "Call Status Monitor" per trunk on the PBX (a PBX setting — not changed by
+   Claude), live test < 2 s, capture real 30011 payloads.
+10. **Cut line:** Must: parser + state (30011/30012), live service off by default + `pbx:auth_blocked` (also wired into
+    ingest/CLI login), API WebSocket with Origin check, page with "no live data", masking. Should: Listen 403 stub +
+    `listen_audit`. Cut first: agent-status row, queue list, any PBX wiring of Listen.
