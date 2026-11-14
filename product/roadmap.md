@@ -92,10 +92,10 @@ the supervisor's phone and connects silently to the chosen call (customer + agen
 **Goal:** Runs unattended, safe, and grows with the team.
 **Done when:** restore-from-backup drill succeeds; load test of 2,000 calls/day processes without backlog.
 
-- [ ] Roles & permissions (admin / supervisor / agent sees own calls only)
+- [x] Roles & permissions (admin / supervisor / agent sees own calls only) ([spec](../specs/2026-11-14-hardening/spec.md))
 - [ ] Rules editor UI: manager edits bad-word lists, thresholds, KPI targets without code (source: [Azure-Samples/tayra](https://github.com/Azure-Samples/tayra))
-- [ ] Backups (DB + audio), retention policy for recordings, disk alerts
-- [ ] Trust the PBX's own self-signed certificate (`YEASTAR_CA_FILE`) instead of `YEASTAR_VERIFY_SSL=false` (review 2026-11-12)
-- [ ] Pin exact dependency versions with hashes (pip-tools) (review 2026-11-12)
-- [ ] Monitoring: queue lengths, worker health, GPU usage
-- [ ] Scale-out guide: extra workers / second GPU box; add new agents/queues by config
+- [x] Backups (DB + audio), retention policy for recordings, disk alerts ([spec](../specs/2026-11-14-hardening/spec.md))
+- [x] Trust the PBX's own self-signed certificate (`YEASTAR_CA_FILE`) instead of `YEASTAR_VERIFY_SSL=false` (review 2026-11-12) ([spec](../specs/2026-11-14-hardening/spec.md))
+- [x] Pin exact dependency versions with hashes (pip-tools) (review 2026-11-12) ([spec](../specs/2026-11-14-hardening/spec.md))
+- [x] Monitoring: queue lengths, worker health, GPU usage ([spec](../specs/2026-11-14-hardening/spec.md))
+- [~] Scale-out guide: extra workers / second GPU box; add new agents/queues by config (short version: docs/scale-out.md) ([spec](../specs/2026-11-14-hardening/spec.md))

@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision = '0007'
-down_revision = '0005'  # down_revision becomes "0006" when merged after the hardening spec
+down_revision = '0006'
 branch_labels = None
 depends_on = None
 

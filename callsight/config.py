@@ -33,6 +33,10 @@ class Settings:
                                   ("YEASTAR_CLIENT_SECRET", self.yeastar_client_secret)) if not v]
         if missing:
             raise RuntimeError(f"Missing in .env: {', '.join(missing)} (see .env.example)")
+    yeastar_ca_file: str | None = None          # PBX's own certificate (PEM); verified against it when set
+    yeastar_cert_sha256: str | None = None      # fingerprint pin, checked before each login
+    yeastar_check_hostname: bool = True
+    backup_dir: Path = ROOT / "data" / "backup"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -48,6 +52,10 @@ class Settings:
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
             audio_dir=Path(os.getenv("AUDIO_DIR", str(ROOT / "data" / "audio"))),
             teams_file=Path(os.getenv("TEAMS_FILE", str(ROOT / "config" / "teams.yaml"))),
+            yeastar_ca_file=os.getenv("YEASTAR_CA_FILE") or None,
+            yeastar_cert_sha256=os.getenv("YEASTAR_CERT_SHA256") or None,
+            yeastar_check_hostname=os.getenv("YEASTAR_TLS_CHECK_HOSTNAME", "true").lower() not in ("0", "false", "no"),
+            backup_dir=Path(os.getenv("BACKUP_DIR", str(ROOT / "data" / "backup"))),
         )
 
 

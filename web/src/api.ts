@@ -131,6 +131,9 @@ export interface ArchivedReport {
   generated_at: string;
 }
 
+export interface HealthItem { key: string; state: "ok" | "warn" | "bad" | "off"; [k: string]: unknown }
+export interface Health { ok: boolean; problems: string[]; checked_at: string; items: HealthItem[] }
+
 export class Unauthorized extends Error {}
 export class NotFound extends Error {}
 export class BadRequest extends Error {}
@@ -180,6 +183,7 @@ export const api = {
   reportPdfUrl: (f: KpiFilters) => `/api/reports/pdf?${kpiQuery(f)}`,
   reports: () => get<ArchivedReport[]>("/api/reports"),
   archivedPdfUrl: (id: number) => `/api/reports/${id}/pdf`,
+  health: () => get<Health>("/api/health"),
   goldset: () => get<GoldClip[]>("/api/goldset"),
   goldClip: (id: number) => get<GoldClip>(`/api/goldset/${id}`),
   goldAudioUrl: (id: number) => `/api/goldset/${id}/audio`,

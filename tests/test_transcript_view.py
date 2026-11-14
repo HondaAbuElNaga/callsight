@@ -128,19 +128,24 @@ def test_parse_words_rules():
 
 # ---------- auth ----------
 
-def test_transcript_routes_need_login_and_manager_role(env):
+def test_transcript_routes_login_and_agent_scope(env):
+    """Agents (hardening spec): transcript + .txt of their OWN calls (audited); others' calls 404; no word search."""
     client, Session = env
     with Session() as s:
-        c = make_call(s)
-        add_transcript(s, c, ["مرحبا"])
-    for url in (f"/api/calls/{c.id}/transcript", f"/api/calls/{c.id}/transcript.txt"):
+        own, other = make_call(s), make_call(s, hour=11, agent="104")
+        add_transcript(s, own, ["مرحبا"])
+        add_transcript(s, other, ["مرحبا"])
+    for url in (f"/api/calls/{own.id}/transcript", f"/api/calls/{own.id}/transcript.txt"):
         assert client.get(url).status_code == 401, url
-    login(client, "agent1")                      # future agent role: denied until Phase 6
-    for url in (f"/api/calls/{c.id}/transcript", f"/api/calls/{c.id}/transcript.txt"):
-        assert client.get(url).status_code == 403, url
+    login(client, "agent1")                      # ext 119
+    for url in (f"/api/calls/{other.id}/transcript", f"/api/calls/{other.id}/transcript.txt"):
+        assert client.get(url).status_code == 404, url
+    assert accesses(Session) == []               # refused requests are not audited
+    assert client.get(f"/api/calls/{own.id}/transcript").status_code == 200
+    assert client.get(f"/api/calls/{own.id}/transcript.txt").status_code == 200
+    assert sorted(a.kind for a in accesses(Session)) == ["export", "view"]
     assert client.get("/api/calls", params={**DAYQ, "words": "مرحبا"}).status_code == 403
     assert client.get("/api/calls/summary", params={**DAYQ, "words": "مرحبا"}).status_code == 403
-    assert accesses(Session) == []
 
 
 # ---------- view ----------
@@ -300,13 +305,13 @@ def test_search_counts_a_call_once_and_uses_displayed_transcript(env):
 
 
 def test_search_escapes_like_wildcards(env, engine):
-    from callsight.api.calls import CallFilter, list_calls, summary
+    from callsight.api.calls import CallFilter, Scope, list_calls, summary
     client, Session = env
     with Session() as s:
         c = make_call(s)
         add_transcript(s, c, ["الفاتورة"])
         for w in ("%%", "__", "\\%"):
-            f = CallFilter(DAY, DAY, words=(w,), asr_model=MODEL)
+            f = CallFilter(Scope(everything=True), DAY, DAY, words=(w,), asr_model=MODEL)
             assert list_calls(s, f)["total"] == summary(s, f)["total"] == 0, w
 
 

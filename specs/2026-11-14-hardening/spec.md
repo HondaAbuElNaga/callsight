@@ -3,7 +3,7 @@
 **Roadmap items:** Phase 6: "Roles & permissions", "Backups (DB + audio), retention policy, disk alerts",
 "Trust the PBX's own self-signed certificate (`YEASTAR_CA_FILE`)", "Pin exact dependency versions with hashes",
 "Monitoring: queue lengths, worker health, GPU usage", "Scale-out guide". ("Rules editor UI" → see Open question 4.)
-**Status:** approved (by 2 judge agents on the user's behalf, 2026-11-14 — user may revise)
+**Status:** done (2026-11-14; load test + GPU-image hashes = [~] stretch; health screenshot + user steps ⚠ NEEDS USER)
 
 ## Goal
 The system runs unattended and safely: agents see only their own calls, data is backed up and old personal data is

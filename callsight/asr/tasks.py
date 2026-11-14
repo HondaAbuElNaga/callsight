@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from celery.signals import worker_init
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from .. import app as wiring
@@ -27,7 +27,8 @@ from . import queueing
 log = logging.getLogger(__name__)
 _holder = None                                   # one model per worker process
 NOT_READY_RETRY_S = 300                          # worker can't load its model: try the call again in 5 min
-OOM_RETRY_S = 60                                 # CUDA out of memory: one more try after the cache was freed
+MAINT_WAIT_S = 300                               # backup/retention running: wait, then try again
+OOM_RETRY_S = 60                                # CUDA out of memory: one more try after the cache was freed
 
 
 def _utcnow() -> datetime:
@@ -132,6 +133,29 @@ def _save(session: Session, row: Transcript, result, revision: str | None, compu
     session.commit()
 
 
+def _park(call_id: int, model: str, due_in_s: int) -> None:
+    """A parked (countdown) message is outside the Redis list: move `queued_at` to when it is due, so the reaper
+    doesn't count it as lost right after maintenance ends. Never fails the task."""
+    try:
+        with wiring.session_factory()() as s:
+            s.execute(update(Transcript).where(Transcript.call_id == call_id, Transcript.model == model,
+                                               Transcript.status == "queued")
+                      .values(queued_at=_utcnow() + timedelta(seconds=due_in_s)))
+            s.commit()
+    except Exception:                            # noqa: BLE001
+        log.warning("call %s: queued_at not moved while waiting for maintenance", call_id)
+
+
+def _maint_busy() -> bool:
+    """True while backup/retention holds the maintenance lock. Redis trouble never blocks transcription."""
+    from ..jobs import redis_client
+    from ..locks import maint_busy
+    try:
+        return maint_busy(redis_client())
+    except Exception:                            # noqa: BLE001
+        return False
+
+
 def holder():
     global _holder
     if _holder is None:
@@ -152,6 +176,10 @@ def _check_config(**_) -> None:
 def transcribe_call(call_id: int, model: str | None = None) -> dict:
     h = holder()
     model = model or h.name
+    if _maint_busy():                            # backup/retention running: don't compete for disk, try in 5 min
+        _park(call_id, model, MAINT_WAIT_S)
+        send_transcribe(call_id, model, countdown=MAINT_WAIT_S)
+        return {"call_id": call_id, "status": "queued", "maint_wait": True}
     with wiring.session_factory()() as s:
         r = process(s, call_id, model, h, wiring.settings().audio_dir)
     if r.get("retry"):
