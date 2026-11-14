@@ -82,7 +82,8 @@ services:
     environment:
       AUDIO_DIR: /data/audio
       BENCH_OUT: /out
-      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}   # models already cached; set 0 once to download a new one
+      HF_HUB_OFFLINE: "1"
+    network_mode: none                     # real call audio is mounted: no network at all (models come from the cache)
     volumes:
       - ${AUDIO_HOST_DIR:-./data/audio}/goldset:/data/audio/goldset:ro   # read-only: the bench never changes clips
       - ./data/asr-bench:/out
@@ -104,10 +105,12 @@ services:
       dockerfile: docker/asr-bench/Dockerfile
       args:
         REQS: requirements-jais.txt
+        TORCH_REQS: requirements-jais-torch.txt
     environment:
       AUDIO_DIR: /data/audio
       BENCH_OUT: /out
-      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}   # models already cached; set 0 once to download a new one
+      HF_HUB_OFFLINE: "1"
+    network_mode: none                     # real call audio is mounted: no network at all (models come from the cache)
     volumes:
       - ${AUDIO_HOST_DIR:-./data/audio}/goldset:/data/audio/goldset:ro
       - ./data/asr-bench:/out
@@ -119,6 +122,18 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+
+  # Download a model into the cache. Network ON, but NO call audio mounted. Only needed for a new model/revision:
+  #   docker compose run --rm asr-bench-download openai/whisper-large-v3 --revision <sha>
+  asr-bench-download:
+    profiles: ["bench"]
+    image: callsight-asr-bench
+    entrypoint: ["hf", "download"]
+    environment:
+      HF_HOME: /models
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    volumes:
+      - hf-models:/models
 
 volumes:
   pgdata:

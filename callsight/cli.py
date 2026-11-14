@@ -141,7 +141,7 @@ def _goldset(a: argparse.Namespace) -> int:
         with wiring.session_factory()() as s:
             clips = pick(s, wiring.settings().audio_dir, sorted(team.ext_team), n=a.n, seconds=a.seconds, seed=a.seed)
             calls = [s.get(Call, c.call_id) for c in clips]
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         print("ERROR:", exc, file=sys.stderr)
         return 1
     print(f"{len(clips)} clips cut into {wiring.settings().audio_dir / 'goldset'}")
@@ -161,7 +161,8 @@ def _goldset_score(a: argparse.Namespace) -> int:
     if not clips or not bench_dir.is_dir():
         print("ERROR: no gold set or no benchmark results folder", file=sys.stderr)
         return 1
-    text, results = build_report(refs, bench_dir, len(clips))
+    text, examples, results = build_report(refs, bench_dir, len(clips))
+    (bench_dir / "asr-benchmark-examples.md").write_text(examples, encoding="utf-8")   # git-ignored: customer speech
     Path(a.out).write_text(text + "\n", encoding="utf-8")
     for r in results:
         print(f"{r.model}: {r.clips} clips, WER {r.score.wer:.1%}, CER {r.score.cer:.1%}")

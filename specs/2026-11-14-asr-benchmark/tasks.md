@@ -24,5 +24,16 @@
            the 8 GB GPU into shared RAM: result is usable for accuracy, its speed is NOT representative (server)
 - [ ] 9. Run all models on the 30 clips (after all texts are typed); write `docs/asr-benchmark.md`
 - [ ] 10. Verify the acceptance criteria
-- [ ] 11. Review with 3 subagents (bugs, security, accuracy); fix confirmed findings
+- [x] 11. Review with 3 subagents (bugs, security, accuracy); fix confirmed findings
+         → 3 reviewers: 21 findings (1 critical, 1 high, 11 medium, 8 low; some found by 2 reviewers).
+           Confirmed + fixed: cli.py syntax error (critical: every CLI command broken; now an import test), errored clips
+           never retried (high), tiny 2 s tail window (even windows now; first overnight run discarded + re-run),
+           overlap merge on raw words (now normalised), repeat cap not echonova (strict WER + "WER capped" column),
+           report wrote customer speech into git-tracked docs/ (numbers only now; examples in git-ignored data/),
+           bench containers had network while real audio mounted (`network_mode: none` + separate download service),
+           unpinned deps + mixed indexes (exact pins, torch from PyTorch index only), tech-stack row wrong, Jais not
+           marked "needs server", GiB units, ASR_MODEL hint, RTF wording, unsaved typed text lost on logout/expiry
+           (draft kept in sessionStorage + close-tab warning), short/broken WAVs in picker, --limit 0.
+           Accepted as known limit: picker doesn't balance call length (clips already cut + being typed).
+           169 tests pass. Re-review of the critical/high fixes: see below.
 - [ ] 12. Spec status → done; tick roadmap items; update "Current position"; merge to main

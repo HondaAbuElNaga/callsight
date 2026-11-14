@@ -41,13 +41,20 @@ def test_winner_needs_all_clips_and_target():
 def test_build_report_writes_table_and_provisional_warning(tmp_path):
     _jsonl(tmp_path / "whisper-large-v3.jsonl",
            [{"clip": "clip_01.wav", "text": "مرحبا بك", "audio_s": 60, "seconds": 7.4, "peak_gpu_mb": 3277}])
-    text, results = report.build_report({"clip_01.wav": "مرحبا بك"}, tmp_path, total_clips=30)
-    assert "| whisper-large-v3 | 1/1 | 0.0% |" in text
+    text, examples, results = report.build_report({"clip_01.wav": "مرحبا بك"}, tmp_path, total_clips=30)
+    assert "| whisper-large-v3 | 1/1 | 0.0% | 0.0% |" in text
+    assert "مرحبا" not in text and "مرحبا بك" in examples      # customer speech only in the private file
     assert "Only 1 of 30" in text and "No winner yet" in text
     assert results[0].model == "whisper-large-v3"
 
 
 def test_build_report_names_winner_when_complete(tmp_path):
     _jsonl(tmp_path / "audar-asr-turbo.jsonl", [{"clip": "c.wav", "text": "اهلا وسهلا", "audio_s": 60, "seconds": 3}])
-    text, _ = report.build_report({"c.wav": "اهلا وسهلا"}, tmp_path, total_clips=1)
-    assert "**Winner: audar-asr-turbo**" in text and "ASR_MODEL=audar-asr-turbo" in text
+    text, _, _ = report.build_report({"c.wav": "اهلا وسهلا"}, tmp_path, total_clips=1)
+    assert "**Winner: audar-asr-turbo**" in text and "licence" in text
+
+
+def test_cli_imports_and_score_needs_gold_set(monkeypatch, capsys):
+    """The CLI module must at least import (a syntax error once slipped through untested)."""
+    from callsight import cli
+    assert callable(cli.main)

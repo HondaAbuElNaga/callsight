@@ -50,7 +50,9 @@ def done_clips(out: Path) -> set[str]:
     done = set()
     for line in out.read_text(encoding="utf-8").splitlines():
         try:
-            done.add(json.loads(line)["clip"])
+            rec = json.loads(line)
+            if "error" not in rec:                   # failed clips (e.g. CUDA out of memory) run again
+                done.add(rec["clip"])
         except (ValueError, KeyError, TypeError):
             continue
     return done
@@ -159,7 +161,9 @@ def run(model_name: str, gold_dir: Path, out_dir: Path, limit: int | None) -> in
     clips = list_clips(gold_dir)
     out = out_dir / f"{model_name}.jsonl"
     done = done_clips(out)
-    todo = [c for c in clips if c.name not in done][:limit] if limit else [c for c in clips if c.name not in done]
+    todo = [c for c in clips if c.name not in done]
+    if limit is not None:
+        todo = todo[:limit]
     print(f"{model_name}: {len(clips)} clips, {len(done)} already done, {len(todo)} to run -> {out}")
     if not todo:
         return 0
@@ -170,7 +174,11 @@ def run(model_name: str, gold_dir: Path, out_dir: Path, limit: int | None) -> in
     load_s = time.perf_counter() - t0
     print(f"model loaded in {load_s:.0f} s")
 
+    errors_in_row = 0
     for clip in todo:
+        if errors_in_row >= 3:
+            print("3 errors in a row: stopping (GPU state is probably broken); run again to retry")
+            return 1
         torch.cuda.reset_peak_memory_stats()
         samples, rate = read_wav(clip)
         audio = to_16k(samples, rate)
@@ -183,8 +191,10 @@ def run(model_name: str, gold_dir: Path, out_dir: Path, limit: int | None) -> in
             torch.cuda.synchronize()
             record["text"] = merge_texts(parts)
             record["chunks"] = len(parts)
+            errors_in_row = 0
         except Exception as exc:                             # one bad clip must not stop the run
             record["text"], record["error"] = "", f"{type(exc).__name__}: {exc}"[:300]
+            errors_in_row += 1
         record["seconds"] = round(time.perf_counter() - t, 2)
         record["peak_gpu_mb"] = round(torch.cuda.max_memory_allocated() / 2**20)
         append_record(out, record)
@@ -193,11 +203,18 @@ def run(model_name: str, gold_dir: Path, out_dir: Path, limit: int | None) -> in
     return 0
 
 
+def _positive(text: str) -> int:
+    n = int(text)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return n
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m callsight.asr.bench")
     ap.add_argument("--model", choices=sorted(MODELS))
     ap.add_argument("--check", action="store_true", help="only show whether the GPU works")
-    ap.add_argument("--limit", type=int, help="run at most this many clips (smoke test)")
+    ap.add_argument("--limit", type=_positive, help="run at most this many clips (smoke test)")
     ap.add_argument("--gold-dir", type=Path, default=Path(os.environ.get("AUDIO_DIR", "/data/audio")) / "goldset")
     ap.add_argument("--out-dir", type=Path, default=Path(os.environ.get("BENCH_OUT", "/out")))
     args = ap.parse_args(argv)

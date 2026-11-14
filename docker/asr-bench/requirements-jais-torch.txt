@@ -1,0 +1,5 @@
+# Installed first, ONLY from PyTorch's CUDA 12.8 index (--index-url, no PyPI mixing = no dependency confusion).
+# compressed-tensors needs torch >= 2.10; the default PyPI wheel is CUDA 13.2, too new for this PC's driver.
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+torchaudio==2.11.0+cu128

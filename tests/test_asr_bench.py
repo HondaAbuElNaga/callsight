@@ -50,3 +50,15 @@ def test_append_record_is_utf8_one_line(tmp_path):
 def test_unknown_model_rejected():
     with pytest.raises(SystemExit):
         bench.main(["--model", "no-such-model"])
+
+
+def test_done_clips_retries_errored(tmp_path):
+    out = tmp_path / "m.jsonl"
+    out.write_text('{"clip": "a.wav", "text": "x"}\n{"clip": "b.wav", "text": "", "error": "OOM"}\n',
+                   encoding="utf-8")
+    assert bench.done_clips(out) == {"a.wav"}
+
+
+def test_limit_must_be_positive():
+    with pytest.raises(SystemExit):
+        bench.main(["--model", "whisper-large-v3", "--limit", "0"])

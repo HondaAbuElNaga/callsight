@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import random
 import wave
+import wave as _wave
 from collections import defaultdict
 from pathlib import Path
 
@@ -35,6 +36,13 @@ def cut_wav(src: Path, dest: Path, start_s: float, seconds: float) -> float:
         w.writeframes(frames)
     tmp.replace(dest)
     return count / rate
+
+
+def _long_enough(path: Path, seconds: float) -> bool:
+    try:
+        return wav_seconds(path) >= seconds
+    except (OSError, EOFError, _wave.Error):
+        return False
 
 
 def candidates(session: Session, agents: list[str], min_talk: float) -> dict[str, list[Call]]:
@@ -71,6 +79,8 @@ def pick(session: Session, audio_dir: Path, agents: list[str], n: int = 30, seco
                 c = pools[a].pop()
                 if c.customer_number and c.customer_number in seen_numbers:
                     continue                              # one clip per customer
+                if not _long_enough(audio_dir / c.recording_path, seconds):
+                    continue                              # talk time said long enough, the file is not (or broken)
                 chosen.append(c)
                 if c.customer_number:
                     seen_numbers.add(c.customer_number)

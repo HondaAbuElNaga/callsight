@@ -24,7 +24,7 @@ This PC: NVIDIA RTX 5050 Laptop, **8 GB** GPU memory, 16 GB RAM, Docker GPU acce
     long calls, picked by a script with a fixed seed), cut from the middle of the call. Stored with the call id.
   - **Transcription page** in our web app (admin only): play a clip, type exactly what is said, save; shows progress (x / 30).
   - **Benchmark runner**: a GPU Docker container that runs each model on the 30 clips (8 kHz → 16 kHz), measures
-    WER and CER after Arabic normalisation, speed (seconds of audio per second) and peak GPU memory.
+    WER and CER after Arabic normalisation, speed (RTF = compute seconds per audio second, plus × real time) and peak GPU memory.
   - Models: Whisper large-v3, Audar-ASR-V1-Turbo, Jais-ASR (4-bit, only if it fits in 8 GB; otherwise marked "needs server").
   - Report `docs/asr-benchmark.md`: table per model, 3 example clips side by side, recommendation.
 - Out:
@@ -85,3 +85,13 @@ This PC: NVIDIA RTX 5050 Laptop, **8 GB** GPU memory, 16 GB RAM, Docker GPU acce
 6. Typing rules (shown on the page): type every word as spoken in dialect, both speakers in order, no corrections;
    leave out words that can't be heard (no "[unclear]" tag, it would count as wrong words); numbers as digits.
    Known effect: a model that writes numbers as words gets those counted as errors; reported separately if it matters.
+7. (Review 2026-11-14, decided by Claude + judges' rules) WER is scored **strictly** (echonova-v1, no repeat cap) so it
+   compares with the public table; a "WER capped" column (sada-paper repeat cap) is shown next to it.
+8. Windows are spread evenly (a 60 s clip = 3 × ~20.7 s with 1 s overlap) so no model gets a tiny tail window.
+   The first overnight run used fixed 30 s windows; it was discarded and re-run.
+9. Jais-ASR 4-bit does **not** fit 8 GB on this PC (decompresses to bf16, 11 GB peak, RTF ≈ 3.8): it is run for
+   accuracy only; speed/memory are marked "needs the server" in the report.
+10. Known limit: the picker balances agents and directions but not call length ("short and long calls" is not
+    enforced); the 30 clips are already cut and being typed, so they are kept as they are.
+11. Privacy: the git-tracked report holds numbers only; example texts (customer speech) go to the git-ignored
+    `data/asr-bench/asr-benchmark-examples.md`. Benchmark containers have no network.

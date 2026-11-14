@@ -53,6 +53,8 @@ def cap_repeats(words: list[str], max_repeats: int = 10, max_unit: int = 3) -> l
     return out
 
 
-def prepare(text: str) -> list[str]:
-    """Normalised word list used for scoring."""
-    return cap_repeats(normalize(text).split())
+def prepare(text: str, cap: bool = False) -> list[str]:
+    """Normalised word list used for scoring. Strict echonova-v1 by default (no repeat cap, so hallucination
+    loops count fully); `cap=True` gives the sada-paper variant shown as an extra column."""
+    words = normalize(text).split()
+    return cap_repeats(words) if cap else words

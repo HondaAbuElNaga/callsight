@@ -126,6 +126,18 @@ def test_pick_skips_short_calls(env):
             pick(s, audio, AGENTS, n=3, seconds=60)
 
 
+def test_pick_skips_short_or_missing_files(env):
+    Session, audio = env
+    calls = eligible(Session)
+    write_wav(audio / calls[0].recording_path, 40)             # talk time says 200 s, file is only 40 s
+    (audio / calls[1].recording_path).unlink()                 # file gone
+    with Session() as s:
+        clips = pick(s, audio, AGENTS, n=30, seconds=60)
+    picked = {c.call_id for c in clips}
+    assert calls[0].id not in picked and calls[1].id not in picked
+    assert all(c.seconds == 60 for c in clips)
+
+
 def test_pick_one_clip_per_customer(env):
     Session, audio = env
     with Session() as s:

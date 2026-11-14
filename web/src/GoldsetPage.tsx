@@ -5,6 +5,13 @@ interface Props { me: Me; onBack: () => void; onLogout: () => void; onExpired: (
 
 const DIR: Record<string, string> = { inbound: "واردة", outbound: "صادرة" };
 
+// Unsaved text survives an expired login / closed tab: kept in this browser tab's sessionStorage until saved.
+const draftKey = (id: number) => `gold-draft-${id}`;
+const readDraft = (id: number): string | null => { try { return sessionStorage.getItem(draftKey(id)); } catch { return null; } };
+const writeDraft = (id: number, t: string | null) => {
+  try { if (t === null) sessionStorage.removeItem(draftKey(id)); else sessionStorage.setItem(draftKey(id), t); } catch { /* storage off */ }
+};
+
 // Type what you hear in each clip. Changes are saved on "حفظ", on Ctrl+Enter, and before moving to another clip.
 export function GoldsetPage({ me, onBack, onLogout, onExpired }: Props) {
   const [clips, setClips] = useState<GoldClip[] | null>(null);
@@ -34,9 +41,12 @@ export function GoldsetPage({ me, onBack, onLogout, onExpired }: Props) {
     try {
       const c = await api.goldClip(id);
       setCurrent(id);
-      setText(c.reference_text ?? "");
+      const draft = readDraft(id);
+      setText(draft ?? c.reference_text ?? "");
       setSavedText(c.reference_text ?? "");
-      setMsg(null);
+      if (draft !== null && draft.trim() !== (c.reference_text ?? "").trim())
+        setMsg({ ok: true, text: "تمت استعادة نص غير محفوظ" });
+      else setMsg(null);
       box.current?.focus();
     } catch (e) { fail(e); }
   }
@@ -47,6 +57,7 @@ export function GoldsetPage({ me, onBack, onLogout, onExpired }: Props) {
     setBusy(true);
     try {
       const c = await api.saveGoldText(current, text);
+      writeDraft(current, null);
       setSavedText(c.reference_text ?? "");
       setClips((list) => list?.map((x) => (x.id === c.id ? { ...x, has_text: c.has_text, typed_at: c.typed_at } : x)) ?? null);
       setMsg({ ok: true, text: "تم الحفظ" });
@@ -65,6 +76,16 @@ export function GoldsetPage({ me, onBack, onLogout, onExpired }: Props) {
     const next = clips.slice(i + 1).find((c) => !c.has_text) ?? clips[i + 1];
     if (next) open(next.id);
   }
+
+  useEffect(() => {                                   // keep the draft + warn before closing the tab
+    if (current === null) return;
+    const dirtyNow = text.trim() !== savedText.trim();
+    writeDraft(current, dirtyNow ? text : null);
+    if (!dirtyNow) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [current, text, savedText]);
 
   const back5 = () => { if (audio.current) audio.current.currentTime = Math.max(0, audio.current.currentTime - 5); };
   const toggle = () => { const a = audio.current; if (a) (a.paused ? a.play() : a.pause()); };
@@ -87,7 +108,7 @@ export function GoldsetPage({ me, onBack, onLogout, onExpired }: Props) {
         <div className="who">
           <button className="link" onClick={async () => { if (await save()) onBack(); }}>سجل المكالمات</button>
           <span className="muted">{me.username}</span>
-          <button className="link" onClick={onLogout}>خروج</button>
+          <button className="link" onClick={async () => { if (await save()) onLogout(); }}>خروج</button>
         </div>
       </header>
 

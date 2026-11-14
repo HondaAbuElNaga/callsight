@@ -4,8 +4,9 @@ FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HF_HOME=/models HF_HUB_DISABLE_TELEMETRY=1
 ARG REQS=requirements.txt
-COPY docker/asr-bench/${REQS} ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+ARG TORCH_REQS=
+COPY docker/asr-bench/*.txt ./reqs/
+RUN if [ -n "$TORCH_REQS" ]; then       pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu128 -r reqs/$TORCH_REQS; fi  && pip install --no-cache-dir -r reqs/$REQS
 COPY callsight/__init__.py ./callsight/__init__.py
 COPY callsight/asr ./callsight/asr
 RUN useradd -m -u 1000 app && mkdir -p /models /out && chown app /models /out

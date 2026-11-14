@@ -54,22 +54,27 @@ def test_empty_hypothesis_is_full_deletion():
     assert score([("كلمة واحدة", "")]).wer == 1.0
 
 
-def test_hallucination_loop_is_capped():
-    s = score([("نعم", " ".join(["نعم"] * 100))])
-    assert s.word_edits == 9                         # 10 copies kept -> 9 insertions, not 99
+def test_hallucination_loop_strict_and_capped():
+    pair = [("نعم", " ".join(["نعم"] * 100))]
+    assert score(pair).word_edits == 99               # strict echonova-v1: every inserted word counts
+    assert score(pair, cap=True).word_edits == 9      # sada-paper variant: 10 copies kept
 
 
 def test_prepare():
     assert prepare("  مرحباً،   كيفك؟ ") == ["مرحبا", "كيفك"]
+    assert len(prepare("نعم " * 15)) == 15             # strict: loops count fully
+    assert len(prepare("نعم " * 15, cap=True)) == 10
 
 
 def test_chunk_bounds_cover_audio_with_overlap():
     rate = 16000
     b = chunk_bounds(60 * rate, rate)
-    assert b[0] == (0, 30 * rate)
-    assert b[1][0] == 29 * rate                    # 1 s overlap
-    assert b[-1][1] == 60 * rate
+    assert b[0][0] == 0 and b[-1][1] == 60 * rate
     assert all(e - s <= 30 * rate for s, e in b)
+    assert all(b[i][1] - b[i + 1][0] == 1 * rate for i in range(len(b) - 1))   # 1 s overlap
+    sizes = [e - s for s, e in b]
+    assert max(sizes) - min(sizes) <= 2                # evenly spread: no tiny tail window
+    assert len(chunk_bounds(31 * rate, rate)) == 2 and min(e - s for s, e in chunk_bounds(31 * rate, rate)) > 15 * rate
 
 
 def test_chunk_bounds_short_and_empty():
@@ -83,3 +88,4 @@ def test_merge_texts_drops_repeated_overlap():
     assert merge_texts(["كيف اقدر اساعدك اليوم", "اساعدك اليوم يا استاذ"]) == "كيف اقدر اساعدك اليوم يا استاذ"
     assert merge_texts(["one two", "three four"]) == "one two three four"
     assert merge_texts(["", "a b", ""]) == "a b"
+    assert merge_texts(["قال مرحباً،", "مرحبا كيفك"]) == "قال مرحباً، كيفك"   # overlap matched after normalising
