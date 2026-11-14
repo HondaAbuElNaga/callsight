@@ -3,7 +3,7 @@
 **Roadmap items:** Phase 2, "Local OpenAI-compatible STT server, model chosen by config" (changed: no separate server,
 see decision R2 in `docs/overnight-plan.md`) and "`asr` worker queue: … transcribe → store segments with speaker +
 timestamps"
-**Status:** draft
+**Status:** approved (by 2 judge agents on the user's behalf, 2026-11-14 — user may revise)
 
 ## Goal
 Readable text for every answered team call, so supervisors can read/search calls and Phase 3 can score them.
@@ -77,3 +77,36 @@ transcript within 15 min of hang-up**.
    vs automatic backfill of all stored calls.
 4. **Default model until the benchmark is scored:** Whisper large-v3 (recommended: MIT, fast on 8 GB) vs Audar
    (better public WER, licence limits).
+
+## Decisions (2 judges, 2026-11-14; override the text above where different)
+1. **Segments:** one segment per window from `chunk_bounds` (30 s max, 1 s overlap, now spread evenly — no tiny tail
+   window). Display times de-overlapped: a boundary sits in the middle of the overlap. Before transcribing, a window
+   with RMS energy below a threshold is skipped (no text, counted as dropped). After transcribing, a
+   **hallucination filter** drops a window's text when it matches a blocklist of known Whisper phrases
+   ("اشتركوا في القناة", "ترجمة نانسي قنقر", "شكرا للمشاهدة", …), when one n-gram repeats > 4 times, or when
+   characters per second are implausible; dropped windows keep a `flag` and empty text. `segmenter_version` stored.
+   Silero VAD = later item.
+2. **Calls:** answered team calls, inbound + outbound, talk ≥ `ASR_MIN_TALK` (5 s); shorter → `skipped` row
+   (so beat never re-picks them). Calls longer than `ASR_MAX_SECONDS` (3600) → `skipped` with reason.
+3. **Start date:** `ASR_START_DATE` must be set explicitly in `.env`; unset → beat queues nothing and logs a
+   warning. Older calls only through the capped CLI backfill. Beat queues **newest first**.
+4. **Model:** Whisper large-v3 (MIT), pinned revision stored on each row. Audar never default (licence).
+   `asr-worker-jais` = config only, marked server-only, untested on this PC.
+5. **Schema:** one transcript per **(call, model)** — unique constraint; FK `ON DELETE CASCADE`; columns also
+   `tries`, `dropped_windows`, `speech_seconds`, `segmenter_version`, `diarization_version` (NULL).
+6. **Queueing safety:** `INSERT … ON CONFLICT DO NOTHING` creates the `queued` row; only the inserter enqueues
+   (after the recording commit). `task_routes` sends `transcribe_call` to queue `asr`; the task lives in
+   `callsight/asr/tasks.py`, engine/torch imported lazily inside it; ingest code enqueues with
+   `send_task("callsight.asr.tasks.transcribe_call")`, so the ingest worker and API never import torch
+   (test: worker image has no torch). `queue_transcripts` (beat, DB only) stays on `ingest`.
+7. **Failures:** reaper (beat) sets `queued`/`running` rows older than 30 min back to `queued` while tries < 2,
+   else `error`. CUDA out-of-memory → retry once; missing/bad file → `error` at once. `error` and `skipped` are
+   terminal for beat; retry only with `transcribe --call ID --force`. Task `soft_time_limit` 15 min.
+8. **GPU sharing (Ollama later):** `ASR_IDLE_UNLOAD_S` (default 300) frees the GPU after idle time.
+9. **Privacy (PDPL):** task results and logs hold only ids/counts — never transcript text, also not in exception
+   messages. The asr worker joins an **internal Docker network** (no internet) with postgres + redis only;
+   `HF_HUB_OFFLINE=1`; audio mounted read-only. Transcripts follow recording access rules; backup/retention in S7.
+10. **Measurability:** latency formula tested with fixed timestamps; real "within 15 min" ⚠ NEEDS USER (office LAN).
+    Acceptance run waits until the overnight benchmark has freed the GPU.
+11. The Phase 2 "Done when" quality gate is the **gold-set WER** (8 kHz phone audio upsampled to 16 kHz), never the
+    public WER.
