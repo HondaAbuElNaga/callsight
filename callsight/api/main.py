@@ -28,8 +28,8 @@ from ..pbx.base import PbxError
 from . import auth
 from . import live as live_ws
 from .live import LiveConfig, NoLiveSource
-from .calls import (DIRECTIONS, STATUSES, CallFilter, call_detail, list_calls, summary, team_agents, visible_call,
-                    visible_scope)
+from .calls import (DIRECTIONS, STATUSES, CallFilter, call_detail, list_calls, may_hear, summary, team_agents,
+                    visible_call, visible_scope)
 
 LISTEN_DENIALS_PER_MIN = 10           # audited refused Listen requests per user per minute
 MAX_RANGE_DAYS = 400
@@ -295,9 +295,10 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
 
     @app.get("/api/calls/{call_id}/recording")
     def recording(call_id: int, request: Request, user: User, s: DB) -> Response:
-        c = visible_call(s, call_id, visible_scope(user))
-        if c is None or c.recording_status != "ok" or not c.recording_path:
-            raise HTTPException(404, "no recording")
+        scope = visible_scope(user)
+        c = visible_call(s, call_id, scope)
+        if c is None or c.recording_status != "ok" or not c.recording_path or not may_hear(s, c, scope):
+            raise HTTPException(404, "no recording")      # agents: only calls a supervisor shared with them
         root = cfg.audio_dir.resolve()
         path = (root / c.recording_path).resolve()
         if not path.is_relative_to(root) or not path.is_file():

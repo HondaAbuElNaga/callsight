@@ -217,8 +217,9 @@ def test_share_flow(env):
     assert client.get(f"/api/calls/{ids['other']}/followup").json()["needed"] is False
     assert client.put(f"/api/calls/{ids['other']}/followup", json={"no_followup": True}).status_code in (404, 409)
     lst = client.get("/api/shares").json()
-    assert lst["unseen"] == 1 and lst["items"][0]["note"] == "استمع للترحيب"
-    assert client.post(f"/api/shares/{share_id}/seen").json()["seen_at"]
+    assert lst["unseen"] == 1 and lst["items"][0]["note"] is None          # hidden until the agent clicks it
+    got = client.post(f"/api/shares/{share_id}/seen").json()
+    assert got["seen_at"] and got["note"] == "استمع للترحيب"
     login(client, "sara")
     assert client.get("/api/shares").json()["items"] == []
     assert client.post(f"/api/shares/{share_id}/seen").status_code == 404
@@ -424,14 +425,39 @@ def test_agent_without_team_extension_is_told(env):
     assert d["linked"] is False and d["items"] == []
 
 
-def test_opening_a_shared_call_marks_it_seen(env):
+def test_note_hidden_until_clicked_then_reply(env):
     client, _, ids, *_ = env
     login(client, "boss")
-    client.post(f"/api/calls/{ids['other']}/shares", json={"to_user_id": ids["ali"], "note": "استمع"})
+    sid = client.post(f"/api/calls/{ids['other']}/shares", json={"to_user_id": ids["ali"], "note": "استمع"}).json()["id"]
     login(client, "ali")
-    assert client.get("/api/shares").json()["unseen"] == 1
-    assert client.get(f"/api/calls/{ids['other']}/shares").json()["items"][0]["seen_at"]
-    assert client.get("/api/shares").json()["unseen"] == 0
+    item = client.get(f"/api/calls/{ids['other']}/shares").json()["items"][0]
+    assert item["seen_at"] is None and item["note"] is None                 # opening the call does not show/mark it
+    assert client.put(f"/api/shares/{sid}/reply", json={"text": "تم"}).status_code == 409   # open the note first
+    assert client.post(f"/api/shares/{sid}/seen").json()["note"] == "استمع"
+    r = client.put(f"/api/shares/{sid}/reply", json={"text": " سأحسّن الترحيب "})
+    assert r.status_code == 200 and r.json()["reply"] == "سأحسّن الترحيب" and r.json()["reply_at"]
+    login(client, "sara")
+    assert client.put(f"/api/shares/{sid}/reply", json={"text": "x"}).status_code == 404
+    login(client, "boss")
+    item = client.get("/api/shares").json()["items"][0]
+    assert item["seen_at"] and item["reply"] == "سأحسّن الترحيب"           # the supervisor sees click time + reply
+    assert client.put(f"/api/shares/{sid}/reply", json={"text": "x"}).status_code == 404     # only the agent replies
+    login(client, "ali")
+    assert client.put(f"/api/shares/{sid}/reply", json={"text": ""}).json()["reply"] is None
+
+
+def test_agent_hears_only_shared_calls(env):
+    client, _, ids, *_ = env
+    login(client, "ali")
+    assert client.get(f"/api/calls/{ids['own']}").json()["has_recording"] is False
+    assert client.get(f"/api/calls/{ids['own']}/recording").status_code == 404     # own call, not shared
+    assert all(not c["has_recording"] for c in client.get("/api/calls").json()["items"])
+    login(client, "boss")
+    assert client.get(f"/api/calls/{ids['own']}/recording").status_code == 200     # staff: always
+    client.post(f"/api/calls/{ids['own']}/shares", json={"to_user_id": ids["ali"], "note": "استمع"})
+    login(client, "ali")
+    assert client.get(f"/api/calls/{ids['own']}").json()["has_recording"] is True
+    assert client.get(f"/api/calls/{ids['own']}/recording").status_code == 200
 
 
 def test_form_is_frozen_once_a_note_exists_and_wrong_round_is_409(env):

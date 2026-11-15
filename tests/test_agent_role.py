@@ -18,7 +18,7 @@ from callsight.api.calls import Scope, visible_scope
 from callsight.api.live import LiveConfig, NoLiveSource
 from callsight.api.main import ApiConfig, create_app
 from callsight.config import RIYADH
-from callsight.db.models import Agent, AppUser, Call, CallLeg, RecordingPlay
+from callsight.db.models import Agent, AppUser, Call, CallLeg, CallShare, RecordingPlay
 from test_api import SECRET, PASSWORD, TEAM, engine, wav_bytes  # noqa: F401  (engine is a fixture)
 
 PUBLIC = {("POST", "/api/login"), ("POST", "/api/logout")}
@@ -30,6 +30,7 @@ AGENT_ALLOWED = {
     ("GET", "/api/calls/{call_id}/followup"), ("PUT", "/api/calls/{call_id}/followup"), ("GET", "/api/followups"),
     ("POST", "/api/calls/{call_id}/followup/notes"), ("PUT", "/api/calls/{call_id}/my-note"),
     ("GET", "/api/shares"), ("GET", "/api/calls/{call_id}/shares"), ("POST", "/api/shares/{share_id}/seen"),
+    ("PUT", "/api/shares/{share_id}/reply"),
     ("GET", "/api/calls/{call_id}/summary"),
 }
 STAFF_ONLY = {
@@ -185,6 +186,8 @@ def test_agent_allowed_routes_answer(env):
         r = client.request(method, url, params=params)
         if "/transcript" in path:   # own call, but no transcript row in this fixture: 404 "no transcript", not 403
             assert r.status_code == 404 and r.json()["detail"] == "no transcript", (method, path)
+        elif path.endswith("/recording"):    # own call not shared by a supervisor: agents may not hear it
+            assert r.status_code == 404 and r.json()["detail"] == "no recording", (method, path)
         else:
             assert r.status_code == 200, (method, path)
 
@@ -237,14 +240,19 @@ def test_others_calls_are_404(env):
         assert s.scalar(select(RecordingPlay.id).where(RecordingPlay.call_id == ids["other"])) is None
 
 
-def test_own_recording_plays_and_is_audited(env):
+def test_shared_recording_plays_and_is_audited(env):
     client, Session, ids, _ = env
     login(client)
+    assert client.get(f"/api/calls/{ids['own']}/recording").status_code == 404     # own call, not shared
+    with Session() as s:
+        user = s.scalars(select(AppUser).where(AppUser.username == "ali")).one()
+        uid = user.id
+        s.add(CallShare(call_id=ids["own"], from_user_id=uid, to_user_id=uid, note="استمع"))
+        s.commit()
     r = client.get(f"/api/calls/{ids['own']}/recording")
     assert r.status_code == 200 and r.headers["content-type"] == "audio/wav"
     with Session() as s:
-        user = s.scalars(select(AppUser).where(AppUser.username == "ali")).one()
-        assert s.scalar(select(RecordingPlay.user_id).where(RecordingPlay.call_id == ids["own"])) == user.id
+        assert s.scalar(select(RecordingPlay.user_id).where(RecordingPlay.call_id == ids["own"])) == uid
 
 
 def test_detail_hides_other_agents_legs(env):

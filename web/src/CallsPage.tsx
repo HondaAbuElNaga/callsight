@@ -3,7 +3,7 @@ import {
   api, BadRequest, Unauthorized,
   type Agent, type CallDetail, type CallPage, type CallRow, type Filters, type Me, type Status, type Summary,
 } from "./api";
-import { DIRECTION_LABEL, LEG_LABEL, STATUS_LABEL, STATUS_ORDER, duration, formatDateTime, riyadhToday } from "./format";
+import { DIRECTION_LABEL, STATUS_LABEL, STATUS_ORDER, duration, formatDateTime, riyadhToday } from "./format";
 import { TranscriptPanel } from "./TranscriptPanel";
 import { AnalysisPanel } from "./AnalysisPanel";
 import { AgentSummaryPanel, DeletePanel, FollowupPanel, SharePanel } from "./WorkPanels";
@@ -300,19 +300,6 @@ function DetailPanel({ call, onClose, onPlay, children }:
       </dl>
       {call.has_recording && <button className="primary" onClick={onPlay}>▶ تشغيل التسجيل</button>}
       {children}
-      <h3>مسار المكالمة</h3>
-      <ol className="legs">
-        {call.legs.map((l) => (
-          <li key={l.id}>
-            <b>{LEG_LABEL[l.kind]}</b> <span dir="ltr" className="num">{l.to_number}</span>
-            <div className="muted small">
-              {l.disposition} · {duration(l.duration)}
-              {l.ring_duration ? ` · رنين ${duration(l.ring_duration)}` : ""}
-              {l.talk_duration ? ` · كلام ${duration(l.talk_duration)}` : ""}
-            </div>
-          </li>
-        ))}
-      </ol>
     </aside>
   );
 }

@@ -156,14 +156,15 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
           <h2>{staff ? "المكالمات المشاركة مع الموظفين" : "مكالمات أرسلها لك المشرف"}</h2>
           {shares.length === 0 ? <p className="muted">لا توجد.</p> : (
             <div className="table-wrap"><table>
-              <thead><tr><th>المكالمة</th><th>الملاحظة</th><th>من ← إلى</th><th>شوهدت</th></tr></thead>
+              <thead><tr><th>المكالمة</th><th>الملاحظة</th><th>من ← إلى</th><th>فتحها الموظف</th><th>الرد</th></tr></thead>
               <tbody>
                 {shares.map((s) => (
                   <tr key={s.id} onClick={() => onOpenCall(s.call_id)}>
                     <td className="nowrap">{s.call_start ? formatDateTime(s.call_start) : "–"}</td>
-                    <td>{s.note}</td>
+                    <td>{s.note ?? <span className="state warn">ملاحظة جديدة: اضغط لفتح المكالمة وعرضها</span>}</td>
                     <td>{s.from} ← {s.to}</td>
-                    <td>{s.seen_at ? formatDateTime(s.seen_at) : <span className="state off">لم تُشاهد</span>}</td>
+                    <td>{s.seen_at ? formatDateTime(s.seen_at) : <span className="state off">لم يفتحها</span>}</td>
+                    <td>{s.reply ?? "–"}</td>
                   </tr>
                 ))}
               </tbody>

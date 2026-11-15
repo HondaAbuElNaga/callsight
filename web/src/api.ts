@@ -250,8 +250,10 @@ export interface FollowupIn {
   responsible_user_id?: number | null; expected_at?: string; callback_at?: string;
 }
 export interface Share {
-  id: number; call_id: number; note: string; from: string; to: string; to_user_id: number; created_at: string;
+  id: number; call_id: number; from: string; to: string; to_user_id: number; created_at: string;
+  note: string | null;          // agents: null until they click the note (that click = seen_at, shown to the supervisor)
   seen_at: string | null; call_start: string | null; agent_ext: string | null;
+  reply: string | null; reply_at: string | null;      // the agent's answer to the supervisor
 }
 export interface CallShares { items: Share[]; targets: { id: number; username: string; ext: string | null }[] }
 export interface AgentSummary {
@@ -378,6 +380,7 @@ export const api = {
   share: (id: number, to_user_id: number, note: string) =>
     send<Share>("POST", `/api/calls/${id}/shares`, { to_user_id, note }),
   shareSeen: (id: number) => send<Share>("POST", `/api/shares/${id}/seen`),
+  shareReply: (id: number, text: string) => send<Share>("PUT", `/api/shares/${id}/reply`, { text }),
   unshare: (id: number) => send<{ ok: true }>("DELETE", `/api/shares/${id}`),
   users: () => get<AppUserRow[]>("/api/admin/users"),
   createUser: (username: string, role: string, ext: string | null) =>

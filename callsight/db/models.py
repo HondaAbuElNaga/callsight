@@ -494,7 +494,8 @@ class CallPrivateNote(Base):
 
 
 class CallShare(Base):
-    """A supervisor sends one call with a note to one agent (one-way; the agent marks it seen)."""
+    """A supervisor sends one call with a note to one agent. The agent sees the note only after clicking it (that
+    click is `seen_at`, shown to the supervisor) and may answer with one reply (changeable)."""
     __tablename__ = "call_share"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
@@ -503,6 +504,8 @@ class CallShare(Base):
     note: Mapped[str] = mapped_column(String(1000))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reply: Mapped[str | None] = mapped_column(String(1000))
+    reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AppSetting(Base):

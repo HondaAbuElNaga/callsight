@@ -116,7 +116,9 @@ def list_calls(session: Session, f: CallFilter, page: int = 1) -> dict:
     rows = session.execute(base.order_by(Call.start_time.desc(), Call.id.desc())
                            .limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE)).all()
     return {"total": total or 0, "page": page, "page_size": PAGE_SIZE,
-            "items": [_row(c, name, bool(f.words)) for c, name in rows]}
+            # agents hear only calls a supervisor shared with them (opened one by one, never from a list)
+            "items": [{**_row(c, name, bool(f.words)), **({"has_recording": False} if f.scope.is_agent else {})}
+                      for c, name in rows]}
 
 
 def summary(session: Session, f: CallFilter) -> dict:
@@ -143,6 +145,11 @@ def is_shared_with(session: Session, call_id: int, scope: Scope) -> bool:
                                                      CallShare.to_user_id == scope.user_id).limit(1)) is not None
 
 
+def may_hear(session: Session, call: Call, scope: Scope) -> bool:
+    """Staff hear every recording; an agent only the calls a supervisor shared with them (2026-11-15)."""
+    return scope.everything or is_shared_with(session, call.id, scope)
+
+
 def call_detail(session: Session, call_id: int, scope: Scope) -> dict | None:
     call = visible_call(session, call_id, scope)
     if call is None:
@@ -152,7 +159,9 @@ def call_detail(session: Session, call_id: int, scope: Scope) -> dict | None:
     legs = session.scalars(select(CallLeg).where(CallLeg.call_id == call_id).order_by(CallLeg.id)).all()
     if scope.is_agent:   # an agent never sees which colleague rang before them
         legs = [leg for leg in legs if leg.kind not in ("extension", "voicemail") or leg.to_number == scope.agent_ext]
-    return {**_row(call, name), "legs": [{
+    row = _row(call, name)
+    row["has_recording"] = row["has_recording"] and may_hear(session, call, scope)
+    return {**row, "legs": [{
         "id": leg.id, "kind": leg.kind, "start_time": leg.start_time.isoformat(), "to_number": leg.to_number,
         "disposition": leg.disposition, "duration": leg.duration, "ring_duration": leg.ring_duration,
         "talk_duration": leg.talk_duration, "reason": leg.reason} for leg in legs]}

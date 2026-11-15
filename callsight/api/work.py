@@ -57,6 +57,11 @@ class MyNoteIn(BaseModel):
     text: str = Field(max_length=300)
 
 
+class ReplyIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(max_length=1000)
+
+
 class ShareIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     to_user_id: StrictInt
@@ -312,9 +317,13 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
 
     # ---------- shared calls (decision 10: one-way note, agent marks seen) ----------
 
-    def share_dict(s: Session, sh: CallShare, users: dict[int, str]) -> dict:
+    def share_dict(s: Session, sh: CallShare, users: dict[int, str], user: AppUser) -> dict:
+        """An agent gets the note text only after clicking it (seen_at): until then `note` is None."""
         c = s.get(Call, sh.call_id)
-        return {"id": sh.id, "call_id": sh.call_id, "note": sh.note, "from": users.get(sh.from_user_id, ""),
+        hidden = not staff(user) and sh.seen_at is None
+        return {"id": sh.id, "call_id": sh.call_id, "note": None if hidden else sh.note,
+                "from": users.get(sh.from_user_id, ""),
+                "reply": sh.reply, "reply_at": sh.reply_at.isoformat() if sh.reply_at else None,
                 "to": users.get(sh.to_user_id, ""), "to_user_id": sh.to_user_id,
                 "created_at": sh.created_at.isoformat(), "seen_at": sh.seen_at.isoformat() if sh.seen_at else None,
                 "call_start": c.start_time.isoformat() if c else None, "agent_ext": c.agent_ext if c else None}
@@ -339,7 +348,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         elif agent:     # staff picked one agent on the follow-ups page: only the calls shared with that agent
             stmt = stmt.where(CallShare.to_user_id.in_(select(AppUser.id).where(AppUser.ext == agent)))
         names = usernames(s)
-        items = [share_dict(s, sh, names) for sh in s.scalars(stmt)]
+        items = [share_dict(s, sh, names, user) for sh in s.scalars(stmt)]
         return {"items": items, "unseen": sum(1 for i in items if i["seen_at"] is None)}
 
     @app.get("/api/calls/{call_id}/shares")
@@ -348,13 +357,9 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         stmt = select(CallShare).where(CallShare.call_id == c.id).order_by(CallShare.id)
         if not staff(user):
             stmt = stmt.where(CallShare.to_user_id == user.id)
-        shares = list(s.scalars(stmt))
-        if not staff(user) and any(sh.seen_at is None for sh in shares):
-            for sh in shares:          # the agent opened the call: the supervisor's note is seen (fix G)
-                sh.seen_at = sh.seen_at or _now()
-            s.commit()
+        shares = list(s.scalars(stmt))      # opening the call does NOT mark the note seen: clicking it does
         names = usernames(s)
-        return {"items": [share_dict(s, sh, names) for sh in shares],
+        return {"items": [share_dict(s, sh, names, user) for sh in shares],
                 "targets": targets(s, c) if staff(user) else []}
 
     @app.post("/api/calls/{call_id}/shares")
@@ -373,7 +378,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         s.add(sh)
         s.add(AdminLog(user_id=user.id, action="share_call", target=f"call:{c.id} user:{body.to_user_id}", at=_now()))
         s.commit()
-        return share_dict(s, sh, usernames(s))
+        return share_dict(s, sh, usernames(s), user)
 
     @app.post("/api/shares/{share_id}/seen")
     def share_seen(share_id: int, user: User, s: DB) -> dict:
@@ -383,7 +388,24 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         if sh.seen_at is None:
             sh.seen_at = _now()
             s.commit()
-        return share_dict(s, sh, usernames(s))
+        return share_dict(s, sh, usernames(s), user)
+
+    @app.put("/api/shares/{share_id}/reply")
+    def share_reply(share_id: int, body: ReplyIn, user: User, s: DB) -> dict:
+        """The agent answers the supervisor (one reply, may be changed; empty text removes it). Only after the note
+        was opened, and never on a call whose content was deleted."""
+        sh = s.get(CallShare, share_id)
+        if sh is None or sh.to_user_id != user.id:
+            raise HTTPException(404, "no such share")
+        if sh.seen_at is None:
+            raise HTTPException(409, "open the note first")
+        c = s.get(Call, sh.call_id)
+        if c is None or c.content_deleted_at is not None:
+            raise HTTPException(409, "this call's content was deleted")
+        text_ = body.text.strip()
+        sh.reply, sh.reply_at = (text_, _now()) if text_ else (None, None)
+        s.commit()
+        return share_dict(s, sh, usernames(s), user)
 
     @app.delete("/api/shares/{share_id}")
     def delete_share(share_id: int, user: Manager, s: DB) -> dict:

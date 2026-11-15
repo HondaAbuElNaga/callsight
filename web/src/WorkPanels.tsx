@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import {
   api, Refused, Unauthorized,
   type AgentSummary, type CallShares, type FollowupIn, type FollowupView, type HistoryEntry, type Me, type NoteIn,
-  type Person,
+  type Person, type Share,
 } from "./api";
 import { CALLBACK_LABEL, STEP_CLASS, STEP_LABEL, STEP_NEXT, formatDateTime, fromRiyadhInput, toRiyadhInput } from "./format";
 
@@ -231,12 +231,17 @@ export function SharePanel({ callId, me, onExpired }: { callId: number; me: Me; 
       <h3>{staff ? "مشاركة المكالمة مع موظف" : "ملاحظة المشرف"}</h3>
       {d.items.map((s) => (
         <div key={s.id} className="share">
-          <p>{s.note}</p>
+          {!staff && !s.seen_at ? (
+            /* the note stays hidden until the agent clicks it; the click is what the supervisor sees as "opened" */
+            <button type="button" className="primary" onClick={() => api.shareSeen(s.id).then(reload).catch(fail)}>
+              ملاحظة جديدة من {s.from}: اضغط لعرضها</button>
+          ) : <p>{s.note}</p>}
           <p className="muted small">
-            {s.from} ← {s.to} · {formatDateTime(s.created_at)} · {s.seen_at ? `شوهدت ${formatDateTime(s.seen_at)}` : "لم تُشاهد بعد"}
+            {s.from} ← {s.to} · {formatDateTime(s.created_at)} · {s.seen_at ? `فتحها الموظف ${formatDateTime(s.seen_at)}` : "لم يفتحها الموظف بعد"}
             {staff && <button className="link" onClick={() => api.unshare(s.id).then(reload).catch(fail)}>سحب</button>}
-            {!staff && !s.seen_at && <button className="link" onClick={() => api.shareSeen(s.id).then(reload).catch(fail)}>تمت المشاهدة</button>}
           </p>
+          {staff && s.reply && <p className="reply"><b>ردّ {s.to}:</b> {s.reply} <span className="muted small">· {formatDateTime(s.reply_at!)}</span></p>}
+          {!staff && s.seen_at && <ReplyBox share={s} onSaved={reload} onFail={fail} />}
         </div>
       ))}
       {staff && (
@@ -255,6 +260,24 @@ export function SharePanel({ callId, me, onExpired }: { callId: number; me: Me; 
       )}
       {error && <div className="error">{error}</div>}
     </section>
+  );
+}
+
+function ReplyBox({ share, onSaved, onFail }: { share: Share; onSaved: () => void; onFail: (e: unknown) => void }) {
+  const [text, setText] = useState(share.reply ?? "");
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await api.shareReply(share.id, text.trim()); onSaved(); } catch (e) { onFail(e); } finally { setBusy(false); }
+  };
+  return (
+    <div className="form">
+      {share.reply && <p className="muted small">ردّك ({formatDateTime(share.reply_at!)}): {share.reply}</p>}
+      <label>{share.reply ? "تعديل ردّك على المشرف" : "ردّك على المشرف"}
+        <textarea value={text} maxLength={1000} rows={2} onChange={(e) => setText(e.target.value)} /></label>
+      <button type="button" disabled={busy || text.trim() === (share.reply ?? "")} onClick={save}>إرسال الرد</button>
+    </div>
   );
 }
 
