@@ -2,20 +2,24 @@
 
 > Status: `[x]` done · `[~]` in progress · `[ ]` not started
 
-**Current position (2026-11-15, evening): AWS main server live and collecting calls; GPU server not there yet.**
-- AWS main server in Frankfurt: https://calls.mohanadyehia.com (valid certificate, account `admin`), fixed address
-  63.184.90.120. Pushing to `main` on GitHub (private repo `HondaAbuElNaga/callsight`) updates it automatically.
-- PBX link works through `sstli.ras.yeastar.com` (after FQDN → API Access was saved for 63.184.90.120): calls are
-  ingested every 2 minutes and recordings download. AWS holds calls from 2026-11-14 11:44 Riyadh on.
-- No transcripts or analyses on AWS yet: they need the GPU server. `ASR_START_DATE` is empty there until then.
-- The PC setup is no longer the live system (off the office network, its PBX permit line was removed). Its services
-  still run and should be stopped (`docker compose stop`); its old data stays on the PC.
-- Waiting: AWS approval of the GPU quota (request sent, "Case Opened"), then the GPU server and the schedule.
-- Agent + supervisor features (users page, follow-up form + callback check + KPIs, shared calls, delete content)
-  are **built and reviewed on branch `spec/2026-11-15-agent-supervisor`** (Phase 7), not live yet: merging to
-  `main` deploys them. Then: agent accounts on the users page, start date in Settings.
-- Step-by-step state: [tasks](../specs/2026-11-15-aws-deploy/tasks.md), the user's clicks:
-  [user-steps](../specs/2026-11-15-aws-deploy/user-steps.md), guide: [docs/aws.md](../docs/aws.md).
+**Current position (2026-11-15, night) — START HERE in a new session:**
+- AWS main server (Frankfurt) live: https://calls.mohanadyehia.com, fixed address 63.184.90.120, accounts `admin` and
+  `supervisor` (ext 114). Pushing to `main` on GitHub (private repo `HondaAbuElNaga/callsight`) updates it automatically.
+- PBX link works through `sstli.ras.yeastar.com`: calls every 2 minutes, recordings download. Employee list loaded
+  (104 خدمة عملاء المعهد, 116 متابعه المبيعات, 119 خدمة العملاء محمود هشام); refreshes nightly at 03:00.
+- Live board ON on AWS (`LIVE_ENABLED=true`, "subscribed to PBX call events").
+- Phase 7 (agents + supervisor) is live, plus the KPI / agent changes of 2026-11-15 night (see Phase 7 list).
+- Server commands without SSH: GitHub → Actions → **Server task** (`.github/workflows/server-task.yml`: make-supervisor,
+  new passwords, live on/off/log, sync-agents). Starting two at once cancels the waiting one. A password printed in a
+  run log: delete that run after copying it. By hand: AWS console → EC2 Instance Connect (first add an SSH rule from
+  `3.120.181.40/29` to security group callsight-main, delete it afterwards).
+- **Next:** (1) GPU server (user step A4c in [user-steps](../specs/2026-11-15-aws-deploy/user-steps.md), quota approved)
+  → transcription + analysis on AWS, then `ASR_START_DATE`; (2) create agent accounts on the users page, set the
+  follow-up start date; (3) stop the PC's old services; (4) the rest of the order list in `docs/overnight-report.md`.
+- Known small items: live board login waits a full 10 min when its wait ends exactly at the lock expiry
+  (`callsight/live/service.py` LoginGate); `/api/calls` still answers agents (own calls only, page hidden); the KPI
+  download log keeps only the start date of a chosen range.
+- Step-by-step state: [tasks](../specs/2026-11-15-aws-deploy/tasks.md), guide: [docs/aws.md](../docs/aws.md).
 
 **Position before the AWS move (2026-11-14):** All Phase 1 items **built**: call ingest ([spec](../specs/2026-11-12-call-ingest/spec.md)) and
 web call list ([spec](../specs/2026-11-13-web-call-list/spec.md)), Arabic page on http://127.0.0.1:8080 (this PC only; accounts admin + supervisor 114).
@@ -129,4 +133,10 @@ the HR/legal OK.
 - [x] Follow-up KPIs: forms on time %, callbacks on time % (show-only until the admin sets the date) (idea: user)
 - [x] Supervisor shares a call with a note; agent marks it seen; agents see the summary only (idea: user)
 - [x] Delete one call's content (recording, texts, forms) with reason + admin log (idea: user)
-- [ ] Live: merge to `main` (= deploy), create the agent accounts, set the start date (⚠ NEEDS USER)
+- [x] Live: merged to `main` on 2026-11-15 (PR #1)
+- [x] User's changes 2026-11-15 night (branch `feat/kpi-date-range`, 3-agent review, 644 tests): KPI page only من/إلى
+  dates (any range ≤ 366 days, compared with the same number of days before; PDF follows); ما بعد البيع shows
+  outgoing calls only (page + PDF); KPI page and `/api/kpi` for admin + supervisor only; agents: no employee filter,
+  no calls list, المتابعات is their only page (a call opens from it); follow-ups column "رد العميل؟" from the PBX
+  record (any answered team callback), never a button (idea: user)
+- [ ] Create the agent accounts, set the follow-up start date (⚠ NEEDS USER)
