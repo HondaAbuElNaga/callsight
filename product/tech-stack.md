@@ -3,8 +3,11 @@
 > Change this file **before** adopting a new tool.
 > Status: ✅ in use · 🔜 planned · ❓ depends on Phase 0 (PBX discovery)
 
-Principle: **100% local**, Docker Compose on one server now; every heavy step is a
-queue worker, so scaling = more workers / a second GPU box, not a rewrite.
+Principle (changed 2026-11-15, aws-deploy spec): **our own servers, no outside AI service**. The system runs on
+AWS servers that only we control (region Frankfurt; recordings and call texts are stored there, approved by the
+user 2026-11-15). Audio and text are never sent to a third-party AI/API. The analytics PC setup ("100% local")
+keeps working from the same repository. Docker Compose; every heavy step is a queue worker, so scaling = more
+workers / a second GPU box, not a rewrite.
 
 ## Telephony integration
 | Area | Choice | Status | Why |
@@ -63,4 +66,11 @@ queue worker, so scaling = more workers / a second GPU box, not a rewrite.
 | Server (to buy) | 1× NVIDIA GPU 16–24 GB VRAM (RTX 4060 Ti 16GB minimum, RTX 4090/5090 24GB+ comfortable), 8+ core CPU, 64 GB RAM, 1 TB NVMe (system/DB) + 4 TB HDD (audio) | 🔜 | 200 calls/day ≈ 10 h audio/day; one GPU transcribes that in well under an hour |
 | Backup | Our own `python -m callsight backup`: `pg_dump -Fc` (REPEATABLE READ snapshot, counts saved) + Python incremental copy of recordings/reports (sha256 manifest) into `BACKUP_DIR`; `backup verify` restores into the scratch DB `callsight_restore_check`. Needs **`postgresql-client-16`** (pg_dump/pg_restore, exact pin `16.16-1.pgdg13+1`; bump it when PGDG drops that build) from the PostgreSQL apt repo (PGDG, `apt.postgresql.org`) in the app image: Debian's own client is another major version, which cannot dump our v16 server | 🔜 | Adopted 2026-11-14 (hardening spec, decision 2): no new backup tool; restic/borg (dedup + encryption) = later idea. Target should be an encrypted second disk/NAS |
 | Locked Python deps | **pip-tools** (`pip-compile --generate-hashes --allow-unsafe`), run only inside a `python:3.12-slim` linux/amd64 container (not installed on the PC or in the image): `requirements.in` (ranges) → `requirements.lock` (exact + hashes); the app image installs with `pip install --require-hashes`. Test-only tools in `requirements-dev.in` / `requirements-dev.lock` | 🔜 | Adopted 2026-11-14 (hardening spec, decision 7): reproducible builds, changed wheels are rejected |
+| Cloud servers | **AWS EC2**, region `eu-central-1` (Frankfurt; first choice Bahrain `me-south-1` did not answer on 2026-11-15): `t3.medium` always on (Ubuntu 24.04, 100 GB gp3, Elastic IP) + `g4dn.xlarge` (T4 16 GB, "Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 24.04)", no public address) that is on only while it works. Replaces "Server (to buy)" | 🔜 | Adopted 2026-11-15 (aws-deploy spec): the user chose AWS over buying a server; GPU paid per working hour (≈ $110/month in total) |
+| GPU wake-up | **Amazon EventBridge Scheduler** (cron, timezone Asia/Riyadh) → `ec2:StartInstances` through an IAM role that may start that one server; the server powers itself off (`deploy/aws/gpu_run.py`, systemd, Python 3 standard library only) | 🔜 | Adopted 2026-11-15: no AWS key on any server, no extra code service |
+| AWS set-up as a file | **AWS CloudFormation** (`deploy/aws/callsight.yaml`), uploaded by hand in the AWS website. No AWS CLI and no AWS access key on the PC. Checked offline with **cfn-lint** (PyPI, run from a throw-away venv; not installed in the project or image) | 🔜 | Adopted 2026-11-15 (user answer 1: by hand, no access key) |
+| Disk snapshots | **Amazon Data Lifecycle Manager**: daily EBS snapshot of the main server, 7 kept | 🔜 | Adopted 2026-11-15: the second copy on AWS (the nightly `callsight backup` stays on the same disk) |
+| Cost alarm | **AWS Budgets**: email at 80 % of $150 / month and at a forecast above it | 🔜 | Adopted 2026-11-15 |
+| HTTPS | **Caddy 2** (`caddy:2.11.9-alpine`, pinned by digest, Apache-2.0) in front of the api on ports 80/443, automatic Let's Encrypt certificate; AWS main server only | 🔜 | Adopted 2026-11-15: the website is reachable from the internet, so it needs a real certificate |
+| Shared recordings | **NFS v4** inside the private AWS network: `nfs-kernel-server` on the main server (read-only export), Docker NFS volumes + `nfs-common` on the GPU server | 🔜 | Adopted 2026-11-15: the workers read plain files, so no code change |
 | Tests | pytest, Playwright for UI | 🔜 | |

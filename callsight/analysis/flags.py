@@ -6,6 +6,7 @@ supervisor can listen ("needs listening"). Flags are never counted in KPIs.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sqlalchemy import delete, select
@@ -28,13 +29,41 @@ def find(segments, rules: Rules) -> list[Hit]:
     """One hit per (kind, phrase, window)."""
     phrases = [(kind, p, f" {search_normalize(p)} ") for kind, ps in rules.flags.items() for p in ps]
     phrases = [(k, p, n) for k, p, n in phrases if n.strip()]
+    other = _other_name_matcher(rules)
     hits = []
     for s in segments:
         if s.flag or not (s.text or "").strip():
             continue
         text = f" {search_normalize(s.text)} "
         hits += [Hit(kind, p, s.start_seconds, s.end_seconds) for kind, p, n in phrases if n in text]
+        if other and any(other(search_normalize(part).split()) for part in _SENTENCE_END.split(s.text)):
+            hits.append(Hit("competitor", rules.competitor_rule.label, s.start_seconds, s.end_seconds))
     return hits
+
+
+_SENTENCE_END = re.compile(r"[.،,؛;؟?!…:]+")
+
+
+def _other_name_matcher(rules: Rules):
+    """`competitor_rule`: the word (with or without ال / a prefix) + a next word that starts with ال and is not
+    our own name: "معهد الخليج", "للمعهد البريطاني". Any other next word ("المعهد يفتح", "معهد قال") is normal
+    speech about ourselves and does not hit; names without ال go in the competitor list. The pair must be in one
+    sentence (no punctuation between); a word at the window edge has no next word and does not hit."""
+    r = rules.competitor_rule
+    if r is None:
+        return None
+    word = search_normalize(r.word)
+    if not word:
+        return None
+    form = re.compile(rf"^[وف]?[بكل]?(?:ال|ل)?{re.escape(word)}$")
+    bare = lambda w: w[2:] if w.startswith("ال") and len(w) > 3 else w          # noqa: E731
+    own = {bare(search_normalize(w)) for w in r.own}
+    ignore = {search_normalize(w) for w in r.ignore_next}
+
+    def match(words: list[str]) -> bool:
+        return any(form.match(w) and nxt.startswith("ال") and len(nxt) > 3 and bare(nxt) not in own
+                   and nxt not in ignore for w, nxt in zip(words, words[1:]))
+    return match
 
 
 def store(session: Session, call_id: int, transcript: Transcript, rules: Rules) -> int:

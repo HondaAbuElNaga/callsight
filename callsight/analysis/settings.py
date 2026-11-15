@@ -91,8 +91,18 @@ class SilenceRules:
 
 
 @dataclass(frozen=True)
+class OtherNameRule:
+    """Competitor by pattern: `word` + a name that is not our own (e.g. any "معهد X" except "المعهد السعودي")."""
+    word: str                                # as written, e.g. معهد
+    own: tuple[str, ...] = ()                # next words that mean ourselves, e.g. السعودي
+    ignore_next: tuple[str, ...] = ()        # next words that are not a name (اللي، اليوم ...)
+    label: str = ""                          # stored as the flag phrase (never transcript text)
+
+
+@dataclass(frozen=True)
 class Rules:
     flags: dict[str, tuple[str, ...]] = field(default_factory=dict)   # kind -> phrases (as written)
+    competitor_rule: OtherNameRule | None = None
     silence: SilenceRules = SilenceRules()
     max_dropped_share: float = 0.30
     version: str = "r0"
@@ -110,6 +120,14 @@ def load_rules(path: Path) -> Rules:
     flags = {k: tuple(str(p).strip() for p in (raw.get(k) or []) if str(p).strip()) for k in FLAG_KINDS}
     if any(len(p) > 100 for ps in flags.values() for p in ps):
         raise ConfigError(f"{path.name}: a phrase is longer than 100 characters")
+    cr, other = data.get("competitor_rule") or {}, None
+    if cr:
+        words = lambda key: tuple(str(w).strip() for w in (cr.get(key) or []) if str(w).strip())   # noqa: E731
+        word = str(cr.get("word") or "").strip()
+        label = str(cr.get("label") or f"{word} (غير {' '.join(words('own'))})").strip()
+        if not word or " " in word or len(label) > 100:
+            raise ConfigError(f"{path.name}: competitor_rule needs one `word` and a label of at most 100 characters")
+        other = OtherNameRule(word=word, own=words("own"), ignore_next=words("ignore_next"), label=label)
     s = data.get("silence") or {}
     silence = SilenceRules(threshold_dbfs=float(s.get("threshold_dbfs", -40)), frame_ms=int(s.get("frame_ms", 50)),
                            min_silence_s=float(s.get("min_silence_s", 2)),
@@ -120,7 +138,8 @@ def load_rules(path: Path) -> Rules:
     share = float((data.get("analysis") or {}).get("max_dropped_share", 0.30))
     if not 0 <= share <= 1:
         raise ConfigError(f"{path.name}: analysis.max_dropped_share must be 0..1")
-    return Rules(flags=flags, silence=silence, max_dropped_share=share, version="r-" + file_hash(path))
+    return Rules(flags=flags, competitor_rule=other, silence=silence, max_dropped_share=share,
+                 version="r-" + file_hash(path))
 
 
 def rating_excluded(path: Path | None = None) -> frozenset[int]:

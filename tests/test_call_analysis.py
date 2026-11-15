@@ -246,6 +246,27 @@ def test_flags_normalised_whole_words_kept_windows_only():
         ("escalation", "أبي المدير", 0), ("escalation", "بشتكي", 59), ("competitor", "شركة النور", 117)]
 
 
+def test_competitor_rule_any_other_institute():
+    rules = load_rules(ROOT / "config" / "rules.yaml")
+    assert rules.competitor_rule.word == "معهد" and "غبي" in rules.flags["bad_words"]
+
+    def hit(text):
+        return [h.phrase for h in flags.find([Seg(text, 0, 30)], rules) if h.kind == "competitor"]
+
+    label = [rules.competitor_rule.label]
+    assert hit("سجلت في معهد الخليج قبل") == label            # معهد + any name
+    assert hit("رحت للمعهد البريطاني") == label               # للمعهد + ال-name
+    assert hit("والمعهد الكندي ارخص") == label
+    assert hit("انا طالب في المعهد السعودي") == []            # ourselves
+    assert hit("بالمعهد السعودى التقني") == []                # ى folded
+    assert hit("المعهد يفتح الساعه ثمانيه") == []             # "المعهد" alone = us
+    assert hit("جيت المعهد اليوم") == []                      # ignore_next
+    assert hit("وين المعهد") == []                            # no next word
+    assert hit("ما اعرف مكان معهد بالزبط") == []              # next word is not a name
+    assert hit("هذا المعهد. الخليج بعيد") == []               # sentence end between the two words
+    assert hit("شفت معهد ثاني ارخص") == ["معهد ثاني"]         # from the competitor list, not the rule
+
+
 # ---------- silence metrics ----------
 
 def tone(seconds, rate=8000, amp=8000):

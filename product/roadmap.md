@@ -28,7 +28,7 @@ real test call's CDR row + recording file has been pulled to the server by hand.
 - [x] Connect over LAN, not the internet remote-access address (`sstli.ras.yeastar.com` gave 70087 IP FORBIDDEN); IP Restriction allows PC `192.168.50.189` (idea: user)
 - [x] Remove old public-IP rule `66.212.118.128` from API IP Restriction (user) → done 2026-11-12, API login still OK
 - [ ] Legal recording announcement for customers (Saudi PDPL consent); recording already on
-- [ ] Buy & install server (Ubuntu 24.04, NVIDIA driver, Docker, GPU in containers) — specs in tech-stack.md
+- [ ] ~~Buy & install server~~ → changed by the user 2026-11-15: **run on AWS** (Frankfurt, changed from Bahrain the same day: that region did not answer; small server always on + GPU server woken every 30 min, ≈ $110/month) — spec approved 2026-11-15; repository part built (work-left command, health item, GPU on/off service, compose files, CloudFormation file, `docs/aws.md`), nothing created on AWS yet ([spec](../specs/2026-11-15-aws-deploy/spec.md)) (idea: user)
 - [x] Repo skeleton: Docker Compose (Postgres, Redis, worker, beat), `.env` config (done in call-ingest spec; API container comes with the web UI; CI later)
 
 ## Phase 1: Call ingest, duration & unanswered calls (MVP data)
@@ -50,7 +50,7 @@ and each call has ring/talk/hold time + status (answered / no-answer / abandoned
 call has a transcript within 15 min of hang-up.
 
 - [~] Collect & hand-correct 30 representative calls (gold set: 30 × 60 s clips cut ✅; ⚠ typing by user open) ([spec](../specs/2026-11-14-asr-benchmark/spec.md)) (idea: user)
-- [~] Benchmark Jais-ASR / Audar-ASR / Whisper-large-v3 on gold set, pick the winner (runner + scoring built, all 3 models run on 30 clips; winner after typing) (source: [echonova-ai-solutions/arabic-asr-benchmark](https://github.com/echonova-ai-solutions/arabic-asr-benchmark))
+- [x] Benchmark Jais-ASR / Audar-ASR / Whisper-large-v3 on gold set, pick the winner (scored on 30 typed clips: Audar 30.1%, Whisper 40.3%, Jais 47.1% WER; **user chose Whisper-large-v3** (MIT licence), confirmed 2026-11-15) (source: [echonova-ai-solutions/arabic-asr-benchmark](https://github.com/echonova-ai-solutions/arabic-asr-benchmark))
 - [x] STT model chosen by config (`ASR_MODEL`), served by our own `asr` worker, not a separate server (changed 2026-11-14, decision R2; speaches can't run Audar/Jais) ([spec](../specs/2026-11-14-transcription/spec.md)) (source: [speaches-ai/speaches](https://github.com/speaches-ai/speaches))
 - [x] `asr` worker queue: mono recording → 30 s windows → transcribe → store segments with timestamps; speaker split via diarization later (recordings are mono, not stereo) ([spec](../specs/2026-11-14-transcription/spec.md)) (idea: user) ([spec](../specs/2026-11-14-transcription/spec.md))
 - [x] Transcript view next to the audio player; export transcript as .txt (idea: user) ([spec](../specs/2026-11-14-transcript-view/spec.md))

@@ -179,6 +179,8 @@ class HealthDeps:
     offsite_confirmed: bool = False
     usage: Callable[[Path], Any] = shutil.disk_usage
     now: Callable[[], datetime] = _utcnow
+    # "oldest call waiting for the GPU" (callsight.gpuwork.health_item); None = item not shown
+    gpu_wait: Callable[[Session, datetime], Item] | None = None
 
 
 def collect(session: Session, deps: HealthDeps) -> dict:
@@ -186,6 +188,12 @@ def collect(session: Session, deps: HealthDeps) -> dict:
     items = [*disks(deps.disk_paths, deps.usage), db_size(session), *queues(deps.redis), *jobs(session, now),
              workers(deps.ping), gpu(deps.redis, now), *backup(session, now, deps.offsite_confirmed),
              reconciles(session)]
+    if deps.gpu_wait is not None:
+        try:
+            items.append(deps.gpu_wait(session, now))
+        except Exception:  # noqa: BLE001  e.g. a typo in an ASR_* setting: grey item, no exception text
+            session.rollback()
+            items.append(Item("gpu.wait", "off", {"waiting": None, "oldest_min": None}))
     problems = [i.key for i in items if i.state == "bad"]
     return {"ok": not problems, "problems": problems, "checked_at": now.isoformat(),
             "items": [{"key": i.key, "state": i.state, **i.value} for i in items]}

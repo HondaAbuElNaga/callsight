@@ -1,0 +1,26 @@
+# Update the AWS main server when code reaches the `main` branch (or by hand: Actions -> Deploy -> Run workflow).
+# Runs on the runner installed ON the main server (label callsight-main): the runner connects out to GitHub,
+# no port is opened on the server. Secrets stay in /opt/callsight/.env on the server; none are stored in GitHub.
+# The repository must stay PRIVATE: anyone who can push to `main` can run commands on the server.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, callsight-main]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update the main server
+        run: bash deploy/aws/deploy-main.sh "$GITHUB_WORKSPACE"

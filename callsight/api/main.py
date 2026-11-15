@@ -586,14 +586,15 @@ def _health_from_env(cache_seconds: float = 15.0) -> Callable[[Session], dict]:
 
     import redis
 
-    from .. import health
+    from .. import gpuwork, health
     from ..app import settings
     from ..jobs import celery
     st = settings()
     deps = health.HealthDeps(
         disk_paths={"system": Path("/"), "audio": st.audio_dir, "backup": st.backup_dir},
         redis=redis.Redis.from_url(st.redis_url, socket_timeout=1, socket_connect_timeout=1),
-        ping=lambda: celery.control.ping(timeout=1.0), offsite_confirmed=health.offsite_confirmed())
+        ping=lambda: celery.control.ping(timeout=1.0), offsite_confirmed=health.offsite_confirmed(),
+        gpu_wait=lambda s, now: gpuwork.health_item(gpuwork.work_from_env(s), now))
     cached: dict = {}
 
     def get(s: Session) -> dict:
