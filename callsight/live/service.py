@@ -104,7 +104,9 @@ class LoginGate:
             ttl = self.redis.ttl(LOGIN_LOCK_KEY)
         except Exception as exc:  # noqa: BLE001
             raise LoginRateLimited(60) from exc
-        raise LoginRateLimited(max(1, ttl if isinstance(ttl, int) and ttl > 0 else self.interval))
+        # ttl 0 / -2 = the lock is just expiring or already gone (the wait ended a fraction of a second early):
+        # try again in 1 s instead of a new full 10 min. +1 s so the next try lands after the expiry.
+        raise LoginRateLimited(ttl + 1 if isinstance(ttl, int) and ttl > 0 else 1)
 
 
 class TokenStore:
