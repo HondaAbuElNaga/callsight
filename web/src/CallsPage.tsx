@@ -17,6 +17,7 @@ interface Props {
   openCallId?: number | null;      // open this call's panel at once (from the follow-ups page)
   onOpened?: () => void;           // called once openCallId was used (so it never reopens later)
   detailOnly?: boolean;            // agents: no call list, only the opened call (their home is the follow-ups page)
+  embedded?: boolean;              // inside the follow-ups page: no page header, only the side panel (+ player)
 }
 
 // A function, not a constant: the page may stay open past midnight.
@@ -37,7 +38,7 @@ function wordsOk(text: string): boolean {
 interface Seek { id: number; t: number; n: number }
 
 export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth, onRating, onLive, onFollowups, onUsers,
-  openCallId, onOpened, detailOnly = false }: Props) {
+  openCallId, onOpened, detailOnly = false, embedded = false }: Props) {
   const [filters, setFilters] = useState<Filters>(emptyFilters); // applied as soon as a field changes
   const [qText, setQText] = useState("");                  // number box: applied after typing stops
   const [wordsText, setWordsText] = useState("");          // transcript words: same, never in the page URL
@@ -137,8 +138,8 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
   }
 
   return (
-    <div className={`page ${playing ? "with-player" : ""}`}>
-      <header className="topbar">
+    <div className={embedded ? "" : `page ${playing ? "with-player" : ""}`}>
+      {!embedded && <header className="topbar">
         <h1>{detailOnly ? "تفاصيل المكالمة" : "سجل المكالمات"}</h1>
         <div className="who">
           {onLive && <button className="link" onClick={onLive}>المكالمات الحالية</button>}
@@ -151,7 +152,7 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
           <span className="muted">{me.username}{me.ext ? ` · تحويلة ${me.ext}` : ""}</span>
           <button className="link" onClick={onLogout}>خروج</button>
         </div>
-      </header>
+      </header>}
 
       {!detailOnly && <>
       <form className="filters" onSubmit={(e) => e.preventDefault()}>

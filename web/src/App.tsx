@@ -12,7 +12,7 @@ import { LivePage } from "./LivePage";
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = still checking
-  const [view, setView] = useState<"calls" | "goldset" | "kpi" | "health" | "live" | "rating" | "followups" | "followupCall" | "users">("calls");
+  const [view, setView] = useState<"calls" | "goldset" | "kpi" | "health" | "live" | "rating" | "followups" | "users">("calls");
   const [openCall, setOpenCall] = useState<number | null>(null);   // follow-ups page -> open that call's panel
   const [problems, setProblems] = useState(0);
   const isAdmin = me?.role === "admin";
@@ -54,18 +54,10 @@ export function App() {
     page = <LivePage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "users" && isAdmin)
     page = <UsersPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
-  else if (isAgent && (view !== "calls" || openCall === null))
-    page = <FollowupsPage me={me} onLogout={logout} onExpired={() => setMe(null)}
-      onOpenCall={(id) => { setOpenCall(id); setView("calls"); }} />;
-  else if (isAgent)
-    page = <CallsPage me={me} onLogout={logout} onExpired={() => setMe(null)} detailOnly
-      openCallId={openCall} onFollowups={() => { setOpenCall(null); setView("followups"); }} />;
-  else if (view === "followups")
-    page = <FollowupsPage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)}
-      onOpenCall={(id) => { setOpenCall(id); setView("followupCall"); }} />;
-  else if (view === "followupCall" && openCall !== null)   // staff: a call opened from the follow-ups page stays there
-    page = <CallsPage me={me} onLogout={logout} onExpired={() => setMe(null)} detailOnly
-      openCallId={openCall} onFollowups={() => { setOpenCall(null); setView("followups"); }} />;
+  else if (isAgent)   // agents: the follow-ups page is their only page; a call opens in its side panel
+    page = <FollowupsPage me={me} onLogout={logout} onExpired={() => setMe(null)} />;
+  else if (view === "followups")   // a call clicked here opens in the side panel on the same page
+    page = <FollowupsPage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "kpi" && isStaff)
     page = <KpiPage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else

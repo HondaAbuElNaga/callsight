@@ -4,9 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { api, Unauthorized, type Agent, type FollowupItem, type FollowupList, type Me, type Share } from "./api";
 import { CALLBACK_LABEL, STEP_CLASS, STEP_LABEL, formatDateTime, riyadhToday } from "./format";
 import { CB_CLASS } from "./WorkPanels";
+import { CallsPage } from "./CallsPage";
 
 interface Props { me: Me; onCalls?: () => void;   // agents: no calls page (follow-ups is their only page)
-  onOpenCall: (id: number) => void; onLogout: () => void; onExpired: () => void }
+  onLogout: () => void; onExpired: () => void }
 
 const STATE_OPTIONS: [string, string][] = [
   ["action", "يحتاج عملاً"], ["open", "متابعات مفتوحة"], ["solved", "حُلّت"], ["came_back", "عاد العميل بعد الحل"],
@@ -44,7 +45,7 @@ function Number_({ n }: { n: string | null }) {
   );
 }
 
-export function FollowupsPage({ me, onCalls, onOpenCall, onLogout, onExpired }: Props) {
+export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
   const staff = me.role === "admin" || me.role === "supervisor";
   const [from, setFrom] = useState(weekAgo);
   const [to, setTo] = useState(riyadhToday);
@@ -55,6 +56,8 @@ export function FollowupsPage({ me, onCalls, onOpenCall, onLogout, onExpired }: 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [error, setError] = useState("");
   const [tick, setTick] = useState(0);
+  const [open, setOpen] = useState<number | null>(null);   // the call shown in the side panel, on this page
+  const onOpenCall = (id: number) => setOpen(id);
 
   const fail = useCallback((e: unknown) => {
     if (e instanceof Unauthorized) onExpired();
@@ -188,6 +191,10 @@ export function FollowupsPage({ me, onCalls, onOpenCall, onLogout, onExpired }: 
           </table>
           {data?.truncated && <p className="muted small">تظهر أول 500 فقط: ضيّق الفترة.</p>}
         </div>
+      )}
+      {open !== null && (   /* the call opens in the side panel over this list; ✕ closes it and refreshes the list */
+        <CallsPage key={open} me={me} onLogout={onLogout} onExpired={onExpired} detailOnly embedded openCallId={open}
+          onFollowups={() => { setOpen(null); setTick((n) => n + 1); }} />
       )}
     </div>
   );
