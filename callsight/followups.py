@@ -10,7 +10,7 @@ callback time + 60 min (4). "Came back" = an inbound call from the same number <
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import exists, or_, select, true
@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from .config import RIYADH
-from .db.models import AppSetting, AppUser, Call, CallFollowup, norm_number
+from .db.models import AppSetting, AppUser, Call, CallFollowup, CallFollowupNote, norm_number
 from .ingest.service import day_bounds
 
 MIN_TALK_SECONDS = 20          # talk must be MORE than this
@@ -33,6 +33,11 @@ SETTING_KPI = "followup_kpi_since"
 SETTINGS = (SETTING_START, SETTING_KPI)
 RESPONSIBLE_KINDS = ("user", "customer", "other_department")
 CALLBACK_STATES = ("waiting", "on_time", "late", "missed", "no_number")
+# steps of one call (spec 2026-11-15-followup-stages), computed on read, never stored
+STEPS = ("required", "overdue", "no_followup", "solved_first", "waiting_callback", "callback_missed",
+         "note_needed", "solved_after", "no_number")
+OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number")
+ACTION_STEPS = ("required", "overdue", "note_needed", "callback_missed")   # + waiting_callback due by today
 
 
 def _utcnow() -> datetime:
@@ -72,7 +77,12 @@ def set_setting(s: Session, key: str, value: date | None, user_id: int) -> None:
 # ---------- rules ----------
 
 def form_deadline(call: Call) -> datetime:
-    end = call.end_time.astimezone(RIYADH)
+    return after_deadline(call.end_time)
+
+
+def after_deadline(end_time: datetime) -> datetime:
+    """Form after a call / note after a callback: by 23:00 Riyadh that day, or 2 h after when that is later."""
+    end = end_time.astimezone(RIYADH)
     day_end = end.replace(hour=DAY_END_HOUR, minute=0, second=0, microsecond=0)
     return max(day_end, end + LATE_CALL_EXTRA)
 
@@ -145,33 +155,157 @@ def _came_back():
 
 
 @dataclass
+class Callback:
+    """The callback call found for one round (the first outbound team call that really rang)."""
+    id: int
+    time: datetime
+    end: datetime
+    ext: str | None
+    answered: bool | None = None      # did the customer answer ANY team callback of this round (PBX record)
+
+
+@dataclass
 class Row:
     call: Call
     form: CallFollowup | None
-    cb_id: int | None
+    cb_id: int | None                 # round-1 callback (SQL lateral)
     cb_time: datetime | None
     cb_ext: str | None
     came_back: bool
     cb_answered: bool = False         # some team callback to this customer was answered (PBX record)
+    notes: list[CallFollowupNote] = field(default_factory=list)       # rounds 2, 3, ... in order
+    cb_calls: dict[int, Call] = field(default_factory=dict)          # round-1 cb + notes' cb_call_id -> call
+    current_cb: Callback | None = None   # rounds >= 2: callback of the latest open note (looked up in rows())
 
-    def as_dict(self, now: datetime, names: dict[str, str] | None = None) -> dict:
+    # ----- rounds -----
+
+    def round1_cb(self) -> Callback | None:
+        if self.cb_time is None:
+            return None
+        c = self.cb_calls.get(self.cb_id or -1)
+        return Callback(self.cb_id, self.cb_time, c.end_time if c else self.cb_time, self.cb_ext,
+                        bool(self.cb_answered))
+
+    def open_entry(self):
+        """The latest entry (form or note) when it is not solved and set a callback time, else None."""
+        f = self.form
+        if f is None or f.no_followup:
+            return None
+        last = self.notes[-1] if self.notes else f
+        return last if last.solved is False and last.callback_at is not None else None
+
+    def cb_of_round(self, rnd: int) -> Callback | None:
+        """Callback call of round `rnd`: the next note's cb_call when that note is written, else the live lookup."""
+        if rnd <= len(self.notes):                       # notes[rnd-1] = round rnd+1, reports on round rnd's callback
+            nxt = self.notes[rnd - 1]
+            c = self.cb_calls.get(nxt.cb_call_id or -1)
+            return Callback(c.id, c.start_time, c.end_time, c.agent_ext) if c else None
+        return self.round1_cb() if rnd == 1 else self.current_cb
+
+    def step(self, now: datetime) -> str:
+        f = self.form
+        if f is None:
+            return "overdue" if now > form_deadline(self.call) else "required"
+        if f.no_followup:
+            return "no_followup"
+        last = self.notes[-1] if self.notes else f
+        if last.solved is True:
+            return "solved_after" if self.notes else "solved_first"
+        if not _has_number(self.call.customer_number):
+            return "no_number"
+        if last.callback_at is None:                     # not solved without a time: odd data, keep it open
+            return "waiting_callback"
+        if self.cb_of_round(len(self.notes) + 1) is not None:
+            return "note_needed"
+        return "callback_missed" if now > last.callback_at + GRACE else "waiting_callback"
+
+    def as_dict(self, now: datetime, names: dict[str, str] | None = None,
+                users: dict[int, str] | None = None) -> dict:
         c, f = self.call, self.form
-        cb_state = callback_state(f.callback_at if f and not f.no_followup and f.solved is False else None,
-                                  _has_number(c.customer_number), self.cb_time, now)
+        rnd = len(self.notes) + 1
+        open_ = self.open_entry()
+        cur = self.cb_of_round(rnd)
+        cb_state = callback_state(open_.callback_at if open_ is not None else None,
+                                  _has_number(c.customer_number), cur.time if cur else None, now)
+        step = self.step(now)
         return {
             "call_id": c.id, "start_time": c.start_time.isoformat(), "end_time": c.end_time.isoformat(),
             "customer_number": c.customer_number, "agent_ext": c.agent_ext,
             "agent_name": (names or {}).get(c.agent_ext or "", ""), "talk_seconds": c.talk_seconds,
             "deadline": form_deadline(c).isoformat(), "form_state": form_state(c, f, now),
             "form": form_dict(f) if f else None,
+            "step": step, "round": rnd,
+            "note_deadline": after_deadline(cur.end).isoformat() if step == "note_needed" and cur else None,
+            "history": self.history(now, users or {}),
             "callback": None if cb_state is None else {
-                "at": f.callback_at.isoformat(), "due": (f.callback_at + GRACE).isoformat(), "status": cb_state,
-                "by_ext": self.cb_ext, "call_id": self.cb_id,
+                "at": open_.callback_at.isoformat(), "due": (open_.callback_at + GRACE).isoformat(),
+                "status": cb_state, "round": rnd,
+                "by_ext": cur.ext if cur else None, "call_id": cur.id if cur else None,
                 # from the PBX record of the callback call, never from a button: did the customer answer?
-                "answered": None if self.cb_time is None else bool(self.cb_answered),
-                "time": self.cb_time.isoformat() if self.cb_time else None},
-            "came_back": bool(self.came_back and f and f.solved is True),
+                "answered": None if cur is None else bool(cur.answered),
+                "time": cur.time.isoformat() if cur else None},
+            "came_back": bool(self.came_back and f and f.solved is True and not self.notes),
         }
+
+    def history(self, now: datetime, users: dict[int, str]) -> list[dict]:
+        """Form (round 1) + notes, each with its callback result, oldest first."""
+        f = self.form
+        if f is None:
+            return []
+        out = []
+        entries = [(1, f, f.first_filled_at, f.filled_by, f.no_followup)]
+        entries += [(n.round, n, n.created_at, n.created_by, False) for n in self.notes]
+        for rnd, e, at_, by, nofu in entries:
+            wants_cb = not nofu and e.solved is False and e.callback_at is not None
+            cb = self.cb_of_round(rnd) if wants_cb else None
+            out.append({
+                "round": rnd, "what_happened": e.what_happened, "solved": e.solved, "no_followup": bool(nofu),
+                "responsible_kind": e.responsible_kind, "responsible_user_id": e.responsible_user_id,
+                "responsible": users.get(e.responsible_user_id or -1),
+                "expected_at": e.expected_at.isoformat() if e.expected_at else None,
+                "callback_at": e.callback_at.isoformat() if e.callback_at else None,
+                "at": at_.isoformat(), "by": users.get(by),
+                "callback_status": (callback_state(e.callback_at, _has_number(self.call.customer_number),
+                                                   cb.time if cb else None, now) if wants_cb else None),
+                "callback_call": None if cb is None else {"call_id": cb.id, "time": cb.time.isoformat(),
+                                                          "by_ext": cb.ext, "answered": cb.answered},
+            })
+        return out
+
+    # ----- KPI pieces -----
+
+    def callback_rounds(self, now: datetime) -> list[str]:
+        """Callback status of every round that set a callback time (on_time / late / missed / waiting / no_number)."""
+        f = self.form
+        if f is None or f.no_followup:
+            return []
+        out = []
+        for rnd, e in [(1, f)] + [(n.round, n) for n in self.notes]:
+            if e.solved is False and e.callback_at is not None:
+                cb = self.cb_of_round(rnd)
+                out.append(callback_state(e.callback_at, _has_number(self.call.customer_number),
+                                          cb.time if cb else None, now))
+        return out
+
+    def note_states(self, now: datetime) -> list[str]:
+        """Each round whose callback call was found: the note after it is on_time / late / overdue / pending."""
+        f = self.form
+        if f is None or f.no_followup:
+            return []
+        out = []
+        for rnd in range(1, len(self.notes) + 2):
+            entry = f if rnd == 1 else self.notes[rnd - 2]
+            if entry.solved is not False or entry.callback_at is None:
+                continue
+            cb = self.cb_of_round(rnd)
+            if cb is None:
+                continue
+            deadline = after_deadline(cb.end)
+            if rnd <= len(self.notes):
+                out.append("on_time" if self.notes[rnd - 1].created_at <= deadline else "late")
+            else:
+                out.append("overdue" if now > deadline else "pending")
+        return out
 
 
 def form_dict(f: CallFollowup) -> dict:
@@ -182,9 +316,37 @@ def form_dict(f: CallFollowup) -> dict:
             "first_filled_at": f.first_filled_at.isoformat(), "updated_at": f.updated_at.isoformat()}
 
 
+def _digits9(number: str | None) -> str:
+    return "".join(ch for ch in (number or "") if ch.isdigit())[-9:]
+
+
+def find_callback(s: Session, call: Call, after: datetime, callers) -> Callback | None:
+    """Rounds >= 2: the first outbound team call to the same number that starts after `after` and really rang
+    (answered or >= 10 s). answered = any answered team call after `after` (PBX record)."""
+    num = _digits9(call.customer_number)
+    if not num:
+        return None
+    base = (Call.direction == "outbound", Call.id != call.id, Call.start_time > after,
+            Call.agent_ext.in_(list(callers)), norm_number(Call.customer_number) == num)
+    first = s.execute(select(Call).where(*base, or_(Call.status == "answered", Call.total_seconds >= RANG_SECONDS))
+                      .order_by(Call.start_time, Call.id).limit(1)).scalar_one_or_none()
+    if first is None:
+        return None
+    answered = s.execute(select(exists().where(*base, Call.status == "answered"))).scalar()
+    return Callback(first.id, first.start_time, first.end_time, first.agent_ext, bool(answered))
+
+
+def _anchor(row: Row) -> datetime:
+    """Round n >= 2: the callback search starts after the note was saved and after the previous callback call ended
+    (a second call made before the note does not count for the new round)."""
+    last = row.notes[-1]
+    prev = row.cb_calls.get(last.cb_call_id or -1)
+    return max(last.created_at, prev.end_time) if prev else last.created_at
+
+
 def rows(s: Session, exts, start: date, lo: datetime, hi: datetime, call_ids: list[int] | None = None, *,
          callers) -> list[Row]:
-    """Needed calls in [lo, hi) for these owner extensions, with form, first callback and came-back flag.
+    """Needed calls in [lo, hi) for these owner extensions, with form, notes, callbacks and came-back flag.
     callers = every team extension (teams.yaml): only their outbound calls count as a callback (decision 2)."""
     cb = _callback_lateral(callers)
     stmt = (select(Call, CallFollowup, cb.c.cb_id, cb.c.cb_time, cb.c.cb_ext, _came_back().label("came_back"),
@@ -195,7 +357,22 @@ def rows(s: Session, exts, start: date, lo: datetime, hi: datetime, call_ids: li
     if call_ids is not None:
         stmt = stmt.where(Call.id.in_(call_ids))
     stmt = stmt.order_by(Call.start_time.desc(), Call.id.desc())
-    return [Row(c, f, a, b, e, bool(cb_), bool(ans)) for c, f, a, b, e, cb_, ans in s.execute(stmt).all()]
+    out = [Row(c, f, a, b, e, bool(cb_), bool(ans)) for c, f, a, b, e, cb_, ans in s.execute(stmt).all()]
+    with_form = [r.call.id for r in out if r.form is not None and not r.form.no_followup]
+    if not with_form:
+        return out
+    notes: dict[int, list[CallFollowupNote]] = {}
+    for n in s.scalars(select(CallFollowupNote).where(CallFollowupNote.call_id.in_(with_form))
+                       .order_by(CallFollowupNote.call_id, CallFollowupNote.round)):
+        notes.setdefault(n.call_id, []).append(n)
+    need = {r.cb_id for r in out if r.cb_id} | {n.cb_call_id for ns in notes.values() for n in ns if n.cb_call_id}
+    calls = {c.id: c for c in s.scalars(select(Call).where(Call.id.in_(need)))} if need else {}
+    for r in out:
+        r.notes = notes.get(r.call.id, [])
+        r.cb_calls = calls
+        if r.notes and r.open_entry() is not None:
+            r.current_cb = find_callback(s, r.call, _anchor(r), callers)
+    return out
 
 
 def one(s: Session, call: Call, exts, start: date | None) -> Row | None:
@@ -216,14 +393,21 @@ def responsible_options(s: Session) -> list[dict]:
 
 def _empty() -> dict:
     return {"forms_due": 0, "forms_on_time": 0, "forms_rate": None, "callbacks_due": 0, "callbacks_on_time": 0,
-            "callbacks_rate": None, "came_back": 0}
+            "callbacks_rate": None, "came_back": 0,
+            # follow-up stages spec
+            "answered_forms": 0, "solved_first": 0, "first_rate": None, "solved_after": 0, "open": 0,
+            "rounds_to_solve": 0, "avg_rounds": None, "notes_due": 0, "notes_on_time": 0, "notes_rate": None}
+
+
+def _rate(a: int, b: int) -> float | None:
+    return a / b if b else None
 
 
 def kpi(s: Session, lo: datetime, hi: datetime, exts: list[str], now: datetime | None = None, *,
         callers) -> dict:
     """Follow-up KPIs of [lo, hi), counted in the period of the original call. `active` = the admin switched them
     on (followup_kpi_since): until then they are show-only (page, never PDF). Counting starts at the later of
-    followup_start and followup_kpi_since (when set)."""
+    followup_start and followup_kpi_since (when set). Callbacks and notes count every round."""
     now = now or _utcnow()
     st = settings(s)
     start, since = st[SETTING_START], st[SETTING_KPI]
@@ -234,21 +418,71 @@ def kpi(s: Session, lo: datetime, hi: datetime, exts: list[str], now: datetime |
         return out
     count_from = max(start, since) if since else start
     for r in rows(s, exts, count_from, lo, hi, callers=callers):
-        d = r.as_dict(now)
-        for bucket in (out["summary"], out["agents"].setdefault(r.call.agent_ext, _empty())):
-            if d["form_state"] != "missing":          # deadline passed, or already filled
-                bucket["forms_due"] += 1
-                bucket["forms_on_time"] += d["form_state"] == "on_time"
-            cb = d["callback"]
-            if cb and cb["status"] in ("on_time", "late", "missed"):
-                bucket["callbacks_due"] += 1
-                bucket["callbacks_on_time"] += cb["status"] == "on_time"
-            bucket["came_back"] += d["came_back"]
-    for bucket in (out["summary"], *out["agents"].values()):
-        bucket["forms_rate"] = bucket["forms_on_time"] / bucket["forms_due"] if bucket["forms_due"] else None
-        bucket["callbacks_rate"] = (bucket["callbacks_on_time"] / bucket["callbacks_due"]
-                                    if bucket["callbacks_due"] else None)
+        fstate = form_state(r.call, r.form, now)
+        step = r.step(now)
+        cbs = r.callback_rounds(now)
+        nts = r.note_states(now)
+        back = bool(r.came_back and r.form and r.form.solved is True and not r.notes)
+        for b in (out["summary"], out["agents"].setdefault(r.call.agent_ext, _empty())):
+            if fstate != "missing":          # deadline passed, or already filled
+                b["forms_due"] += 1
+                b["forms_on_time"] += fstate == "on_time"
+            for st_ in cbs:
+                if st_ in ("on_time", "late", "missed"):
+                    b["callbacks_due"] += 1
+                    b["callbacks_on_time"] += st_ == "on_time"
+            for st_ in nts:
+                if st_ != "pending":
+                    b["notes_due"] += 1
+                    b["notes_on_time"] += st_ == "on_time"
+            if r.form is not None and not r.form.no_followup:
+                b["answered_forms"] += 1
+            b["solved_first"] += step == "solved_first"
+            if step == "solved_after":
+                b["solved_after"] += 1
+                b["rounds_to_solve"] += len(r.notes)
+            b["open"] += step in OPEN_STEPS
+            b["came_back"] += back
+    for b in (out["summary"], *out["agents"].values()):
+        b["forms_rate"] = _rate(b["forms_on_time"], b["forms_due"])
+        b["callbacks_rate"] = _rate(b["callbacks_on_time"], b["callbacks_due"])
+        b["first_rate"] = _rate(b["solved_first"], b["answered_forms"])
+        b["avg_rounds"] = _rate(b["rounds_to_solve"], b["solved_after"])
+        b["notes_rate"] = _rate(b["notes_on_time"], b["notes_due"])
     return out
+
+
+# ---------- notes after a callback (follow-up stages spec) ----------
+
+def add_note(s: Session, call: Call, data: dict, user: AppUser, exts, now: datetime | None = None
+             ) -> CallFollowupNote:
+    """Append the note of the current round. Only when the step is note_needed; `data["round"]` must be the round
+    the page showed (a second click or an old page gets 409 instead of a second note)."""
+    now = now or _utcnow()
+    row = one(s, call, exts, get_setting(s, SETTING_START))
+    if row is None or row.step(now) != "note_needed":
+        raise NoteConflict("لا تحتاج هذه المكالمة ملاحظة الآن (أعد تحميل الصفحة)")
+    rnd = len(row.notes) + 2                              # form = round 1, the note opens the next round
+    if data.get("round") != rnd:
+        raise NoteConflict("تغيّرت حالة المتابعة، أعد تحميل الصفحة")
+    clean = validate(s, {**data, "no_followup": False}, call, now)
+    cb = row.cb_of_round(rnd - 1)
+    n = CallFollowupNote(call_id=call.id, round=rnd, cb_call_id=cb.id if cb else None,
+                         what_happened=clean["what_happened"], solved=clean["solved"],
+                         responsible_kind=clean["responsible_kind"], responsible_user_id=clean["responsible_user_id"],
+                         expected_at=clean["expected_at"], callback_at=clean["callback_at"],
+                         created_by=user.id, created_at=now)
+    s.add(n)
+    try:
+        s.commit()
+    except IntegrityError:          # the same round saved twice at once
+        s.rollback()
+        raise NoteConflict("حُفظت الملاحظة للتو من طلب آخر، أعد تحميل الصفحة") from None
+    return n
+
+
+class NoteConflict(Exception):
+    pass
 
 
 # ---------- form validation ----------

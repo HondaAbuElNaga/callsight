@@ -20,12 +20,27 @@ from .calls import visible_call, visible_scope
 
 MAX_LIST_DAYS = 62
 LIST_LIMIT = 500
-STATES = ("", "todo", "callbacks", "open_callbacks", "came_back")
+STATES = ("", "action", "open", "solved", "todo", "callbacks", "open_callbacks", "came_back")
+ACTION_LOOKBACK_DAYS = 62      # "needs action" + the counters ignore the من date (old unfinished work stays visible)
+# most urgent first in "needs action"
+URGENCY = {"callback_missed": 0, "note_needed": 1, "overdue": 2, "waiting_callback": 3, "required": 4}
 
 
 class FollowupIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     no_followup: StrictBool = False
+    what_happened: str | None = Field(default=None, max_length=500)
+    solved: StrictBool | None = None
+    responsible_kind: str | None = Field(default=None, max_length=20)
+    responsible_user_id: StrictInt | None = None
+    expected_at: datetime | None = None
+    callback_at: datetime | None = None
+
+
+class NoteIn(BaseModel):
+    """A note after a callback (follow-up stages spec): `round` = the round the page showed (stops double saves)."""
+    model_config = ConfigDict(extra="forbid")
+    round: StrictInt
     what_happened: str | None = Field(default=None, max_length=500)
     solved: StrictBool | None = None
     responsible_kind: str | None = Field(default=None, max_length=20)
@@ -71,7 +86,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         row = fu.one(s, c, team_exts(), start) if own else None
         if row is None:
             return {"needed": False, "enabled": start is not None}
-        d = row.as_dict(now, _names(s))
+        d = row.as_dict(now, _names(s), usernames(s))
         return {"needed": True, "enabled": True, **d, "can_edit": may_edit(row.form, c, user, now) is None,
                 "lock_reason": may_edit(row.form, c, user, now), "options": fu.responsible_options(s)}
 
@@ -112,7 +127,40 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             raise HTTPException(422, str(exc)) from None
         return form_payload(s, c, user, now)
 
+    @app.post("/api/calls/{call_id}/followup/notes")
+    def add_note(call_id: int, body: NoteIn, user: User, s: DB) -> dict:
+        c = owned_call(s, call_id, user)
+        if not staff(user) and c.agent_ext != user.ext:
+            raise HTTPException(404, "no such call")       # a shared call of a colleague: not even confirmed
+        now = _now()
+        try:
+            fu.add_note(s, c, body.model_dump(), user, team_exts(), now)
+        except fu.NoteConflict as exc:
+            s.rollback()
+            raise HTTPException(409, str(exc)) from None
+        except fu.FormError as exc:
+            s.rollback()
+            raise HTTPException(422, str(exc)) from None
+        return form_payload(s, c, user, now)
+
     # ---------- follow-ups list ----------
+
+    def action_due(i: dict, today: date) -> bool:
+        if i["step"] in fu.ACTION_STEPS:
+            return True
+        cb = i["callback"]
+        return (i["step"] == "waiting_callback" and cb is not None
+                and datetime.fromisoformat(cb["at"]).astimezone(RIYADH).date() <= today)
+
+    def counts(items: list[dict], today: date) -> dict:
+        def today_cb(i):
+            cb = i["callback"]
+            return (i["step"] == "waiting_callback" and cb is not None
+                    and datetime.fromisoformat(cb["at"]).astimezone(RIYADH).date() == today)
+        return {"forms": sum(i["step"] in ("required", "overdue") for i in items),
+                "notes": sum(i["step"] == "note_needed" for i in items),
+                "callbacks_today": sum(today_cb(i) for i in items),
+                "missed": sum(i["step"] == "callback_missed" for i in items)}
 
     @app.get("/api/followups")
     def list_followups(
@@ -120,7 +168,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         date_from: Annotated[date | None, Query(alias="from")] = None,
         date_to: Annotated[date | None, Query(alias="to")] = None,
         agent: Annotated[str | None, Query(pattern=r"^\d{1,6}$")] = None,
-        state: Annotated[str, Query()] = "",
+        state: Annotated[str, Query()] = "action",
     ) -> dict:
         if state not in STATES:
             raise HTTPException(422, "unknown state")
@@ -130,24 +178,39 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         if d_to < d_from or (d_to - d_from).days > MAX_LIST_DAYS:
             raise HTTPException(422, "bad date range")
         st = fu.settings(s)
-        out = {"settings": {k: v.isoformat() if v else None for k, v in st.items()}, "items": []}
+        out = {"settings": {k: v.isoformat() if v else None for k, v in st.items()}, "items": [],
+               "linked": staff(user) or bool(user.ext and user.ext in team_exts()),
+               "counts": {"forms": 0, "notes": 0, "callbacks_today": 0, "missed": 0}}
         start = st[fu.SETTING_START]
         if start is None:
             return out
         exts = team_exts()
         if not staff(user):
-            if not user.ext or user.ext not in exts:
-                return out
+            if not out["linked"]:
+                return out            # the page says: your account is not linked to a team extension
             exts = [user.ext]
         elif agent:
             if agent not in exts:
                 raise HTTPException(422, "extension is not a team agent (teams.yaml)")
             exts = [agent]
         now = _now()
-        names = _names(s)
-        items = [r.as_dict(now, names) for r in fu.rows(s, exts, start, day_bounds(d_from)[0], day_bounds(d_to)[1],
-                                                         callers=team_exts())]
-        if state == "todo":
+        names, users = _names(s), usernames(s)
+
+        def load(lo: date, hi: date) -> list[dict]:
+            return [r.as_dict(now, names, users) for r in fu.rows(s, exts, start, day_bounds(lo)[0],
+                                                                   day_bounds(hi)[1], callers=team_exts())]
+        recent = load(today - timedelta(days=ACTION_LOOKBACK_DAYS), today)
+        out["counts"] = counts(recent, today)
+        if state == "action":
+            items = sorted((i for i in recent if action_due(i, today)),
+                           key=lambda i: (URGENCY.get(i["step"], 9), i["start_time"]))
+        else:
+            items = load(d_from, d_to)
+        if state == "open":
+            items = [i for i in items if i["step"] in fu.OPEN_STEPS]
+        elif state == "solved":
+            items = [i for i in items if i["step"] in ("solved_first", "solved_after")]
+        elif state == "todo":
             items = [i for i in items if i["form_state"] in ("missing", "overdue")]
         elif state == "callbacks":
             items = [i for i in items if i["callback"]]
@@ -223,8 +286,13 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         stmt = select(CallShare).where(CallShare.call_id == c.id).order_by(CallShare.id)
         if not staff(user):
             stmt = stmt.where(CallShare.to_user_id == user.id)
+        shares = list(s.scalars(stmt))
+        if not staff(user) and any(sh.seen_at is None for sh in shares):
+            for sh in shares:          # the agent opened the call: the supervisor's note is seen (fix G)
+                sh.seen_at = sh.seen_at or _now()
+            s.commit()
         names = usernames(s)
-        return {"items": [share_dict(s, sh, names) for sh in s.scalars(stmt)],
+        return {"items": [share_dict(s, sh, names) for sh in shares],
                 "targets": targets(s, c) if staff(user) else []}
 
     @app.post("/api/calls/{call_id}/shares")

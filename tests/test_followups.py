@@ -298,3 +298,160 @@ def test_validate_rules(s):
     sup.active = False
     with pytest.raises(fu.FormError):
         fu.validate(s, ok, c, now)
+
+
+# ---------- steps of one call (spec 2026-11-15-followup-stages) ----------
+
+def _open_case(s, *, cb1: datetime | None = at(14, 10)):
+    """Call at 10:00, form not solved with callback 14:00, a team callback at `cb1` (104)."""
+    start_on(s)
+    u = user(s)
+    c = mk(s, "orig", at(10))
+    form(s, c, u, filled=at(10, 5), callback=at(14))
+    if cb1 is not None:
+        mk(s, "cb1", cb1, direction="outbound", agent="104", number="+966501234567")
+    s.commit()
+    return c, u
+
+
+def _row(s, c):
+    return fu.one(s, c, EXTS, DAY)
+
+
+def _note(s, c, u, now, *, rnd=2, solved=False, callback=None):
+    data = {"round": rnd, "what_happened": "called back", "solved": solved}
+    if not solved:
+        data |= {"responsible_kind": "customer", "expected_at": callback, "callback_at": callback}
+    return fu.add_note(s, c, data, u, EXTS, now)
+
+
+def test_steps_before_and_after_the_form(s):
+    start_on(s)
+    u = user(s)
+    a, b, c = mk(s, "a", at(10)), mk(s, "b", at(11), number="0502222222"), mk(s, "c", at(12), number="0503333333")
+    form(s, b, u, filled=at(11, 5), solved=True)
+    form(s, c, u, filled=at(12, 5), no_followup=True)
+    assert _row(s, a).step(at(22, 59)) == "required"
+    assert _row(s, a).step(at(23, 1)) == "overdue"
+    assert _row(s, b).step(at(13)) == "solved_first"
+    assert _row(s, c).step(at(13)) == "no_followup"
+
+
+def test_waiting_then_missed_then_late_callback_needs_a_note(s):
+    c, _ = _open_case(s, cb1=None)
+    assert _row(s, c).step(at(15)) == "waiting_callback"
+    assert _row(s, c).step(at(15, 1)) == "callback_missed"
+    mk(s, "late", at(16), direction="outbound", agent="119")
+    d = _row(s, c).as_dict(at(16, 5))
+    assert d["step"] == "note_needed" and d["callback"]["status"] == "late" and d["round"] == 1
+
+
+def test_note_needed_after_the_callback_with_its_deadline(s):
+    c, _ = _open_case(s)
+    d = _row(s, c).as_dict(at(14, 30))
+    assert d["step"] == "note_needed" and d["note_deadline"] == at(23).isoformat()
+    assert d["callback"]["by_ext"] == "104" and d["callback"]["answered"] is True
+
+
+def test_note_solved_ends_as_solved_after(s):
+    c, u = _open_case(s)
+    _note(s, c, u, at(15), solved=True)
+    d = _row(s, c).as_dict(at(15, 5))
+    assert d["step"] == "solved_after" and d["round"] == 2 and d["callback"] is None
+    h = d["history"]
+    assert [x["round"] for x in h] == [1, 2] and h[0]["callback_status"] == "on_time"
+    assert h[0]["callback_call"]["by_ext"] == "104" and h[1]["solved"] is True
+
+
+def test_note_not_solved_opens_round_3_and_old_calls_do_not_count(s):
+    c, u = _open_case(s)
+    mk(s, "before_note", at(14, 50), direction="outbound", agent="119")      # before the note: not round 2's call
+    _note(s, c, u, at(15), callback=at(18))
+    r = _row(s, c)
+    assert r.step(at(17)) == "waiting_callback" and r.as_dict(at(17))["round"] == 2
+    assert r.step(at(19, 1)) == "callback_missed"
+    mk(s, "cb2", at(18, 20), direction="outbound", agent="119")
+    r = _row(s, c)
+    d = r.as_dict(at(18, 30))
+    assert d["step"] == "note_needed" and d["callback"]["status"] == "on_time" and d["callback"]["round"] == 2
+    _note(s, c, u, at(18, 40), rnd=3, solved=True)
+    d = _row(s, c).as_dict(at(19))
+    assert d["step"] == "solved_after" and [x["callback_status"] for x in d["history"]] == ["on_time", "on_time", None]
+
+
+def test_note_only_when_needed_and_for_the_shown_round(s):
+    c, u = _open_case(s, cb1=None)
+    with pytest.raises(fu.NoteConflict):
+        _note(s, c, u, at(13), solved=True)                         # no callback yet
+    mk(s, "cb1", at(14, 10), direction="outbound", agent="104")
+    s.commit()
+    with pytest.raises(fu.NoteConflict):
+        _note(s, c, u, at(15), rnd=3, solved=True)                  # wrong round (old page)
+    _note(s, c, u, at(15), solved=True)
+    with pytest.raises(fu.NoteConflict):
+        _note(s, c, u, at(15, 1), solved=True)                      # second click
+    with pytest.raises(fu.FormError):
+        _note(s, *_open_case_again(s), at(15), callback=at(14, 30))  # callback time in the past
+
+
+def _open_case_again(s):
+    u = s.query(AppUser).filter_by(username="ali").one()
+    c = mk(s, "orig2", at(9), number="0507777777")
+    form(s, c, u, filled=at(9, 5), callback=at(13))
+    mk(s, "cb_o2", at(13, 5), direction="outbound", agent="119", number="0507777777")
+    s.commit()
+    return c, u
+
+
+def test_note_deadline_edges(s):
+    c, u = _open_case(s, cb1=at(21, 30))        # callback call ends 21:31:10 -> note due 23:31:10
+    r = _row(s, c)
+    assert r.note_states(at(23, 31)) == ["pending"] and r.note_states(at(23, 32)) == ["overdue"]
+    _note(s, c, u, at(23, 31), solved=True)
+    assert _row(s, c).note_states(at(23, 59)) == ["on_time"]
+
+
+def test_late_note_counts_late(s):
+    c, u = _open_case(s)
+    _note(s, c, u, at(23, 30), solved=True)
+    assert _row(s, c).note_states(at(23, 59)) == ["late"]
+
+
+def test_kpi_stage_numbers(s):
+    c, u = _open_case(s)                                    # round 1 on time, note on time, round 2 missed -> open
+    _note(s, c, u, at(15), callback=at(18))
+    first = mk(s, "first", at(11), number="0502222222")
+    form(s, first, u, filled=at(11, 5), solved=True)
+    after = mk(s, "after", at(12), number="0503333333")
+    form(s, after, u, filled=at(12, 5), callback=at(13))
+    mk(s, "cb_after", at(13, 10), direction="outbound", agent="119", number="0503333333")
+    s.commit()
+    fu.add_note(s, after, {"round": 2, "what_happened": "done", "solved": True}, u, EXTS, at(13, 30))
+    nofu = mk(s, "nofu", at(12, 30), number="0504444444")
+    form(s, nofu, u, filled=at(12, 35), no_followup=True)
+    k = fu.kpi(s, at(0), at(0, day=DAY + timedelta(days=1)), EXTS, callers=EXTS, now=at(12, day=DAY + timedelta(days=1)))
+    v = k["agents"]["119"]
+    assert (v["answered_forms"], v["solved_first"], v["solved_after"], v["open"]) == (3, 1, 1, 1)
+    assert v["first_rate"] == pytest.approx(1 / 3) and v["avg_rounds"] == 1
+    assert (v["callbacks_due"], v["callbacks_on_time"]) == (3, 2)       # orig r1 on time, orig r2 missed, after r1
+    assert (v["notes_due"], v["notes_on_time"]) == (2, 2)
+    assert k["summary"]["solved_after"] == 1
+
+
+def test_retention_erases_the_notes(s, tmp_path):
+    from callsight import retention
+    from callsight.db.models import CallFollowupNote
+    c, u = _open_case(s)
+    _note(s, c, u, at(15), solved=True)
+    retention.erase_call_content(s, c, tmp_path, None, None)
+    s.commit()
+    assert s.query(CallFollowupNote).count() == 0
+
+
+def test_pdf_table_has_the_stage_columns(s):
+    from callsight.reports import pdf
+    c, u = _open_case(s)
+    _note(s, c, u, at(15), solved=True)
+    k = fu.kpi(s, at(0), at(0, day=DAY + timedelta(days=1)), EXTS, callers=EXTS, now=at(12, day=DAY + timedelta(days=1)))
+    html = pdf.followup_table(k, [{"ext": "119", "name": "علي"}])
+    assert "حُلّت بعد المتابعة" in html and "نسبة الحل من أول مكالمة" in html and "1.0" in html
