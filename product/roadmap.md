@@ -2,7 +2,23 @@
 
 > Status: `[x]` done · `[~]` in progress · `[ ]` not started
 
-**Current position (2026-11-14):** All Phase 1 items **built**: call ingest ([spec](../specs/2026-11-12-call-ingest/spec.md)) and
+**Current position (2026-11-15, evening): moving to AWS, blocked on the PBX login.**
+- AWS main server is live in Frankfurt: https://calls.mohanadyehia.com (valid certificate, account `admin`), fixed
+  address 63.184.90.120, database empty (AWS starts with new calls only). Pushing to `main` on GitHub
+  (private repo `HondaAbuElNaga/callsight`) updates the server automatically.
+- **Blocker:** the server's first PBX login through `sstli.ras.yeastar.com` was refused (`errcode 70087 IP FORBIDDEN`,
+  1 failed attempt, the server does not retry). 63.184.90.120 is in Integrations → API → IP Restriction; the FQDN
+  page (System → Network → Yeastar FQDN → API Access) is not checked yet. The user will report back.
+- **No calls are being collected right now:** the PC is not on the office network (PBX unreachable; last call in the
+  PC database 2026-11-14 22:21 Riyadh) and its line was removed from the PBX permit list. The PBX keeps its call
+  records; they are pulled after the login works (`backfill`).
+- Waiting: AWS approval of the GPU quota (request sent, "Case Opened"), then the GPU server and the schedule.
+- New feature ideas from the user (users page, delete, supervisor notes, agent follow-up form, callback KPI) are in
+  [ideas.md](ideas.md); the user asked for discussion first, no spec yet.
+- Step-by-step state: [tasks](../specs/2026-11-15-aws-deploy/tasks.md), the user's clicks:
+  [user-steps](../specs/2026-11-15-aws-deploy/user-steps.md), guide: [docs/aws.md](../docs/aws.md).
+
+**Position before the AWS move (2026-11-14):** All Phase 1 items **built**: call ingest ([spec](../specs/2026-11-12-call-ingest/spec.md)) and
 web call list ([spec](../specs/2026-11-13-web-call-list/spec.md)), Arabic page on http://127.0.0.1:8080 (this PC only; accounts admin + supervisor 114).
 **Phase 1 "Done when" still open:** 7 consecutive days of nightly reconcile = OK. Needs the PC on the office LAN as 192.168.50.189
 (on 2026-11-13/14 it was on another network, 192.168.100.x, so ingest paused; it catches up automatically).

@@ -44,3 +44,19 @@ Gaps: no maintained open-source "Asterisk queue KPI" or "Arabic call-center anal
 |---|---|---|---|---|---|
 | LIVE-1 | Live transcript of active calls | Stream call audio via Asterisk ARI external media WebSocket → text appears live | [asterisk/asterisk-websocket-examples](https://github.com/asterisk/asterisk-websocket-examples) | L | rejected |
 | PLAT-1 | Drop-folder ingestion | Any audio dropped in a folder gets processed — fallback if the PBX API is limited, also for old recordings | [transcriptionstream/transcriptionstream](https://github.com/transcriptionstream/transcriptionstream) | S | rejected |
+
+## From the user, 2026-11-15 (discussion only; the user said: do not write specs yet)
+- **Admin page:** create supervisor / agent users; delete data. Claude's advice: user management first; delete =
+  one call with its recording, text and analysis, with confirmation and a log (who, when, which call), not free
+  editing of tables.
+- **Supervisor shares a call with a note:** the agent sees the call, its insights and the supervisor's comment.
+  Advice: show the summary and the comment; hide the 1-10 estimate from agents until the model is validated.
+- **Agent follow-up form after every answered call:** what happened, problem solved or not, expected time, who
+  must solve it; if not solved, the agent picks a callback time. Advice: very short form, responsible person from a
+  list, one click "no follow-up needed" for wrong numbers; the AI summary arrives up to ~35 min later on AWS.
+- **Missed callback lowers the agent's KPI.** Advice: the system checks the callback itself from outgoing calls to
+  that number; own KPI "callbacks on time %" (+ "forms filled %"); an unanswered attempt counts; grace time;
+  repeat call after "solved" is flagged; two weeks show-only; HR/legal OK before it judges staff.
+- Suggested order: users page, follow-up form + callback check, supervisor notes, the KPIs, delete with log.
+- **Open questions to the user:** (1) agents see the summary only, or also the score? (2) callback by any team
+  member or only the same agent? (3) form for every answered call or only calls longer than ~20 s?

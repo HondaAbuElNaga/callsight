@@ -11,7 +11,7 @@ Spec: [spec.md](spec.md) · Branch: `spec/2026-11-15-aws-deploy`
 - [x] A3b. (done 2026-11-15: both image ids written into the template; GPU type offered in all three zones) Paste one command in AWS CloudShell and send the answer (image ids + zones that offer the GPU type).
 - [x] A4. (main server created 2026-11-15, CREATE_COMPLETE) Upload `deploy/aws/callsight.yaml` in CloudFormation (main server first), guided. A4c = GPU server, A6 = schedule on.
 - [x] A4b. DNS record added 2026-11-15: `calls.mohanadyehia.com` → 63.184.90.120 (Cloudflare, DNS only; the user's own domain).
-- [ ] A5. Supplier enables FQDN API Access and permits the Elastic IP (the IP exists after task 9).
+- [ ] A5. Supplier enables FQDN API Access and permits the Elastic IP. User reported "done" 2026-11-15, but the login is refused (see task 12): FQDN page to be checked.
 
 ## Preparation in the repository (no AWS cost)
 - [x] 2. `product/tech-stack.md`: AWS services, Caddy, NFS, cfn-lint added; "100 % local" principle changed (also
@@ -49,9 +49,23 @@ Spec: [spec.md](spec.md) · Branch: `spec/2026-11-15-aws-deploy`
          HTTPS; ports 80/443 open, 22 open (allowed from the PC's address only), 5432/6379/2049/8080/5433 closed.
 - [ ] 11. Copy `config/` + new `.env`; create admin + supervisor accounts; set `ASR_START_DATE`; stop the PC services.
          Done 2026-11-15: `config/` (with the code), new `.env` (new random passwords; PBX ID/secret left EMPTY so
-         no login is tried before the supplier confirms), account `admin`. Open: supervisor account,
-         `ASR_START_DATE`, PBX ID/secret, stopping the PC services (all at go-live, after A5).
+         no login is tried before the supplier confirms), account `admin`. PBX ID/secret added later the same day (after
+         the user reported A5 done). Open: supervisor account, `ASR_START_DATE` (go-live day), stopping the PC
+         services (`docker compose stop` on the PC; they collect nothing anyway: the PC is off the office network).
 - [ ] 12. After A5: one PBX login through the FQDN; ingest runs; test the live board through the FQDN.
+         **2026-11-15: first login REFUSED, `errcode=70087 IP FORBIDDEN`** (1 failed attempt; 5 in a row = the PBX
+         blocks the address). The server set `pbx:auth_blocked` and does not retry. Checked: the API answers through
+         the FQDN with a valid certificate (errcode 10004 without a token); the server's outgoing address is
+         63.184.90.120; the user's screenshot shows 63.184.90.120 / 255.255.255.255 as the ONLY line in Integrations
+         → API → IP Restriction (the PC's .199 line is gone). Not checked yet: that the line was saved, and System →
+         Network → Yeastar FQDN → API Access (enabled + its own permitted IPs). Next, only after the user confirms:
+         `docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml exec -T worker python -m callsight pbx-unblock`
+         on the server, watch the worker log for `ingest:`; then `backfill --days N` for the calls missed since
+         2026-11-14 22:21 Riyadh, set `ASR_START_DATE`, stop the PC services.
+- [x] 12b. (added) Automatic update from GitHub: private repo `HondaAbuElNaga/callsight`, self-hosted runner
+         `callsight-main` on the main server, `.github/workflows/deploy.yml` → `deploy/aws/deploy-main.sh` on every
+         push to `main` (code copy without `.env`, DB backup, build + restart, web check). First run OK (1m51s).
+         The AWS branch was merged to `main` for this although the spec is still open. GPU server not covered yet.
 - [ ] 13. After A3: user updates the stack with GPU = yes; models + images; measure Whisper speed on the T4;
          `setup-internet.sh off` + check that the GPU server reaches nothing but the main server.
 - [ ] 14. Turn on the schedule; the user makes one real test call with the GPU server stopped (acceptance).
