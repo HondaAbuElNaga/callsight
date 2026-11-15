@@ -53,6 +53,8 @@ class ApiConfig:
     listen_enabled: Callable[[], bool] = lambda: False
     listen_client: Callable[[], object] | None = None   # -> object with listen(monitor_ext, call_id)
     live_lookup: Callable[[str], dict | None] | None = None   # live call by PBX call id (from the snapshot)
+    # agent-supervisor spec: admin delete -> worker task removes the backup copy (BACKUP_DIR is read-only here)
+    delete_backup_copy: Callable[[int, str], None] | None = None
 
 
 class LoginIn(BaseModel):
@@ -523,6 +525,14 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
             raise HTTPException(503, "the PBX did not start listening")
         return {"ok": True}
 
+    # ---------- agent + supervisor work, admin pages (spec 2026-11-15-agent-supervisor) ----------
+
+    from . import admin as admin_routes
+    from . import work as work_routes
+    work_routes.register(app, DB=DB, User=User, Manager=Manager, cfg=cfg,
+                         audit_analysis=lambda s, user, call_id: audit_transcript(s, user, call_id, "analysis"))
+    admin_routes.register(app, DB=DB, Admin=Admin, cfg=cfg)
+
     @app.get("/api/{rest:path}")
     def api_404(rest: str) -> None:
         raise HTTPException(404, "not found")
@@ -544,7 +554,13 @@ def _app_from_env() -> FastAPI:
         cookie_secure=os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes"),
         health=_health_from_env(), live=_live_from_env(),
         listen_enabled=lambda: os.getenv("LISTEN_ENABLED", "false").strip().lower() in ("1", "true", "yes"),
-        listen_client=lambda: _listen_adapter(), live_lookup=_live_lookup_from_env()))
+        listen_client=lambda: _listen_adapter(), live_lookup=_live_lookup_from_env(),
+        delete_backup_copy=_send_backup_delete))
+
+
+def _send_backup_delete(call_id: int, rel_path: str) -> None:
+    from ..jobs import DELETE_BACKUP_TASK, celery
+    celery.send_task(DELETE_BACKUP_TASK, args=[call_id, rel_path], queue="maint")
 
 
 def live_origins(env: dict[str, str] | os._Environ = os.environ) -> frozenset[str]:

@@ -250,3 +250,18 @@ table.health td { vertical-align: top; }
 .badge.live-holding { background: var(--warn-bg); color: var(--warn); }
 .live-queue { margin: 0; padding-inline-start: 18px; display: grid; gap: 4px; }
 .live-legal { border-top: 1px solid var(--line); padding-top: 10px; }
+
+/* agent-supervisor spec: call-panel boxes, users page */
+.panel.work { margin: 10px 0; }
+.panel.work h3 { margin: 0 0 6px; font-size: 15px; display: flex; gap: 8px; align-items: center; }
+.form { border: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.form label { display: flex; flex-direction: column; gap: 4px; }
+.form textarea, .form select, .form input, .panel.work input { font: inherit; }
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.share { border-bottom: 1px solid var(--line); padding: 4px 0; }
+.share p { margin: 2px 0; }
+.danger { color: var(--bad); }
+button.danger { color: #fff; background: var(--bad); border-color: var(--bad); }
+.panel.work.danger { border-color: var(--bad); }
+.panel.secret { border-color: var(--accent); }
+.big { font-size: 20px; font-weight: 600; letter-spacing: 1px; }

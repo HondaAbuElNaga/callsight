@@ -26,6 +26,10 @@ AGENT_ALLOWED = {
     ("GET", "/api/me"), ("GET", "/api/agents"), ("GET", "/api/calls"), ("GET", "/api/calls/summary"),
     ("GET", "/api/calls/{call_id}"), ("GET", "/api/calls/{call_id}/recording"), ("GET", "/api/kpi"),
     ("GET", "/api/calls/{call_id}/transcript"), ("GET", "/api/calls/{call_id}/transcript.txt"),
+    # agent-supervisor spec: own follow-up forms, calls shared with them, the summary of own/shared calls
+    ("GET", "/api/calls/{call_id}/followup"), ("PUT", "/api/calls/{call_id}/followup"), ("GET", "/api/followups"),
+    ("GET", "/api/shares"), ("GET", "/api/calls/{call_id}/shares"), ("POST", "/api/shares/{share_id}/seen"),
+    ("GET", "/api/calls/{call_id}/summary"),
 }
 STAFF_ONLY = {
     ("GET", "/api/reports/pdf"), ("GET", "/api/reports"), ("GET", "/api/reports/{report_id}/pdf"),
@@ -35,6 +39,11 @@ STAFF_ONLY = {
     ("GET", "/api/calls/{call_id}/analysis"), ("GET", "/api/rating/queue"), ("GET", "/api/rating/calls/{call_id}"),
     ("PUT", "/api/rating/calls/{call_id}"),
     ("WS", "/api/live"), ("POST", "/api/live/{call_id}/listen"),       # live board + Listen stub (live-board spec)
+    # agent-supervisor spec: sharing (staff), users / settings / log / delete (admin)
+    ("POST", "/api/calls/{call_id}/shares"), ("DELETE", "/api/shares/{share_id}"),
+    ("GET", "/api/admin/users"), ("POST", "/api/admin/users"), ("PATCH", "/api/admin/users/{user_id}"),
+    ("POST", "/api/admin/users/{user_id}/password"), ("GET", "/api/admin/settings"), ("PUT", "/api/admin/settings"),
+    ("GET", "/api/admin/log"), ("POST", "/api/calls/{call_id}/delete-content"),
 }
 CATCH_ALL = {("GET", "/api/{rest:path}")}       # plain 404 for unknown /api paths
 ORIGIN = "http://testserver"                     # live WebSocket Origin allowlist in these tests
@@ -138,6 +147,12 @@ def test_every_api_route_is_classified(env):
     assert not (AGENT_ALLOWED & STAFF_ONLY)
 
 
+def _url(path: str, ids: dict) -> str:
+    """Fill every {param}: the call id of the agent's own call, 1 for the other ids."""
+    import re
+    return re.sub(r"\{[a-z_]+\}", "1", path.replace("{call_id}", str(ids["own"])))
+
+
 def _ws_close_code(client, path) -> int:
     with pytest.raises(WebSocketDisconnect) as e:
         with client.websocket_connect(path, headers={"origin": ORIGIN}) as w:
@@ -152,7 +167,7 @@ def test_staff_only_routes_refuse_agents(env):
         if method == "WS":                      # refused before accept: close code 4403 (= HTTP 403)
             assert _ws_close_code(client, path) == 4403, path
             continue
-        url = path.replace("{report_id}", "1").replace("{clip_id}", "1").replace("{call_id}", str(ids["own"]))
+        url = _url(path, ids)
         r = client.request(method, url, json={"text": "x", "score": 5} if method == "PUT" else None)
         assert r.status_code == 403, (method, path, r.status_code)
 
@@ -161,6 +176,8 @@ def test_agent_allowed_routes_answer(env):
     client, _, ids, app = env
     login(client)
     for method, path in sorted(_api_routes(app) & AGENT_ALLOWED):
+        if method != "GET":          # writes are tested with real bodies in test_work_api.py
+            continue
         url = path.replace("{call_id}", str(ids["own"]))
         params = today() if path.startswith("/api/calls") else None
         r = client.request(method, url, params=params)
@@ -176,8 +193,7 @@ def test_agent_routes_need_login(env):
         if method == "WS":                      # close code 4401 (= HTTP 401)
             assert _ws_close_code(client, path) == 4401, path
             continue
-        url = path.replace("{call_id}", str(ids["own"])).replace("{report_id}", "1").replace("{clip_id}", "1")
-        assert client.request(method, url).status_code == 401, (method, path)
+        assert client.request(method, _url(path, ids)).status_code == 401, (method, path)
 
 
 # ---------- own calls only ----------

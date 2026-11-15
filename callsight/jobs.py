@@ -29,6 +29,7 @@ celery.conf.update(
     task_routes={"callsight.jobs.report_*": {"queue": "reports"},
                  "callsight.jobs.backup_nightly": {"queue": "maint"},
                  "callsight.jobs.retention_nightly": {"queue": "maint"},
+                 "callsight.jobs.delete_backup_copy": {"queue": "maint"},
                  queueing.TASK_NAME: {"queue": queueing.QUEUE},
                  ANALYZE_TASK: {"queue": NLP_QUEUE}},
     beat_schedule={
@@ -324,6 +325,16 @@ def retention_nightly() -> dict:
             raise RuntimeError("maintenance lock held")
         with wiring.session_factory()() as s:
             return retention.run(s, cfg, wiring.settings().audio_dir, wiring.backup_config().files_dir)
+
+
+DELETE_BACKUP_TASK = "callsight.jobs.delete_backup_copy"
+
+
+@celery.task(name=DELETE_BACKUP_TASK)
+def delete_backup_copy(call_id: int, rel_path: str) -> dict:
+    """Admin deleted a call's content on the web page: the API cannot write BACKUP_DIR, the worker removes the copy."""
+    from . import retention
+    return {"call_id": call_id, "deleted": retention.delete_backup_copy(wiring.backup_config().files_dir, rel_path)}
 
 
 @worker_ready.connect

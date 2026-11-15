@@ -45,3 +45,25 @@ export function duration(seconds: number | null | undefined): string {
   const ss = String(s % 60).padStart(2, "0");
   return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 }
+
+// ---------- agent + supervisor work ----------
+// <input type="datetime-local"> holds Riyadh wall time (UTC+3, no daylight saving) without a zone.
+const inputFmt = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  hourCycle: "h23",
+});
+export function toRiyadhInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const p = Object.fromEntries(inputFmt.formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+export const fromRiyadhInput = (v: string): string => `${v}:00+03:00`;
+
+export const CALLBACK_LABEL: Record<string, string> = {
+  waiting: "بانتظار الاتصال", on_time: "في الوقت", late: "متأخر", missed: "فائت", no_number: "بلا رقم",
+};
+export const FORM_LABEL: Record<string, string> = {
+  missing: "مطلوب", overdue: "لم يُعبّأ في وقته", on_time: "في الوقت", late: "عُبّئ متأخرًا",
+};
+export const ROLE_LABEL: Record<string, string> = { admin: "مدير النظام", supervisor: "مشرف", agent: "موظف" };
+export const pct = (v: number | null | undefined) => (v === null || v === undefined ? "–" : `${(v * 100).toFixed(0)}%`);

@@ -152,6 +152,24 @@ def agents_table(agents: list[dict]) -> str:
     return "".join(out)
 
 
+def followup_table(fu: dict, agents: list[dict]) -> str:
+    """Forms + callbacks (agent-supervisor spec). Only called when the admin switched these KPIs on."""
+    names = {a["ext"]: a["name"] for a in agents}
+    out = [f'<p>تُحتسب من {escape(fu["since"] or "")}. معاودة الاتصال في وقتها = خلال 60 دقيقة من الوقت المحدد.</p>',
+           '<table><tr><th>الموظف</th><th class="n">نماذج مطلوبة</th><th class="n">في وقتها</th>'
+           '<th class="n">نسبة النماذج</th><th class="n">معاودات مستحقة</th><th class="n">في وقتها</th>'
+           '<th class="n">نسبة المعاودة</th></tr>']
+    rows = [(f'{num(e)} {escape(names.get(e, ""))}', v) for e, v in fu["agents"].items()]
+    rows.append(("الإجمالي", fu["summary"]))
+    for label, v in rows:
+        out.append(f'<tr><td>{label}</td><td class="n">{num(v["forms_due"])}</td>'
+                   f'<td class="n">{num(v["forms_on_time"])}</td><td class="n">{pct(v["forms_rate"])}</td>'
+                   f'<td class="n">{num(v["callbacks_due"])}</td><td class="n">{num(v["callbacks_on_time"])}</td>'
+                   f'<td class="n">{pct(v["callbacks_rate"])}</td></tr>')
+    out.append("</table>")
+    return "".join(out)
+
+
 def status_table(by_status: dict) -> str:
     total = sum(by_status.values())
     out = ['<table><tr><th>الحالة</th><th class="n">العدد</th><th></th></tr>']
@@ -234,6 +252,9 @@ def build_html(session: Session, period: kpi.Period, teams: TeamConfig, team: st
         parts += ["<h2>حالات المكالمات الواردة</h2>", status_table(data["by_status"])]
     parts += ["<h2>الموظفون</h2>", agents_table(data["agents"]),
               "<h2>أكثر الأرقام تكراراً</h2>", repeaters_table(data["top_repeaters"])]
+    fu = data.get("followup") or {}
+    if fu.get("enabled") and fu.get("active"):        # show-only until the admin sets followup_kpi_since
+        parts += ["<h2>المتابعة ومعاودة الاتصال</h2>", followup_table(fu, data["agents"])]
     parts.append('<ol class="notes">' + "".join(f"<li>{escape(n)}</li>" for n in FOOTNOTES) + "</ol>")
     if not agent:
         for row in data["agents"]:
