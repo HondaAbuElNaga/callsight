@@ -1,0 +1,40 @@
+# One-off jobs on the AWS main server, started by hand: Actions -> Server task -> Run workflow.
+# Runs on the runner installed ON the main server. A new password is printed in this run's log:
+# copy it, then delete the run (the repository must stay PRIVATE).
+name: Server task
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: What to do
+        type: choice
+        options:
+          - make-supervisor
+          - new-admin-password
+          - new-supervisor-password
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  task:
+    runs-on: [self-hosted, callsight-main]
+    timeout-minutes: 10
+    steps:
+      - name: Run the task
+        working-directory: /opt/callsight
+        env:
+          TASK: ${{ inputs.task }}
+        run: |
+          set -euo pipefail
+          C=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml)
+          case "$TASK" in
+            make-supervisor)         "${C[@]}" exec -T api python -m callsight create-user supervisor --role supervisor --ext 114 --generate ;;
+            new-admin-password)      "${C[@]}" exec -T api python -m callsight set-password admin --generate ;;
+            new-supervisor-password) "${C[@]}" exec -T api python -m callsight set-password supervisor --generate ;;
+          esac
