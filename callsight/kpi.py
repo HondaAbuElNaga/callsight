@@ -63,6 +63,9 @@ def period_for(kind: str, day: date) -> Period:
 
 
 MAX_RANGE_DAYS = 366
+# Teams that only make calls (no incoming queue): the page and the PDF show their outgoing numbers only.
+# Same list in web/src/KpiPage.tsx (OUTBOUND_ONLY_TEAMS).
+OUTBOUND_ONLY_TEAMS = ("after_sales",)
 
 
 def date_range(first: date, last: date) -> Period:

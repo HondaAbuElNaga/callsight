@@ -45,6 +45,7 @@ const TEAM_TILES: TileDef[] = [
   { key: "repeats", label: "متكررة خلال 72 ساعة", kind: "count", goodUp: false },
 ];
 // Teams that only make calls (no incoming queue): their page shows outgoing numbers only.
+// Same list on the server: callsight/kpi.py OUTBOUND_ONLY_TEAMS (the PDF follows it).
 const OUTBOUND_ONLY_TEAMS = ["after_sales"];
 const OUTBOUND_TILES: TileDef[] = [
   { key: "outbound", label: "المكالمات الصادرة", kind: "count", goodUp: true },
@@ -197,7 +198,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
             {data.period.partial && <span className="tag">جزئي</span>}
             <span className="muted"> · مقارنة مع <span dir="ltr" className="num">{data.previous_period.start}</span> – <span dir="ltr" className="num">{data.previous_period.end}</span></span>
           </p>
-          {outboundOnly && <p className="muted small">ما بعد البيع: مكالمات صادرة فقط (لا يستقبل مكالمات واردة).</p>}
+          {outboundOnly && <p className="muted small">ما بعد البيع: مكالمات صادرة فقط (لا تستقبل مكالمات واردة).</p>}
 
           <div className="tiles">
             {tiles.map((t) => (
@@ -231,6 +232,22 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
             <h2>الموظفون</h2>
             <div className="table-wrap">
               <table>
+                {outboundOnly ? <>
+                <thead>
+                  <tr><th>الموظف</th><th>الفريق</th><th>الصادرة</th><th>تم الرد</th><th>متوسط مدة الصادرة</th></tr>
+                </thead>
+                <tbody>
+                  {data.agents.map((a) => (
+                    <tr key={a.ext} onClick={() => set({ agent: a.ext, team: f.team && a.team })}>
+                      <td>{a.ext} <span className="muted">{a.name}</span></td>
+                      <td>{TEAM_LABEL[a.team] ?? a.team}</td>
+                      <td className="num">{a.outbound}</td>
+                      <td className="num">{a.outbound_answered}</td>
+                      <td className="num">{secs(a.outbound_aht)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                </> : <>
                 <thead>
                   <tr>
                     <th>الموظف</th><th>الفريق</th><th>مكالمات ردّ عليها</th><th>AHT</th><th>رنات فائتة</th>
@@ -251,6 +268,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                     </tr>
                   ))}
                 </tbody>
+                </>}
               </table>
             </div>
             {!isAgent && data.summary.repeats_unattributed ? (

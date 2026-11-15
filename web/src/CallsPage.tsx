@@ -61,9 +61,10 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
     else setError("تعذر تحميل البيانات. تأكد أن الخدمة تعمل ثم أعد المحاولة.");
   }, [onExpired]);
 
-  useEffect(() => { api.agents().then(setAgents).catch(fail); }, [fail]);
+  useEffect(() => { if (!detailOnly) api.agents().then(setAgents).catch(fail); }, [fail, detailOnly]);
 
-  useEffect(() => {
+  useEffect(() => {   // detailOnly (agents): no list, only the opened call
+    if (detailOnly) return;
     let alive = true;
     setLoading(true);
     setError("");
@@ -72,17 +73,18 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
       .catch((e) => alive && fail(e))
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
-  }, [filters, page, fail]);
+  }, [filters, page, fail, detailOnly]);
 
   // The boxes on top ignore the chosen status, so every category keeps its number.
   const { status: _ignored, ...summaryKey } = filters;
   const summaryDeps = JSON.stringify(summaryKey);
   useEffect(() => {
+    if (detailOnly) return;
     let alive = true;
     api.summary({ ...filters, status: "" }).then((s) => alive && setSummary(s)).catch((e) => alive && fail(e));
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [summaryDeps, fail]);
+  }, [summaryDeps, fail, detailOnly]);
 
   const apply = (f: Filters) => { setFilters(f); setPage(1); };
   const set = (patch: Partial<Filters>) => apply({ ...filters, ...patch });

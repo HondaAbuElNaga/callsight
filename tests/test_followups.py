@@ -152,6 +152,17 @@ def test_callback_not_answered_comes_from_the_pbx_record(s):
     assert _callback_case(s, at(14, 10), status="no_answer", total=15)["answered"] is False
 
 
+def test_later_answered_callback_counts_as_answered(s):
+    start_on(s)
+    u = user(s)
+    c = mk(s, "orig", at(10), number="0501234567")
+    form(s, c, u, filled=at(10, 5), callback=at(14))
+    mk(s, "try1", at(14, 5), direction="outbound", status="no_answer", agent="104", talk=0, total=15, number="0501234567")
+    mk(s, "try2", at(16), direction="outbound", status="answered", agent="119", talk=30, total=40, number="0501234567")
+    cb = rows(s)["orig"]["callback"]
+    assert cb["answered"] is True and cb["status"] == "on_time" and cb["by_ext"] == "104"   # first try decides the time
+
+
 def test_no_callback_call_yet_means_answered_unknown(s):
     cb = _callback_case(s, None)
     assert cb["answered"] is None and cb["status"] in ("waiting", "missed")

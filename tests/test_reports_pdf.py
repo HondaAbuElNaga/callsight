@@ -67,6 +67,21 @@ def test_html_partial_period_and_agent_scope(session):
     assert f'class="tag">{pdf.PARTIAL}<' in html and html.count('class="agent"') == 0 and "الموظف 104" in html
 
 
+def test_after_sales_pdf_shows_outgoing_only(session):
+    for kw in ({"team": "after_sales"}, {"agent": "116"}):
+        html = pdf.build_html(session, WEEK, TEAM, now=NOW, **kw)
+        assert "المكالمات الصادرة" in html and "الصادرة التي تم الرد عليها" in html, kw
+        assert "المكالمات الواردة يومياً" not in html and "حالات المكالمات الواردة" not in html, kw
+        body = html.split('<ol class="notes">')[0]                # the footnotes explain every term: not counted
+        assert "<td>رنات فائتة" not in body and "<td>نسبة الرد" not in body and "<th class=\"n\">رنات فائتة" not in body, kw
+
+
+def test_range_pdf_filename_and_title(session):
+    p = kpi.date_range(date(2026, 11, 1), date(2026, 11, 7))
+    assert pdf.filename(p) == "callsight-2026-11-01-to-2026-11-07-all.pdf"
+    assert "فترة مختارة" in pdf.build_html(session, p, TEAM, now=NOW)
+
+
 def test_day_chart_runs_right_to_left():
     days = [{"day": date(2026, 11, d), "calls": d, "answered": d, "unanswered": 0} for d in range(1, 8)]
     xs = [float(x) for x in re.findall(r'<rect x="([\d.]+)"', charts.day_bars(days))]

@@ -100,6 +100,13 @@ TEAM_ROWS = [  # (key, label, format, change kind, higher is better)
 ]
 
 
+OUT_ROWS = [
+    ("outbound", "المكالمات الصادرة", "count", "count", True),
+    ("outbound_answered", "الصادرة التي تم الرد عليها", "count", "count", True),
+    ("outbound_aht", "متوسط مدة الصادرة", "seconds", "seconds", False),
+]
+
+
 def fmt(v, kind: str) -> str:
     if kind == "na":
         return NA
@@ -138,7 +145,16 @@ def teams_table(per_team: dict[str, dict]) -> str:
     return "".join(out)
 
 
-def agents_table(agents: list[dict]) -> str:
+def agents_table(agents: list[dict], outbound_only: bool = False) -> str:
+    if outbound_only:
+        out = ['<table><tr><th>الموظف</th><th>الفريق</th><th class="n">الصادرة</th><th class="n">تم الرد</th>'
+               '<th class="n">متوسط مدة الصادرة</th></tr>']
+        for a in agents:
+            out.append(f'<tr><td>{num(a["ext"])} {escape(a["name"])}</td>'
+                       f'<td>{escape(TEAM_LABEL.get(a["team"], a["team"]))}</td><td class="n">{num(a["outbound"])}</td>'
+                       f'<td class="n">{num(a["outbound_answered"])}</td><td class="n">{dur(a["outbound_aht"])}</td></tr>')
+        out.append("</table>")
+        return "".join(out)
     out = ['<table><tr><th>الموظف</th><th>الفريق</th><th class="n">مكالمات ردّ عليها</th><th class="n">AHT</th>'
            '<th class="n">رنات فائتة</th><th class="n">الصادرة (تم الرد)</th><th class="n">AHT الصادرة</th>'
            '<th class="n">متكررة</th></tr>']
@@ -205,14 +221,15 @@ AGENT_TILES = [("calls", "مكالمات ردّ عليها", "count", "count", T
 
 def agent_section(row: dict, cur: dict, prev: dict) -> str:
     s, p = cur["summary"], prev
+    outbound_only = row["team"] in kpi.OUTBOUND_ONLY_TEAMS
     tiles = "".join(
         f'<div class="tile"><div class="l">{escape(label)}</div><div class="v">{fmt(s[k], kind)}</div>'
         f'<div class="l">السابقة: {fmt(p.get(k), kind)} {"" if kind == "na" else change(s[k], p.get(k), ck, up)}</div></div>'
-        for k, label, kind, ck, up in AGENT_TILES)
+        for k, label, kind, ck, up in (OUT_ROWS if outbound_only else AGENT_TILES))
     team = TEAM_LABEL.get(row["team"], row["team"])
+    daily = "" if outbound_only else f'<h3>المكالمات يومياً</h3>{day_chart(cur["days"], "رنات فائتة")}'
     return (f'<section class="agent"><h2>{num(row["ext"])} {escape(row["name"])} '
-            f'<span class="muted">· {escape(team)}</span></h2><div class="tiles">{tiles}</div>'
-            f'<h3>المكالمات يومياً</h3>{day_chart(cur["days"], "رنات فائتة")}'
+            f'<span class="muted">· {escape(team)}</span></h2><div class="tiles">{tiles}</div>{daily}'
             f'<h3>أكثر الأرقام تكراراً (منسوبة للموظف)</h3>{repeaters_table(cur["top_repeaters"])}</section>')
 
 
@@ -241,16 +258,21 @@ def build_html(session: Session, period: kpi.Period, teams: TeamConfig, team: st
     data = kpi.report(session, period, teams, team=team, agent=agent, now=now)
     prev_p = period.previous()
     name = data["agents"][0]["name"] if agent and data["agents"] else ""
+    view_team = teams.ext_team.get(agent) if agent else team
+    outbound_only = view_team in kpi.OUTBOUND_ONLY_TEAMS
     parts = [cover(data, scope_label(team, agent, name), now), "<h2>ملخص الفترة</h2>",
-             summary_table(data["summary"], data["previous"])]
+             summary_table(data["summary"], data["previous"], OUT_ROWS if outbound_only else TEAM_ROWS)]
+    if outbound_only:
+        parts.append('<p class="muted">ما بعد البيع: مكالمات صادرة فقط (لا تستقبل مكالمات واردة).</p>')
     if not agent and not team and len(kpi.team_names(teams)) > 1:
         per_team = {t: kpi.compute(session, period.start, period.end, teams=teams, team=t)["summary"]
                     for t in kpi.team_names(teams)}
         parts += ["<h2>حسب الفريق</h2>", teams_table(per_team)]
-    parts += ["<h2>المكالمات الواردة يومياً</h2>", day_chart(data["days"], "رنات فائتة" if agent else "لم يتم الرد")]
-    if data["by_status"] is not None:
+    if not outbound_only:
+        parts += ["<h2>المكالمات الواردة يومياً</h2>", day_chart(data["days"], "رنات فائتة" if agent else "لم يتم الرد")]
+    if data["by_status"] is not None and not outbound_only:
         parts += ["<h2>حالات المكالمات الواردة</h2>", status_table(data["by_status"])]
-    parts += ["<h2>الموظفون</h2>", agents_table(data["agents"]),
+    parts += ["<h2>الموظفون</h2>", agents_table(data["agents"], outbound_only),
               "<h2>أكثر الأرقام تكراراً</h2>", repeaters_table(data["top_repeaters"])]
     fu = data.get("followup") or {}
     if fu.get("enabled") and fu.get("active"):        # show-only until the admin sets followup_kpi_since

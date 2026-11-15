@@ -118,7 +118,8 @@ export function FollowupsPage({ me, onCalls, onOpenCall, onLogout, onExpired }: 
                     {formatDateTime(i.callback.at)} <span className={`state ${CB_CLASS[i.callback.status]}`}>{CALLBACK_LABEL[i.callback.status]}</span>
                     {i.callback.by_ext && <span className="muted small"> · {i.callback.by_ext}</span>}
                   </> : "–"}</td>
-                  <td>{i.callback?.answered == null ? <span className="muted">–</span>
+                  <td>{!i.callback ? <span className="muted">–</span>
+                    : i.callback.answered == null ? <span className="muted">لم يُتصل بعد</span>
                     : i.callback.answered ? <span className="state ok">ردّ</span>
                     : <span className="state warn">لم يرد</span>}</td>
                   <td className="nowrap muted small">{formatDateTime(i.deadline)}</td>
