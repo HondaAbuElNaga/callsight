@@ -90,7 +90,8 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
   const [error, setError] = useState("");
   const [tick, setTick] = useState(0);
   const [open, setOpen] = useState<number | null>(null);   // the call shown in the side panel, on this page
-  const onOpenCall = (id: number) => setOpen(id);
+  const [fromShare, setFromShare] = useState(false);        // opened from a supervisor's note: no follow-up form
+  const onOpenCall = (id: number, share = false) => { setFromShare(share); setOpen(id); };
 
   const fail = useCallback((e: unknown) => {
     if (e instanceof Unauthorized) onExpired();
@@ -160,8 +161,8 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
               <tbody>
                 {shares.map((s) => (
                   <tr key={s.id} onClick={() => {   // agent: one click opens the call AND shows the note
-                    if (!staff && !s.seen_at) api.shareSeen(s.id).then(loadShares).catch(fail).finally(() => onOpenCall(s.call_id));
-                    else onOpenCall(s.call_id);
+                    if (!staff && !s.seen_at) api.shareSeen(s.id).then(loadShares).catch(fail).finally(() => onOpenCall(s.call_id, true));
+                    else onOpenCall(s.call_id, true);
                   }}>
                     <td className="nowrap">{s.call_start ? formatDateTime(s.call_start) : "–"}</td>
                     <td>{s.note ?? <span className="state warn">ملاحظة جديدة: اضغط لعرضها</span>}</td>
@@ -238,7 +239,7 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
         </div>
       )}
       {open !== null && (   /* the call opens in the side panel over this list; ✕ closes it and refreshes the list */
-        <CallsPage key={open} me={me} onLogout={onLogout} onExpired={onExpired} detailOnly embedded openCallId={open}
+        <CallsPage key={`${open}-${fromShare}`} me={me} onLogout={onLogout} onExpired={onExpired} detailOnly embedded openCallId={open} fromShare={fromShare}
           onFollowups={() => { setOpen(null); setTick((n) => n + 1); }} />
       )}
     </div>

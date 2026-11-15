@@ -18,6 +18,7 @@ interface Props {
   onOpened?: () => void;           // called once openCallId was used (so it never reopens later)
   detailOnly?: boolean;            // agents: no call list, only the opened call (their home is the follow-ups page)
   embedded?: boolean;              // inside the follow-ups page: no page header, only the side panel (+ player)
+  fromShare?: boolean;             // opened from the supervisor's shared calls: the note first, no follow-up form
 }
 
 // A function, not a constant: the page may stay open past midnight.
@@ -38,7 +39,7 @@ function wordsOk(text: string): boolean {
 interface Seek { id: number; t: number; n: number }
 
 export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth, onRating, onLive, onFollowups, onUsers,
-  openCallId, onOpened, detailOnly = false, embedded = false }: Props) {
+  openCallId, onOpened, detailOnly = false, embedded = false, fromShare = false }: Props) {
   const [filters, setFilters] = useState<Filters>(emptyFilters); // applied as soon as a field changes
   const [qText, setQText] = useState("");                  // number box: applied after typing stops
   const [wordsText, setWordsText] = useState("");          // transcript words: same, never in the page URL
@@ -259,9 +260,11 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
       {detail && (
         <DetailPanel call={detail} onClose={() => { setDetail(null); if (detailOnly) onFollowups?.(); }} onPlay={() => { setSeek(null); setPlaying(detail); }}>
           {/* the follow-up box first: it says what the agent must do next (follow-up stages spec, fix I) */}
-          <FollowupPanel key={`f${detail.id}`} callId={detail.id} me={me} onExpired={onExpired} />
+          {fromShare
+            ? <SharePanel key={`sh${detail.id}`} callId={detail.id} me={me} onExpired={onExpired} />
+            : <FollowupPanel key={`f${detail.id}`} callId={detail.id} me={me} onExpired={onExpired} />}
           {!canSearchText && <AgentSummaryPanel key={`s${detail.id}`} callId={detail.id} onExpired={onExpired} />}
-          <SharePanel key={`sh${detail.id}`} callId={detail.id} me={me} onExpired={onExpired} />
+          {!fromShare && <SharePanel key={`sh${detail.id}`} callId={detail.id} me={me} onExpired={onExpired} />}
           {canSearchText && (   /* admin + supervisor only: agents see the summary only (agent-supervisor decision 1) */
             <AnalysisPanel key={`a${detail.id}`} callId={detail.id} onExpired={onExpired}
               onSeek={detail.has_recording ? (t) => seekTo(detail, t) : undefined} />
