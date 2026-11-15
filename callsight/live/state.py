@@ -50,8 +50,10 @@ class LiveCall:
             return "outbound"
         return "internal"
 
-    def to_dict(self) -> dict:
-        exts = [m for m in self.members.values() if m.ext]
+    def to_dict(self, team_exts=None) -> dict:
+        """team_exts: only these extensions are named (a team call transferred to another department does not show
+        that department's extension numbers)."""
+        exts = [m for m in self.members.values() if m.ext and (team_exts is None or m.ext in team_exts)]
         talking = sorted({m.ext for m in exts if m.status in TALKING | HOLD})
         ringing = sorted({m.ext for m in exts if m.status in RINGING} - set(talking))
         party = next((m.party for m in self.members.values() if m.party), None)   # masked already
@@ -76,7 +78,10 @@ class LiveState:
         return [{"op": "reset"}]
 
     def snapshot(self) -> list[dict]:
-        return [c.to_dict() for c in sorted(self.calls.values(), key=lambda c: c.started_at) if c.team]
+        return [self._out(c) for c in sorted(self.calls.values(), key=lambda c: c.started_at) if c.team]
+
+    def _out(self, call: LiveCall) -> dict:
+        return call.to_dict(None if self.team is None else self.team.ext_team)
 
     def apply(self, event: CallState | CallEnd, now: float) -> list[dict]:
         """Returns the deltas to publish: {"op": "upsert", "call": {...}} / {"op": "remove", "call_id": ...}."""
@@ -103,7 +108,7 @@ class LiveState:
         call.updated_at = now
         if call.state in ("talking", "holding") and call.answered_at is None:
             call.answered_at = now
-        return out + ([{"op": "upsert", "call": call.to_dict()}] if call.team else [])
+        return out + ([{"op": "upsert", "call": self._out(call)}] if call.team else [])
 
     def prune(self, now: float) -> list[dict]:
         """Calls older than max_age (their end event got lost)."""

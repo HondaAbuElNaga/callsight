@@ -1,5 +1,6 @@
 # Which phone-system extensions are "the team". Only calls that touch these are saved.
-# After adding an extension: run  python -m callsight backfill --days 7  to load its older calls.
+# After adding an extension: run  python -m callsight backfill --days 7  to load its older calls,
+# and restart the `live` service (the live board reads this file only when it starts).
 teams:
   customer_service:
     extensions: ["104", "119"]

@@ -179,7 +179,7 @@ Connect = Callable[..., Any]   # websockets.connect-like: async context manager 
 class LiveService:
     def __init__(self, adapter, redis, connect: Connect, *, guard: AuthGuard, base_url: str,
                  ssl_ctx: ssl.SSLContext | None = None, timing: Timing = Timing(), backoff: Backoff | None = None,
-                 token_file: Path | None = None, team=None,
+                 token_file: Path | None = None, team,   # TeamConfig; None = show every call (tests only)
                  wall=time.time, mono=time.monotonic, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep):
         self.adapter, self.redis, self.connect, self.guard = adapter, redis, connect, guard
         self.base_url, self.ssl_ctx, self.t = base_url, ssl_ctx, timing

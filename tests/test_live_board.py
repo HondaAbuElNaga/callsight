@@ -163,9 +163,32 @@ def test_ivr_call_appears_when_a_team_agent_rings_and_stays_after_transfer_out()
     assert d[0]["op"] == "upsert" and d[0]["call"]["ringing"] == ["116"]
     d = st.apply(CallState("c1", (events.Member("extension", "e", "BYE", ext="116"),
                                   events.Member("extension", "x", "ANSWERED", ext="302"))), now=3.0)
-    assert d[0]["op"] == "upsert" and d[0]["call"]["agents"] == ["302"]     # once the team's call, kept
+    assert d[0]["op"] == "upsert" and d[0]["call"]["state"] == "talking" and d[0]["call"]["agents"] == []   # kept, 302 not named
     assert [c["call_id"] for c in st.snapshot()] == ["c1"]
     assert st.apply(CallEnd("c1"), now=4.0) == [{"op": "remove", "call_id": "c1"}]
+
+
+def test_non_team_calls_stay_silent_when_pruned_or_evicted():
+    st = LiveState(max_calls=2, team=TEAM_ONLY)
+    st.apply(CallState("o1", (events.Member("extension", "a", "RING", ext="302"),)), now=0.0)
+    st.apply(CallState("o2", (events.Member("extension", "b", "RING", ext="303"),)), now=1.0)
+    assert st.apply(CallState("o3", (events.Member("extension", "c", "RING", ext="304"),)), now=2.0) == []   # cap
+    assert st.prune(now=5 * 3600.0) == [] and st.calls == {}
+
+
+def test_transferred_team_call_does_not_name_other_departments_extensions():
+    st = LiveState(team=TEAM_ONLY)
+    st.apply(CallState("c", (events.Member("extension", "e", "ANSWERED", ext="104"),
+                             events.Member("extension", "x", "RING", ext="200"))), now=1.0)
+    c = st.snapshot()[0]
+    assert c["agents"] == ["104"] and c["ringing"] == []
+
+
+def test_live_service_needs_an_explicit_team_choice():
+    with pytest.raises(TypeError):
+        LiveService(None, FakeRedis(), None, guard=None, base_url="https://pbx.invalid")
+    svc = LiveService(None, FakeRedis(), None, guard=None, base_url="https://pbx.invalid", team=TEAM_ONLY)
+    assert svc.state.team is TEAM_ONLY
 
 
 def test_team_queue_waiting_call_is_shown():
@@ -332,6 +355,7 @@ def make_service(sockets, http=None, redis=None, timing=FAST, stop_after_sockets
     holder = {}
     conn = FakeConnect(sockets, on_empty=(lambda: holder["svc"].stop.set()) if stop_after_sockets else None)
     sleeps = []
+    kw.setdefault("team", None)        # explicit: these tests check the PBX link, not the team filter
     svc = LiveService(ad, redis, conn, guard=guard, base_url="https://pbx.invalid:8088", timing=timing,
                       backoff=Backoff(base=0.01, cap=0.02, rand=lambda: 0.5), **kw)
     holder["svc"] = svc
