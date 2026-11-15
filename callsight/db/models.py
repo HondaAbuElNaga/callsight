@@ -55,6 +55,7 @@ class Call(Base):
     hold_seconds: Mapped[int | None] = mapped_column(Integer)
     total_seconds: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20))
+    hangup_by: Mapped[str | None] = mapped_column(String(10))   # outbound: agent / customer / busy (ring-time spec)
     recording_file: Mapped[str | None] = mapped_column(String(300))
     recording_path: Mapped[str | None] = mapped_column(String(400))   # relative to AUDIO_DIR
     recording_status: Mapped[str] = mapped_column(String(10), default="none")  # none/pending/ok/error/missing/deleted

@@ -1,4 +1,4 @@
-import type { Leg, Status } from "./api";
+import type { EarlyTries, HangupBy, Leg, Status } from "./api";
 
 export const STATUS_LABEL: Record<Status, string> = {
   answered: "تم الرد",
@@ -44,6 +44,21 @@ export function duration(seconds: number | null | undefined): string {
   const m = Math.floor((s % 3600) / 60);
   const ss = String(s % 60).padStart(2, "0");
   return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+
+// ---------- outbound ring time (spec 2026-11-15-ring-time) ----------
+export const EARLY_HANGUP_SECONDS = 30;   // same as callsight/followups.py
+const LINE_CLOSED_SECONDS = 55;           // the network closes an unanswered line after ~62 s
+/** "رن 62 ث · انقطع الخط" for an outbound call that was not answered ("" when it was answered). */
+export function ringText(ring: number | null | undefined, by: HangupBy | null | undefined, answered: boolean): string {
+  if (answered || ring === null || ring === undefined) return "";
+  const who = by === "busy" ? "مشغول"
+    : by === "customer" ? (ring >= LINE_CLOSED_SECONDS ? "انقطع الخط" : "العميل رفض")
+    : by === "agent" ? "الموظف قفل" : "";
+  return `رن ${ring} ث${who ? " · " + who : ""}`;
+}
+export function earlyText(e: EarlyTries): string {
+  return `محاولة لم تُحسب: رن ${e.last_ring_seconds} ث والموظف قفل${e.count > 1 ? ` (×${e.count})` : ""}`;
 }
 
 // ---------- agent + supervisor work ----------

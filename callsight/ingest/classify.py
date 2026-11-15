@@ -52,6 +52,7 @@ class CallFields:
     total_seconds: int
     status: str
     recording_file: str | None
+    hangup_by: str | None = None    # outbound only: agent / customer / busy (spec 2026-11-15-ring-time)
 
 
 def _int(v: Any) -> int:
@@ -100,6 +101,25 @@ def is_team_call(legs: Iterable[dict], team: TeamConfig) -> bool:
         if kind == QUEUE and num in team.queue_team:
             return True
     return False
+
+
+# who ended an outbound call (spec 2026-11-15-ring-time), from the PBX leg's `reason`
+HANGUP_AGENT, HANGUP_CUSTOMER, HANGUP_BUSY = "agent", "customer", "busy"
+
+
+def hangup_by(direction: str, status: str, leg: dict | None) -> str | None:
+    """`src hangup` = our agent ended it, `dst ...busy...` = busy, other `dst ...` = the customer side
+    (declined, or the network closed the line after ~62 s). Outbound calls only; unknown reason -> None."""
+    if direction != "outbound" or leg is None:
+        return None
+    if status == BUSY:
+        return HANGUP_BUSY
+    reason = (leg.get("reason") or "").strip().lower()
+    if reason.startswith("src"):
+        return HANGUP_AGENT
+    if reason.startswith("dst"):
+        return HANGUP_BUSY if "busy" in reason else HANGUP_CUSTOMER
+    return None
 
 
 def _ts(row: dict) -> int:
@@ -205,4 +225,6 @@ def classify(legs: list[dict], team: TeamConfig) -> CallFields:
         total_seconds=max(0, end_ts - start_ts),
         status=status,
         recording_file=recording,
+        hangup_by=hangup_by(direction, status,
+                            answered[0][0] if answered else (ring_legs[-1][0] if ring_legs else None)),
     )

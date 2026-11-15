@@ -2,7 +2,7 @@
 // everyone's (agent-supervisor spec; steps, counters, "needs action" view: follow-up stages spec).
 import { useCallback, useEffect, useState } from "react";
 import { api, Unauthorized, type Agent, type FollowupItem, type FollowupList, type Me, type Share } from "./api";
-import { CALLBACK_LABEL, STEP_CLASS, STEP_LABEL, formatDateTime, riyadhToday } from "./format";
+import { CALLBACK_LABEL, STEP_CLASS, STEP_LABEL, earlyText, formatDateTime, riyadhToday, ringText } from "./format";
 import { CB_CLASS } from "./WorkPanels";
 import { CallsPage } from "./CallsPage";
 
@@ -219,7 +219,10 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
                   <td>{i.callback ? <>   {/* fix J: callback + "did the customer answer" in one cell */}
                     {formatDateTime(i.callback.at)} <span className={`state ${CB_CLASS[i.callback.status]}`}>{CALLBACK_LABEL[i.callback.status]}</span>
                     {i.callback.time && <span className="muted small"> · اتصل {i.callback.by_ext}
-                      {i.callback.answered ? " · ردّ العميل" : " · لم يرد"}</span>}
+                      {i.callback.answered ? " · ردّ العميل" : " · لم يرد"}
+                      {!i.callback.answered && ringText(i.callback.ring_seconds, i.callback.hangup_by, false)
+                        ? " · " + ringText(i.callback.ring_seconds, i.callback.hangup_by, false) : ""}</span>}
+                    {i.callback.early_tries && <div className="small bad-text">{earlyText(i.callback.early_tries)}</div>}
                   </> : "–"}</td>
                   <td className="nowrap muted small">
                     {i.step === "note_needed" && i.note_deadline ? formatDateTime(i.note_deadline)

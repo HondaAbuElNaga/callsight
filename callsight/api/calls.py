@@ -11,6 +11,7 @@ from ..db.models import Agent, AppUser, Call, CallLeg, CallShare, Transcript
 from ..ingest.service import day_bounds
 from ..transcripts import displayed_order
 from .auth import STAFF_ROLES
+from ..followups import ring_info
 
 STATUSES = ("answered", "abandoned_queue", "abandoned_ivr", "no_answer", "busy", "voicemail")
 DIRECTIONS = ("inbound", "outbound", "internal")
@@ -103,6 +104,8 @@ def _row(call: Call, agent_name: str | None, transcript_match: bool = False) -> 
         "wait_seconds": call.wait_seconds,
         "talk_seconds": call.talk_seconds,
         "total_seconds": call.total_seconds,
+        # outbound only: ring seconds, who ended it, early hang-up (spec 2026-11-15-ring-time)
+        "ring": ring_info(call),
         "has_recording": call.recording_status == "ok",
         "transcript_match": transcript_match,     # badge only: no snippet (text is shown only with an audit row)
     }

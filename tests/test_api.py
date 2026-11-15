@@ -271,6 +271,24 @@ def test_detail_has_legs_in_order(env):
     assert client.get("/api/calls/999999").status_code == 404
 
 
+def test_detail_has_ring_seconds_and_who_hung_up(env):
+    """spec 2026-11-15-ring-time: outbound calls carry ring seconds, who ended it and the early hang-up mark."""
+    client, Session, _ = env
+    login(client)
+    with Session() as s:
+        cid = s.scalar(select(Call.id).where(Call.direction == "outbound", Call.status == "no_answer",
+                                             Call.wait_seconds == 62).limit(1))
+        inbound = s.scalar(select(Call.id).where(Call.direction == "inbound").limit(1))
+    d = client.get(f"/api/calls/{cid}").json()
+    assert d["ring"] == {"ring_seconds": 62, "hangup_by": "customer", "answered": False, "early_hangup": False}
+    assert client.get(f"/api/calls/{inbound}").json()["ring"] is None
+    with Session() as s:
+        c = s.get(Call, cid)
+        c.hangup_by, c.wait_seconds = "agent", 6
+        s.commit()
+    assert client.get(f"/api/calls/{cid}").json()["ring"]["early_hangup"] is True
+
+
 # ---------- recordings ----------
 
 def test_recording_plays_with_range_and_is_audited(env):

@@ -4,7 +4,8 @@ and the follow-up KPIs. One place for these rules: the API lists, the form, the 
 Decisions (spec): a form is needed for answered inbound team calls with talk > 20 s from `followup_start` on (3);
 form on time = by 23:00 Riyadh on the call's day, or 2 h after the call end when that is later (11); a not-solved
 form's callback is done by the first saved outbound call to the same number (last 9 digits) after the call ended,
-by any team member, credited to the form's owner (2), when it was answered or lasted >= 10 s (5); on time =
+by any team member, credited to the form's owner (2), when it is a proper try (answered, ended by the customer
+side / busy, or rang >= 30 s; spec 2026-11-15-ring-time); on time =
 callback time + 60 min (4). "Came back" = an inbound call from the same number <= 72 h after a call marked solved
 (show-only). Calls whose content an admin erased are left out.
 """
@@ -13,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import exists, or_, select, true
+from sqlalchemy import and_, exists, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -23,7 +24,7 @@ from .ingest.service import day_bounds
 
 MIN_TALK_SECONDS = 20          # talk must be MORE than this
 GRACE = timedelta(minutes=60)
-RANG_SECONDS = 10              # an unanswered callback attempt counts from this total time
+EARLY_HANGUP_SECONDS = 30      # spec 2026-11-15-ring-time: the agent hung up before this many ring seconds
 DAY_END_HOUR = 23
 LATE_CALL_EXTRA = timedelta(hours=2)
 MAX_CALLBACK_DAYS = 2         # callback (optional) within 2 days
@@ -44,6 +45,31 @@ OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number",
 KPI_OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", *NO_CB_STEPS)
 ACTION_STEPS = ("required", "overdue", "note_needed", "callback_missed", "solution_overdue")
 # + waiting_callback / waiting_solution due by today
+
+
+def proper_try_sql(o):
+    """SQL: an outbound call that counts as a real callback try (spec 2026-11-15-ring-time): answered, or ended by
+    the customer side / busy (not the agent's fault), or rang >= 30 s. Unknown who hung up -> needs 30 s."""
+    return or_(o.status == "answered", o.hangup_by.in_(("customer", "busy")), o.wait_seconds >= EARLY_HANGUP_SECONDS)
+
+
+def early_hangup_sql(o):
+    """SQL: not answered, the agent hung up (or unknown) and it rang < 30 s = the try does not count."""
+    return and_(o.status != "answered", func.coalesce(o.hangup_by, "").notin_(("customer", "busy")),
+                o.wait_seconds < EARLY_HANGUP_SECONDS)
+
+
+def is_proper_try(c: Call) -> bool:
+    return (c.status == "answered" or c.hangup_by in ("customer", "busy")
+            or (c.wait_seconds or 0) >= EARLY_HANGUP_SECONDS)
+
+
+def ring_info(c: Call) -> dict | None:
+    """Outbound call: ring seconds + who ended it (agent / customer / busy) + early (did not count)."""
+    if c.direction != "outbound":
+        return None
+    return {"ring_seconds": c.wait_seconds or 0, "hangup_by": c.hangup_by, "answered": c.status == "answered",
+            "early_hangup": not is_proper_try(c)}
 
 
 def _utcnow() -> datetime:
@@ -138,7 +164,7 @@ def _callback_lateral(callers):
             .where(o.direction == "outbound", o.id != Call.id, o.start_time > Call.end_time,
                    o.agent_ext.in_(list(callers)), norm_number(Call.customer_number) != "",
                    norm_number(o.customer_number) == norm_number(Call.customer_number),
-                   or_(o.status == "answered", o.total_seconds >= RANG_SECONDS))
+                   proper_try_sql(o))
             .order_by(o.start_time, o.id).limit(1).correlate(Call).lateral("cb"))
 
 
@@ -168,6 +194,14 @@ class Callback:
     end: datetime
     ext: str | None
     answered: bool | None = None      # did the customer answer ANY team callback of this round (PBX record)
+    call: Call | None = None          # the callback call itself (ring seconds, who hung up)
+
+    def as_dict(self) -> dict:
+        d = {"call_id": self.id, "time": self.time.isoformat(), "by_ext": self.ext, "answered": self.answered}
+        if self.call is not None:
+            d.update(ring_seconds=self.call.wait_seconds or 0, hangup_by=self.call.hangup_by,
+                     call_answered=self.call.status == "answered")
+        return d
 
 
 @dataclass
@@ -182,6 +216,7 @@ class Row:
     notes: list[CallFollowupNote] = field(default_factory=list)       # rounds 2, 3, ... in order
     cb_calls: dict[int, Call] = field(default_factory=dict)          # round-1 cb + notes' cb_call_id -> call
     current_cb: Callback | None = None   # rounds >= 2: callback of the latest open note (looked up in rows())
+    early: list[Call] = field(default_factory=list)   # team calls to this customer after the call that did NOT count
 
     # ----- rounds -----
 
@@ -190,7 +225,7 @@ class Row:
             return None
         c = self.cb_calls.get(self.cb_id or -1)
         return Callback(self.cb_id, self.cb_time, c.end_time if c else self.cb_time, self.cb_ext,
-                        bool(self.cb_answered))
+                        bool(self.cb_answered), c)
 
     def open_entry(self):
         """The latest entry (form or note) when it is not solved and set a callback time, else None."""
@@ -205,8 +240,21 @@ class Row:
         if rnd <= len(self.notes):                       # notes[rnd-1] = round rnd+1, reports on round rnd's callback
             nxt = self.notes[rnd - 1]
             c = self.cb_calls.get(nxt.cb_call_id or -1)
-            return Callback(c.id, c.start_time, c.end_time, c.agent_ext, c.status == "answered") if c else None
+            return Callback(c.id, c.start_time, c.end_time, c.agent_ext, c.status == "answered", c) if c else None
         return self.round1_cb() if rnd == 1 else self.current_cb
+
+    def early_tries(self, rnd: int, now: datetime) -> dict | None:
+        """Early hang-ups (did not count) in round `rnd`: from the round's start until its counted callback (or the
+        next note / now). None when there are none."""
+        lo = self.call.end_time if rnd == 1 else self.notes[rnd - 2].created_at
+        cb = self.cb_of_round(rnd)
+        hi = cb.time if cb else (self.notes[rnd - 1].created_at if rnd <= len(self.notes) else now)
+        got = [c for c in self.early if lo < c.start_time < hi]
+        if not got:
+            return None
+        last = got[-1]
+        return {"count": len(got), "last_ring_seconds": last.wait_seconds or 0,
+                "last_time": last.start_time.isoformat(), "last_call_id": last.id, "last_by_ext": last.agent_ext}
 
     def step(self, now: datetime) -> str:
         f = self.form
@@ -252,7 +300,10 @@ class Row:
                 "by_ext": cur.ext if cur else None, "call_id": cur.id if cur else None,
                 # from the PBX record of the callback call, never from a button: did the customer answer?
                 "answered": None if cur is None else bool(cur.answered),
-                "time": cur.time.isoformat() if cur else None},
+                "time": cur.time.isoformat() if cur else None,
+                "ring_seconds": (cur.call.wait_seconds or 0) if cur and cur.call else None,
+                "hangup_by": cur.call.hangup_by if cur and cur.call else None,
+                "early_tries": self.early_tries(rnd, now)},
             "came_back": bool(self.came_back and f and f.solved is True and not self.notes),
         }
 
@@ -276,8 +327,8 @@ class Row:
                 "at": at_.isoformat(), "by": users.get(by),
                 "callback_status": (callback_state(e.callback_at, _has_number(self.call.customer_number),
                                                    cb.time if cb else None, now) if wants_cb else None),
-                "callback_call": None if cb is None else {"call_id": cb.id, "time": cb.time.isoformat(),
-                                                          "by_ext": cb.ext, "answered": cb.answered},
+                "callback_call": None if cb is None else cb.as_dict(),
+                "early_tries": self.early_tries(rnd, now) if wants_cb else None,
             })
         return out
 
@@ -330,19 +381,33 @@ def _digits9(number: str | None) -> str:
 
 
 def find_callback(s: Session, call: Call, after: datetime, callers) -> Callback | None:
-    """Rounds >= 2: the first outbound team call to the same number that starts after `after` and really rang
-    (answered or >= 10 s). answered = any answered team call after `after` (PBX record)."""
+    """Rounds >= 2: the first outbound team call to the same number that starts after `after` and is a proper try
+    (see proper_try_sql). answered = any answered team call after `after` (PBX record)."""
     num = _digits9(call.customer_number)
     if not num:
         return None
     base = (Call.direction == "outbound", Call.id != call.id, Call.start_time > after,
             Call.agent_ext.in_(list(callers)), norm_number(Call.customer_number) == num)
-    first = s.execute(select(Call).where(*base, or_(Call.status == "answered", Call.total_seconds >= RANG_SECONDS))
+    first = s.execute(select(Call).where(*base, proper_try_sql(Call))
                       .order_by(Call.start_time, Call.id).limit(1)).scalar_one_or_none()
     if first is None:
         return None
     answered = s.execute(select(exists().where(*base, Call.status == "answered"))).scalar()
-    return Callback(first.id, first.start_time, first.end_time, first.agent_ext, bool(answered))
+    return Callback(first.id, first.start_time, first.end_time, first.agent_ext, bool(answered), first)
+
+
+def _early_calls(s: Session, rs: list[Row], callers) -> dict[str, list[Call]]:
+    """Early hang-ups (spec 2026-11-15-ring-time) by team extensions to the customers of these rows, by number."""
+    nums = {_digits9(r.call.customer_number) for r in rs} - {""}
+    if not nums:
+        return {}
+    since = min(r.call.end_time for r in rs)
+    out: dict[str, list[Call]] = {}
+    for c in s.scalars(select(Call).where(Call.direction == "outbound", Call.agent_ext.in_(list(callers)),
+                                          Call.start_time > since, norm_number(Call.customer_number).in_(nums),
+                                          early_hangup_sql(Call)).order_by(Call.start_time, Call.id)):
+        out.setdefault(_digits9(c.customer_number), []).append(c)
+    return out
 
 
 def _anchor(row: Row) -> datetime:
@@ -376,9 +441,11 @@ def rows(s: Session, exts, start: date, lo: datetime, hi: datetime, call_ids: li
         notes.setdefault(n.call_id, []).append(n)
     need = {r.cb_id for r in out if r.cb_id} | {n.cb_call_id for ns in notes.values() for n in ns if n.cb_call_id}
     calls = {c.id: c for c in s.scalars(select(Call).where(Call.id.in_(need)))} if need else {}
+    early = _early_calls(s, [r for r in out if r.call.id in with_form], callers)
     for r in out:
         r.notes = notes.get(r.call.id, [])
         r.cb_calls = calls
+        r.early = [c for c in early.get(_digits9(r.call.customer_number), []) if c.start_time > r.call.end_time]
         f = r.form
         if (f.solved is False and r.cb_time is not None and r.cb_time <= f.first_filled_at) if f else False:
             # a call before the form was saved is not the callback promised in it: look again after the form

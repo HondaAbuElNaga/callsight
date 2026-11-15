@@ -168,3 +168,38 @@ def test_dialled_feature_code_is_not_an_extension():
     legs = shape("Outbound: EXT:NO ANSWER", team=False)   # 114 dialling *51119
     assert leg_kind(legs[0]) == "external"
     assert not is_team_call(legs, TEAM)
+
+
+# ---------- who hung up an outbound call (spec 2026-11-15-ring-time) ----------
+
+@pytest.mark.parametrize("reason,disp,expected", [
+    ("src hangup    ", "NO ANSWER", "agent"),
+    ("dst hangup    ", "NO ANSWER", "customer"),
+    ("dst extension_busy_no_forward    ", "BUSY", "busy"),
+    ("src hangup    ", "ANSWERED", "agent"),
+    ("dst hangup    ", "ANSWERED", "customer"),
+    ("", "NO ANSWER", None),
+    (None, "NO ANSWER", None),
+])
+def test_outbound_hangup_by(reason, disp, expected):
+    legs = shape("Outbound: NUM:NO ANSWER", team=True)
+    legs[0].update(reason=reason, disposition=disp)
+    f = classify(legs, TEAM)
+    assert f.hangup_by == expected
+
+
+def test_outbound_ring_seconds_without_ring_duration_is_zero():
+    legs = shape("Outbound: NUM:NO ANSWER", team=True)
+    legs[0].update(reason="src hangup", ring_duration=None, duration=None)
+    f = classify(legs, TEAM)
+    assert f.hangup_by == "agent" and f.wait_seconds == 0
+
+
+def test_outbound_ring_seconds_kept():
+    legs = shape("Outbound: NUM:NO ANSWER", team=True)
+    assert classify(legs, TEAM).wait_seconds == 62
+
+
+def test_inbound_has_no_hangup_by():
+    f = classify(shape("Inbound: EXT:ANSWERED"), TEAM)
+    assert f.hangup_by is None

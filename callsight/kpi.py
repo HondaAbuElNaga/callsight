@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from .config import RIYADH
 from .db.models import Agent, Call, CallLeg, ReconcileRun
+from .followups import early_hangup_sql
 from .ingest.classify import TeamConfig
 from .ingest.service import day_bounds
 
@@ -147,11 +148,20 @@ def _team_inbound(s: Session, lo, hi, names) -> tuple[dict, dict]:
              "aht": _f(aht), "avg_ring": _f(ring)}, {st: by.get(st, 0) for st in STATUSES})
 
 
+# spec 2026-11-15-ring-time: early hang-up = not answered, the agent hung up before 30 ring seconds
+_EARLY = early_hangup_sql(Call)
+_OUT_COLS = (func.count(), func.count().filter(_ANSWERED), func.avg(Call.talk_seconds).filter(_ANSWERED),
+             func.count().filter(_EARLY), func.avg(Call.wait_seconds).filter(~_ANSWERED))
+
+
+def _out_dict(n, ans, aht, early, ring) -> dict:
+    return {"outbound": n, "outbound_answered": ans, "outbound_aht": _f(aht),
+            "early_hangups": early, "proper_rate": _rate(n - early, n), "outbound_avg_ring": _f(ring)}
+
+
 def _team_outbound(s: Session, lo, hi, names) -> dict:
-    n, ans, aht = s.execute(select(
-        func.count(), func.count().filter(_ANSWERED), func.avg(Call.talk_seconds).filter(_ANSWERED))
-        .where(Call.direction == "outbound", Call.team.in_(names), Call.start_time >= lo, Call.start_time < hi)).one()
-    return {"outbound": n, "outbound_answered": ans, "outbound_aht": _f(aht)}
+    return _out_dict(*s.execute(select(*_OUT_COLS).where(
+        Call.direction == "outbound", Call.team.in_(names), Call.start_time >= lo, Call.start_time < hi)).one())
 
 
 def _agent_inbound(s: Session, lo, hi, exts) -> dict[str, tuple[int, float | None]]:
@@ -161,12 +171,14 @@ def _agent_inbound(s: Session, lo, hi, exts) -> dict[str, tuple[int, float | Non
     return {e: (n, _f(a)) for e, n, a in rows}
 
 
-def _agent_outbound(s: Session, lo, hi, exts) -> dict[str, tuple[int, int, float | None]]:
-    rows = s.execute(select(Call.agent_ext, func.count(), func.count().filter(_ANSWERED),
-                            func.avg(Call.talk_seconds).filter(_ANSWERED))
+def _agent_outbound(s: Session, lo, hi, exts) -> dict[str, dict]:
+    rows = s.execute(select(Call.agent_ext, *_OUT_COLS)
                      .where(Call.direction == "outbound", Call.agent_ext.in_(exts),
                             Call.start_time >= lo, Call.start_time < hi).group_by(Call.agent_ext))
-    return {e: (n, ans, _f(a)) for e, n, ans, a in rows}
+    return {e: _out_dict(*vals) for e, *vals in rows}
+
+
+_NO_OUT = _out_dict(0, 0, None, 0, None)
 
 
 def _missed_rings_where(lo, hi, exts):
@@ -251,8 +263,7 @@ def compute(session: Session, start: date, end: date, *, teams: TeamConfig, team
     names_by_ext = dict(session.execute(select(Agent.ext, Agent.name).where(Agent.ext.in_(exts))).all())
     rows = [{"ext": e, "name": names_by_ext.get(e) or "", "team": teams.ext_team[e],
              "calls": a_in.get(e, (0, None))[0], "aht": a_in.get(e, (0, None))[1], "missed_rings": missed.get(e, 0),
-             "outbound": a_out.get(e, (0, 0, None))[0], "outbound_answered": a_out.get(e, (0, 0, None))[1],
-             "outbound_aht": a_out.get(e, (0, 0, None))[2], "repeats": sum(1 for c in credited if c == e)}
+             **a_out.get(e, _NO_OUT), "repeats": sum(1 for c in credited if c == e)}
             for e in exts]
     if agent is None:
         # credited to nobody, or to someone without an agent row (e.g. supervisor 114) -> "unattributed", so that
@@ -262,8 +273,7 @@ def compute(session: Session, start: date, end: date, *, teams: TeamConfig, team
     else:
         r = rows[0]
         summary = {"calls": r["calls"], "answered": r["calls"], "unanswered": r["missed_rings"], "answer_rate": None,
-                   "aht": r["aht"], "avg_ring": None, "outbound": r["outbound"],
-                   "outbound_answered": r["outbound_answered"], "outbound_aht": r["outbound_aht"],
+                   "aht": r["aht"], "avg_ring": None, **{k: r[k] for k in _NO_OUT},
                    "repeats": r["repeats"], "repeats_unattributed": None}
         by_status = None
     summary["satisfaction"] = None   # Phase 3: shown as "غير متاح", never 0
@@ -310,7 +320,9 @@ def _txt(v, key: str) -> str:
         return "n/a" if key == "satisfaction" else "-"
     if key == "answer_rate":
         return f"{v * 100:.1f}%"
-    if key in ("aht", "avg_ring", "outbound_aht"):
+    if key == "proper_rate":
+        return f"{v * 100:.1f}%"
+    if key in ("aht", "avg_ring", "outbound_aht", "outbound_avg_ring"):
         return f"{v:.1f}s"
     return str(v)
 

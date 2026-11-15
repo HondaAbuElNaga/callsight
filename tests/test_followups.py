@@ -31,10 +31,14 @@ def s(engine):  # noqa: F811
 
 
 def mk(s, uid, start: datetime, *, direction="inbound", status="answered", agent="119", talk=60, total=None,
-       number="0501234567") -> Call:
+       number="0501234567", ring=None, hung=None) -> Call:
+    total = total if total is not None else talk + 10
+    if direction == "outbound" and status != "answered" and ring is None:
+        ring = total                       # unanswered outbound: the time is ring time
     c = Call(uid=uid, direction=direction, entry="queue", customer_number=number, team="customer_service",
              agent_ext=agent, start_time=start, end_time=start + timedelta(seconds=talk + 10), talk_seconds=talk,
-             total_seconds=total if total is not None else talk + 10, status=status, recording_status="none")
+             total_seconds=total, status=status, recording_status="none", wait_seconds=ring or 0,
+             hangup_by=hung if hung is not None else ("agent" if direction == "outbound" else None))
     s.add(c)
     s.flush()
     return c
@@ -116,14 +120,14 @@ def test_form_state_edges(s):
 # ---------- callback check (decisions 2, 4, 5, 12) ----------
 
 def _callback_case(s, cb_start: datetime | None, *, total=30, status="answered", number="+966501234567",
-                   agent="104", orig_number="0501234567"):
+                   agent="104", orig_number="0501234567", hung=None):
     start_on(s)
     u = user(s)
     c = mk(s, "orig", at(10), number=orig_number)
     form(s, c, u, filled=at(10, 5), callback=at(14))
     if cb_start is not None:
         mk(s, "cb", cb_start, direction="outbound", status=status, agent=agent, talk=0 if status != "answered" else 20,
-           total=total, number=number)
+           total=total, number=number, hung=hung)
     return rows(s)["orig"]["callback"]
 
 
@@ -140,8 +144,9 @@ def test_early_callback_counts(s):
     assert _callback_case(s, at(11))["status"] == "on_time"
 
 
-def test_unanswered_attempt_counts_from_10_seconds(s):
-    assert _callback_case(s, at(14, 10), status="no_answer", total=10)["status"] == "on_time"
+def test_agent_hang_up_counts_from_30_ring_seconds(s):
+    cb = _callback_case(s, at(14, 10), status="no_answer", total=30)
+    assert cb["status"] == "on_time" and cb["ring_seconds"] == 30 and cb["hangup_by"] == "agent"
 
 
 def test_callback_answered_comes_from_the_pbx_record(s):
@@ -149,7 +154,7 @@ def test_callback_answered_comes_from_the_pbx_record(s):
 
 
 def test_callback_not_answered_comes_from_the_pbx_record(s):
-    assert _callback_case(s, at(14, 10), status="no_answer", total=15)["answered"] is False
+    assert _callback_case(s, at(14, 10), status="no_answer", total=35)["answered"] is False
 
 
 def test_later_answered_callback_counts_as_answered(s):
@@ -157,7 +162,8 @@ def test_later_answered_callback_counts_as_answered(s):
     u = user(s)
     c = mk(s, "orig", at(10), number="0501234567")
     form(s, c, u, filled=at(10, 5), callback=at(14))
-    mk(s, "try1", at(14, 5), direction="outbound", status="no_answer", agent="104", talk=0, total=15, number="0501234567")
+    mk(s, "try1", at(14, 5), direction="outbound", status="no_answer", agent="104", talk=0, total=62, number="0501234567",
+       hung="customer")
     mk(s, "try2", at(16), direction="outbound", status="answered", agent="119", talk=30, total=40, number="0501234567")
     cb = rows(s)["orig"]["callback"]
     assert cb["answered"] is True and cb["status"] == "on_time" and cb["by_ext"] == "104"   # first try decides the time
@@ -168,8 +174,44 @@ def test_no_callback_call_yet_means_answered_unknown(s):
     assert cb["answered"] is None and cb["status"] in ("waiting", "missed")
 
 
-def test_unanswered_attempt_of_9_seconds_does_not_count(s):
-    assert _callback_case(s, at(14, 10), status="no_answer", total=9)["status"] == "missed"
+def test_agent_hang_up_at_29_seconds_does_not_count(s):
+    cb = _callback_case(s, at(14, 10), status="no_answer", total=29)
+    assert cb["status"] == "missed" and cb["call_id"] is None
+    assert cb["early_tries"]["count"] == 1 and cb["early_tries"]["last_ring_seconds"] == 29
+
+
+@pytest.mark.parametrize("hung", ["busy", "customer"])
+def test_busy_or_customer_declined_counts_even_after_2_seconds(s, hung):
+    cb = _callback_case(s, at(14, 10), status="busy" if hung == "busy" else "no_answer", total=2, hung=hung)
+    assert cb["status"] == "on_time" and cb["hangup_by"] == hung and cb["early_tries"] is None
+
+
+def test_unknown_hang_up_needs_30_seconds(s):
+    start_on(s)
+    u = user(s)
+    c = mk(s, "orig", at(10))
+    form(s, c, u, filled=at(10, 5), callback=at(14))
+    x = mk(s, "x", at(14, 5), direction="outbound", status="no_answer", agent="104", talk=0, total=20)
+    x.hangup_by = None
+    s.flush()
+    assert rows(s)["orig"]["callback"]["status"] == "missed"
+
+
+def test_early_tries_before_the_real_callback_are_listed(s):
+    start_on(s)
+    u = user(s)
+    c = mk(s, "orig", at(10))
+    form(s, c, u, filled=at(10, 5), callback=at(14))
+    mk(s, "e1", at(13), direction="outbound", status="no_answer", agent="116", talk=0, total=3)
+    mk(s, "e2", at(13, 30), direction="outbound", status="no_answer", agent="116", talk=0, total=8)
+    mk(s, "ok", at(14, 20), direction="outbound", status="no_answer", agent="116", talk=0, total=62, hung="customer")
+    mk(s, "after", at(16), direction="outbound", status="no_answer", agent="116", talk=0, total=4)
+    d = rows(s)["orig"]
+    cb = d["callback"]
+    assert cb["status"] == "on_time" and cb["ring_seconds"] == 62 and cb["hangup_by"] == "customer"
+    assert cb["early_tries"]["count"] == 2 and cb["early_tries"]["last_ring_seconds"] == 8   # "after" is not in
+    h = d["history"][0]
+    assert h["callback_call"]["ring_seconds"] == 62 and h["early_tries"]["count"] == 2
 
 
 def test_no_callback_waiting_then_missed(s):

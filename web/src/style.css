@@ -292,3 +292,6 @@ tr.row-bad td { background: var(--bad-bg); }
 /* follow-ups: selected counter, earlier-days notice */
 .counter.active { outline: 2px solid var(--accent); outline-offset: 1px; font-weight: 600; }
 .older { background: var(--warn-bg); color: var(--warn); border-radius: var(--radius); padding: 6px 12px; margin: 6px 0; }
+
+/* spec 2026-11-15-ring-time: early hang-up numbers / texts */
+td.num.bad, .bad-text { color: var(--bad); font-weight: 600; }

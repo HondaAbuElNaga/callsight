@@ -5,7 +5,9 @@ import {
   type AgentSummary, type CallShares, type FollowupIn, type FollowupView, type HistoryEntry, type Me, type NoteIn,
   type Person, type Share,
 } from "./api";
-import { CALLBACK_LABEL, STEP_CLASS, STEP_LABEL, STEP_NEXT, formatDateTime, fromRiyadhInput, toRiyadhInput } from "./format";
+import {
+  CALLBACK_LABEL, STEP_CLASS, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, fromRiyadhInput, ringText, toRiyadhInput,
+} from "./format";
 
 export const CB_CLASS: Record<string, string> = { on_time: "ok", waiting: "off", late: "warn", missed: "bad", no_number: "off" };
 export const FORM_CLASS: Record<string, string> = { on_time: "ok", missing: "off", late: "warn", overdue: "bad" };
@@ -93,7 +95,10 @@ function History({ items }: { items: HistoryEntry[] }) {
               {h.callback_at && <> · معاودة الاتصال: {formatDateTime(h.callback_at)}</>}
               {h.callback_status && <> <span className={`state ${CB_CLASS[h.callback_status]}`}>{CALLBACK_LABEL[h.callback_status]}</span></>}
               {h.callback_call && <span className="muted"> · اتصل {h.callback_call.by_ext ?? "–"} {formatDateTime(h.callback_call.time)}
-                {h.callback_call.answered === true ? " · ردّ العميل" : h.callback_call.answered === false ? " · لم يرد" : ""}</span>}
+                {h.callback_call.answered === true ? " · ردّ العميل" : h.callback_call.answered === false ? " · لم يرد" : ""}
+                {ringText(h.callback_call.ring_seconds, h.callback_call.hangup_by, !!h.callback_call.call_answered)
+                  ? " · " + ringText(h.callback_call.ring_seconds, h.callback_call.hangup_by, !!h.callback_call.call_answered) : ""}</span>}
+              {h.early_tries && <span className="bad-text"> · {earlyText(h.early_tries)}</span>}
             </p>
           </>}
         </li>

@@ -17,7 +17,14 @@ export interface CallRow {
   total_seconds: number;
   has_recording: boolean;
   transcript_match: boolean;   // the row came from a transcript word search (badge only, no snippet)
+  ring: RingInfo | null;       // outbound only (spec 2026-11-15-ring-time)
 }
+
+// spec 2026-11-15-ring-time: who ended an outbound call, and early hang-ups that did not count as a try
+export type HangupBy = "agent" | "customer" | "busy";
+export interface RingInfo { ring_seconds: number; hangup_by: HangupBy | null; answered: boolean; early_hangup: boolean }
+export interface EarlyTries { count: number; last_ring_seconds: number; last_time: string; last_call_id: number;
+  last_by_ext: string | null }
 
 export interface TranscriptSegment {
   seq: number;
@@ -87,6 +94,9 @@ export interface KpiSummary {
   outbound: number;
   outbound_answered: number;
   outbound_aht: number | null;
+  early_hangups: number;
+  proper_rate: number | null;
+  outbound_avg_ring: number | null;
   repeats: number;
   repeats_unattributed: number | null;
   satisfaction: number | null;
@@ -102,6 +112,9 @@ export interface KpiAgent {
   outbound: number;
   outbound_answered: number;
   outbound_aht: number | null;
+  early_hangups: number;
+  proper_rate: number | null;
+  outbound_avg_ring: number | null;
   repeats: number;
 }
 
@@ -215,7 +228,8 @@ export interface FollowupForm {
   updated_at: string;
 }
 export interface Callback { at: string; due: string; status: CallbackStatus; by_ext: string | null; call_id: number | null; time: string | null;
-  answered: boolean | null; round: number }   // from the PBX record of the callback call (null = no callback call yet)
+  answered: boolean | null; round: number;   // from the PBX record of the callback call (null = no callback call yet)
+  ring_seconds?: number | null; hangup_by?: HangupBy | null; early_tries?: EarlyTries | null }
 export interface FollowupItem {
   call_id: number; start_time: string; end_time: string; customer_number: string | null; agent_ext: string | null;
   agent_name: string; talk_seconds: number; deadline: string; form_state: FormState; form: FollowupForm | null;
@@ -232,7 +246,9 @@ export interface HistoryEntry {
   responsible_kind: string | null; responsible_user_id: number | null; responsible: string | null;
   expected_at: string | null; callback_at: string | null; at: string; by: string | null;
   callback_status: CallbackStatus | null;
-  callback_call: { call_id: number; time: string; by_ext: string | null; answered: boolean | null } | null;
+  callback_call: { call_id: number; time: string; by_ext: string | null; answered: boolean | null;
+    ring_seconds?: number; hangup_by?: HangupBy | null; call_answered?: boolean } | null;
+  early_tries?: EarlyTries | null;
 }
 export interface NoteIn {
   round: number; what_happened: string; solved: boolean; responsible_kind?: string;

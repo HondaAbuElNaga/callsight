@@ -4,6 +4,9 @@ import {
   type Agent, type CallDetail, type CallPage, type CallRow, type Filters, type Me, type Status, type Summary,
 } from "./api";
 import { DIRECTION_LABEL, STATUS_LABEL, STATUS_ORDER, duration, formatDateTime, riyadhToday } from "./format";
+import type { HangupBy } from "./api";
+
+const HANGUP_LABEL: Record<HangupBy, string> = { agent: "الموظف", customer: "طرف العميل", busy: "مشغول" };
 import { TranscriptPanel } from "./TranscriptPanel";
 import { AnalysisPanel } from "./AnalysisPanel";
 import { AgentSummaryPanel, DeletePanel, FollowupPanel, SharePanel } from "./WorkPanels";
@@ -297,7 +300,11 @@ function DetailPanel({ call, onClose, onPlay, children }:
         <dt>الحالة</dt><dd><span className={`badge st-${call.status}`}>{STATUS_LABEL[call.status]}</span></dd>
         <dt>الموظف</dt><dd>{call.agent_ext ? `${call.agent_ext} · ${call.agent_name ?? ""}` : "–"}</dd>
         <dt>القائمة الصوتية</dt><dd className="num">{duration(call.ivr_seconds)}</dd>
-        <dt>الانتظار</dt><dd className="num">{duration(call.wait_seconds)}</dd>
+        {call.ring ? <>   {/* outbound: ring seconds + who ended it (spec 2026-11-15-ring-time) */}
+          <dt>الرنين</dt><dd><span className="num">{call.ring.ring_seconds} ث</span>
+            {call.ring.hangup_by && <> · أنهاها: {HANGUP_LABEL[call.ring.hangup_by]}</>}
+            {call.ring.early_hangup && <> <span className="state bad" title="أغلقها الموظف قبل 30 ثانية رنين: لا تُحسب محاولة اتصال">قفل مبكر</span></>}</dd>
+        </> : <><dt>الانتظار</dt><dd className="num">{duration(call.wait_seconds)}</dd></>}
         <dt>المكالمة</dt><dd className="num">{duration(call.talk_seconds)}</dd>
         <dt>المدة الكلية</dt><dd className="num">{duration(call.total_seconds)}</dd>
       </dl>

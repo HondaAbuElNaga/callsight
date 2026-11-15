@@ -39,6 +39,9 @@ FOOTNOTES = [
     "مدة الرنين قبل الرد: وقت رنين هاتف الموظف، وليست مدة الانتظار في الطابور.",
     "المكالمات المتكررة (72 ساعة): مكالمة واردة تم الرد عليها وسبقها اتصال من/إلى نفس الرقم مع نفس الفريق خلال "
     "72 ساعة؛ تُنسب لموظف آخر مكالمة سابقة تم الرد عليها، وإلا فهي غير منسوبة.",
+    "قفل مبكر: مكالمة صادرة لم يُرد عليها وأغلقها الموظف قبل 30 ثانية من الرنين؛ لا تُحسب محاولة اتصال. "
+    "محاولات صحيحة % = الصادرة التي تم الرد عليها أو رنّت 30 ثانية أو أنهاها طرف العميل (رفض/مشغول) ÷ كل الصادرة. "
+    "الخط ينقطع وحده بعد نحو 62 ثانية رنين.",
     "متوسط الرضا غير متاح حتى تتوفر تقييمات المكالمات (المرحلة 3).",
     "أرقام العملاء مخفية جزئياً لحماية الخصوصية.",
 ]
@@ -95,6 +98,9 @@ TEAM_ROWS = [  # (key, label, format, change kind, higher is better)
     ("avg_ring", "مدة الرنين قبل الرد", "seconds", "seconds", False),
     ("outbound", "المكالمات الصادرة", "count", "count", True),
     ("outbound_aht", "متوسط مدة الصادرة", "seconds", "seconds", False),
+    ("early_hangups", "قفل مبكر (أقل من 30 ث رنين)", "count", "count", False),
+    ("proper_rate", "محاولات صحيحة %", "rate", "rate", True),
+    ("outbound_avg_ring", "متوسط ثواني الرنين (الصادرة بلا رد)", "seconds", "seconds", True),
     ("repeats", "مكالمات متكررة خلال 72 ساعة", "count", "count", False),
     ("satisfaction", "متوسط الرضا", "na", "count", True),
 ]
@@ -104,6 +110,9 @@ OUT_ROWS = [
     ("outbound", "المكالمات الصادرة", "count", "count", True),
     ("outbound_answered", "الصادرة التي تم الرد عليها", "count", "count", True),
     ("outbound_aht", "متوسط مدة الصادرة", "seconds", "seconds", False),
+    ("early_hangups", "قفل مبكر (أقل من 30 ث رنين)", "count", "count", False),
+    ("proper_rate", "محاولات صحيحة %", "rate", "rate", True),
+    ("outbound_avg_ring", "متوسط ثواني الرنين (الصادرة بلا رد)", "seconds", "seconds", True),
 ]
 
 
@@ -148,22 +157,26 @@ def teams_table(per_team: dict[str, dict]) -> str:
 def agents_table(agents: list[dict], outbound_only: bool = False) -> str:
     if outbound_only:
         out = ['<table><tr><th>الموظف</th><th>الفريق</th><th class="n">الصادرة</th><th class="n">تم الرد</th>'
-               '<th class="n">متوسط مدة الصادرة</th></tr>']
+               '<th class="n">متوسط مدة الصادرة</th><th class="n">قفل مبكر (&lt;30 ث)</th>'
+               '<th class="n">محاولات صحيحة</th><th class="n">متوسط الرنين</th></tr>']
         for a in agents:
             out.append(f'<tr><td>{num(a["ext"])} {escape(a["name"])}</td>'
                        f'<td>{escape(TEAM_LABEL.get(a["team"], a["team"]))}</td><td class="n">{num(a["outbound"])}</td>'
-                       f'<td class="n">{num(a["outbound_answered"])}</td><td class="n">{dur(a["outbound_aht"])}</td></tr>')
+                       f'<td class="n">{num(a["outbound_answered"])}</td><td class="n">{dur(a["outbound_aht"])}</td>'
+                       f'<td class="n">{num(a["early_hangups"])}</td><td class="n">{pct(a["proper_rate"])}</td>'
+                       f'<td class="n">{dur(a["outbound_avg_ring"])}</td></tr>')
         out.append("</table>")
         return "".join(out)
     out = ['<table><tr><th>الموظف</th><th>الفريق</th><th class="n">مكالمات ردّ عليها</th><th class="n">AHT</th>'
            '<th class="n">رنات فائتة</th><th class="n">الصادرة (تم الرد)</th><th class="n">AHT الصادرة</th>'
-           '<th class="n">متكررة</th></tr>']
+           '<th class="n">قفل مبكر</th><th class="n">متكررة</th></tr>']
     for a in agents:
         out.append(f'<tr><td>{num(a["ext"])} {escape(a["name"])}</td><td>{escape(TEAM_LABEL.get(a["team"], a["team"]))}</td>'
                    f'<td class="n">{num(a["calls"])}</td><td class="n">{dur(a["aht"])}</td>'
                    f'<td class="n">{num(a["missed_rings"])}</td>'
                    f'<td class="n">{num(str(a["outbound"]) + " (" + str(a["outbound_answered"]) + ")")}</td>'
-                   f'<td class="n">{dur(a["outbound_aht"])}</td><td class="n">{num(a["repeats"])}</td></tr>')
+                   f'<td class="n">{dur(a["outbound_aht"])}</td><td class="n">{num(a["early_hangups"])}</td>'
+                   f'<td class="n">{num(a["repeats"])}</td></tr>')
     out.append("</table>")
     return "".join(out)
 
@@ -228,6 +241,8 @@ AGENT_TILES = [("calls", "مكالمات ردّ عليها", "count", "count", T
                ("unanswered", "رنات فائتة (حسب سجل السنترال)", "count", "count", False),
                ("outbound", "المكالمات الصادرة", "count", "count", True),
                ("outbound_aht", "متوسط مدة الصادرة", "seconds", "seconds", False),
+               ("early_hangups", "قفل مبكر (أقل من 30 ث رنين)", "count", "count", False),
+               ("proper_rate", "محاولات صحيحة %", "rate", "rate", True),
                ("repeats", "مكالمات متكررة منسوبة", "count", "count", False),
                ("satisfaction", "متوسط الرضا", "na", "count", True)]
 

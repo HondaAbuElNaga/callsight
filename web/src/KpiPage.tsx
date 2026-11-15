@@ -42,6 +42,8 @@ const TEAM_TILES: TileDef[] = [
   { key: "avg_ring", label: "مدة الرنين قبل الرد", kind: "seconds", goodUp: false },
   { key: "outbound", label: "المكالمات الصادرة", kind: "count", goodUp: true },
   { key: "outbound_aht", label: "متوسط مدة الصادرة", kind: "seconds", goodUp: false },
+  { key: "early_hangups", label: "قفل مبكر (أقل من 30 ث رنين)", kind: "count", goodUp: false },
+  { key: "proper_rate", label: "محاولات صحيحة %", kind: "rate", goodUp: true },
   { key: "repeats", label: "متكررة خلال 72 ساعة", kind: "count", goodUp: false },
 ];
 // Teams that only make calls (no incoming queue): their page shows outgoing numbers only.
@@ -51,6 +53,9 @@ const OUTBOUND_TILES: TileDef[] = [
   { key: "outbound", label: "المكالمات الصادرة", kind: "count", goodUp: true },
   { key: "outbound_answered", label: "الصادرة التي تم الرد عليها", kind: "count", goodUp: true },
   { key: "outbound_aht", label: "متوسط مدة الصادرة", kind: "seconds", goodUp: false },
+  { key: "early_hangups", label: "قفل مبكر (أقل من 30 ث رنين)", kind: "count", goodUp: false },
+  { key: "proper_rate", label: "محاولات صحيحة %", kind: "rate", goodUp: true },
+  { key: "outbound_avg_ring", label: "متوسط ثواني الرنين (بلا رد)", kind: "seconds", goodUp: true },
 ];
 const AGENT_TILES: TileDef[] = [
   { key: "calls", label: "مكالمات ردّ عليها", kind: "count", goodUp: true },
@@ -58,6 +63,8 @@ const AGENT_TILES: TileDef[] = [
   { key: "aht", label: "متوسط مدة المعالجة (AHT)", kind: "seconds", goodUp: false },
   { key: "outbound", label: "المكالمات الصادرة", kind: "count", goodUp: true },
   { key: "outbound_aht", label: "متوسط مدة الصادرة", kind: "seconds", goodUp: false },
+  { key: "early_hangups", label: "قفل مبكر (أقل من 30 ث رنين)", kind: "count", goodUp: false },
+  { key: "proper_rate", label: "محاولات صحيحة %", kind: "rate", goodUp: true },
   { key: "repeats", label: "متكررة منسوبة للموظف", kind: "count", goodUp: false },
 ];
 
@@ -234,7 +241,9 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
               <table>
                 {outboundOnly ? <>
                 <thead>
-                  <tr><th>الموظف</th><th>الفريق</th><th>الصادرة</th><th>تم الرد</th><th>متوسط مدة الصادرة</th></tr>
+                  <tr><th>الموظف</th><th>الفريق</th><th>الصادرة</th><th>تم الرد</th><th>متوسط مدة الصادرة</th>
+                    <th title="مكالمة لم يُرد عليها وأغلقها الموظف قبل 30 ثانية رنين: لا تُحسب محاولة">قفل مبكر (&lt;30 ث)</th>
+                    <th>محاولات صحيحة</th><th>متوسط الرنين</th></tr>
                 </thead>
                 <tbody>
                   {data.agents.map((a) => (
@@ -244,6 +253,9 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                       <td className="num">{a.outbound}</td>
                       <td className="num">{a.outbound_answered}</td>
                       <td className="num">{secs(a.outbound_aht)}</td>
+                      <td className={a.early_hangups ? "num bad" : "num"}>{a.early_hangups}</td>
+                      <td className="num">{pct(a.proper_rate)}</td>
+                      <td className="num">{secs(a.outbound_avg_ring)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -251,7 +263,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                 <thead>
                   <tr>
                     <th>الموظف</th><th>الفريق</th><th>مكالمات ردّ عليها</th><th>AHT</th><th>رنات فائتة</th>
-                    <th>الصادرة (تم الرد)</th><th>AHT الصادرة</th><th>متكررة</th>
+                    <th>الصادرة (تم الرد)</th><th>AHT الصادرة</th><th>قفل مبكر</th><th>متكررة</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -264,6 +276,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                       <td className="num">{a.missed_rings}</td>
                       <td className="num">{a.outbound} ({a.outbound_answered})</td>
                       <td className="num">{secs(a.outbound_aht)}</td>
+                      <td className={a.early_hangups ? "num bad" : "num"}>{a.early_hangups}</td>
                       <td className="num">{a.repeats}</td>
                     </tr>
                   ))}
