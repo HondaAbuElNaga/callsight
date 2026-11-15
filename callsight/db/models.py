@@ -346,7 +346,7 @@ class CallFlag(Base):
     call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
     transcript_id: Mapped[int] = mapped_column(BigInteger)          # no FK: the row goes with its call
     kind: Mapped[str] = mapped_column(String(20))                 # bad_word / escalation / competitor
-    phrase: Mapped[str] = mapped_column(String(100))              # the rules.yaml phrase (not transcript text)
+    phrase: Mapped[str] = mapped_column(String(100))              # the rules.yaml phrase or competitor_rule label (not transcript text)
     start_seconds: Mapped[float] = mapped_column(Float)
     end_seconds: Mapped[float] = mapped_column(Float)
     rules_version: Mapped[str] = mapped_column(String(30))

@@ -4,17 +4,152 @@
 # Phrases are matched as whole words on the normalised transcript (same normalisation as the word search:
 # hamza/alif forms, ة/ه and ى/ي are folded). Only kept windows are searched (silence/hallucination windows never).
 # Every flag means "needs listening": dialect, negation ("ما ابي المدير") and ASR errors give false hits.
-# ⚠ SMALL SEED LIST ONLY: the real bad-word, escalation and competitor lists must come from the manager.
+# Recommended starter lists (written 2026-11-15 on the manager's request; the manager can add or remove lines).
+# The recording has both voices on one channel, so a hit does not say WHO spoke (agent or customer).
 flags:
-  bad_words: []
+  bad_words:
+    - غبي
+    - غبية
+    - يا غبي
+    - حمار
+    - يا حمار
+    - حيوان
+    - يا حيوان
+    - كلب
+    - يا كلب
+    - تافه
+    - تافهة
+    - وقح
+    - وقحة
+    - حقير
+    - حقيرة
+    - سافل
+    - واطي
+    - قليل ادب
+    - قليل الادب
+    - قليلة ادب
+    - قليلة الادب
+    - ما تستحي
+    - ما تستحين
+    - اخرس
+    - اخرسي
+    - انطم
+    - انطمي
+    - انقلع
+    - انقلعي
+    - كل تبن
+    - كلي تبن
+    - زفت
+    - يلعن
+    - الله يلعنك
+    - الله ياخذك
+    - متخلف
+    - متخلفة
+    - مجنون انت
   escalation:
+    # asks for a manager
     - ابي المدير
     - ابغى المدير
     - ابي اكلم المدير
+    - ابغى اكلم المدير
+    - عطني المدير
+    - عطوني المدير
+    - وين المدير
+    - حولني للمدير
+    - حولني على المدير
+    - ابي المسؤول
+    - ابغى المسؤول
+    - ابي اكلم المسؤول
+    - مين المسؤول
+    # complaint / official body
     - بشتكي
+    - بشتكي عليكم
+    - راح اشتكي
     - بقدم شكوى
+    - برفع شكوى
+    - ارفع شكوى
+    - شكوى رسمية
     - وزارة التجارة
-  competitor: []
+    - حماية المستهلك
+    - برفع بلاغ
+    - برفع قضية
+    - ارفع قضية
+    - المحكمة
+    - محامي
+    # money back / leaving
+    - ابي فلوسي
+    - ابغى فلوسي
+    - رجعوا فلوسي
+    - رجع فلوسي
+    - استرجاع المبلغ
+    - استرداد المبلغ
+    - ابي الغي
+    - ابغى الغي
+    - الغاء التسجيل
+    - ابي انسحب
+    - ابغى انسحب
+    - بنسحب
+    # strong anger / threat to publish
+    - نصابين
+    - نصب واحتيال
+    - حرامية
+    - كذابين
+    - بفضحكم
+    - بنشر في تويتر
+    - خدمة سيئة
+    - اسوا خدمة
+    - اسوا معهد
+    - ما راح اتعامل معكم
+    - اخر مرة اتعامل
+  competitor:
+    - معاهد ثانية
+    - معاهد اخرى
+    - معهد ثاني
+    - معهد اخر
+    - معهد كذا
+    - معهد غير
+
+# Competitor by pattern: "معهد" / "المعهد" / "للمعهد" ... + a next word that starts with ال and is not ours
+# (e.g. "معهد الخليج", "المعهد البريطاني"). "المعهد" + a normal word ("المعهد يفتح") usually means us: no flag.
+# A competitor whose name has no ال goes in the `competitor` list above. `own` = next words that mean us;
+# `ignore_next` = next words that are not a name. `label` is what the call page shows for the hit.
+competitor_rule:
+  word: معهد
+  own:
+    - السعودي
+  ignore_next:
+    - اللي
+    - الي
+    - اليوم
+    - الان
+    - الحين
+    - الله
+    - الساعة
+    - الاسبوع
+    - الشهر
+    - السنة
+    - الصبح
+    - العصر
+    - المغرب
+    - الليل
+    - الفترة
+    - الاحد
+    - الاثنين
+    - الثلاثاء
+    - الاربعاء
+    - الخميس
+    - الجمعة
+    - السبت
+    - المرة
+    - الدورة
+    - الدورات
+    - الرسوم
+    - المبلغ
+    - الفلوس
+    - الموقع
+    - الرقم
+    - الشهادة
+  label: معهد غير المعهد السعودي
 
 # Silence metrics from the recording (RMS per frame, no diarization). Hold music is NOT silence.
 silence:
