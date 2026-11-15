@@ -25,7 +25,8 @@ function daysAgo(n: number): string {
 
 /** Row colour (fix E): red = missed / overdue, yellow = callback within the hour or a note to write. */
 function urgency(i: FollowupItem, now: number): string {
-  if (i.step === "callback_missed" || i.step === "overdue") return "row-bad";
+  if (i.step === "callback_missed" || i.step === "overdue" || i.step === "solution_overdue") return "row-bad";
+  if (i.step === "waiting_solution" && i.solve_by && new Date(i.solve_by).getTime() - now <= SOON_MS) return "row-warn";
   if (i.step === "note_needed") return "row-warn";
   if (i.step === "waiting_callback" && i.callback && new Date(i.callback.at).getTime() - now <= SOON_MS) return "row-warn";
   return "";
@@ -217,6 +218,7 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
                   </> : "–"}</td>
                   <td className="nowrap muted small">
                     {i.step === "note_needed" && i.note_deadline ? formatDateTime(i.note_deadline)
+                      : i.solve_by ? <>الحل: {formatDateTime(i.solve_by)}</>
                       : i.step === "required" || i.step === "overdue" ? formatDateTime(i.deadline) : "–"}
                   </td>
                   <td><MyNote callId={i.call_id} text={i.my_note} onSaved={() => setTick((n) => n + 1)} onFail={fail} /></td>

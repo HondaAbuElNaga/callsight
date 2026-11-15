@@ -494,3 +494,49 @@ def test_kpi_per_agent_split_and_no_number_is_not_open(s):
     assert (a104["answered_forms"], a104["solved_first"], a104["open"]) == (2, 0, 1)      # "hidden" = no_number
     for key in ("answered_forms", "solved_first", "open", "callbacks_due"):
         assert tot[key] == a119[key] + a104[key]
+
+
+# ---------- not solved: solve time within 2 days, callback optional (2026-11-15) ----------
+
+def test_solve_time_max_two_days_and_callback_optional(s):
+    start_on(s)
+    c = mk(s, "a", at(10))
+    now = at(11)
+    base = {"what_happened": "x", "solved": False, "responsible_kind": "customer"}
+    got = fu.validate(s, {**base, "expected_at": now + timedelta(days=2)}, c, now)
+    assert got["callback_at"] is None and got["expected_at"] == now + timedelta(days=2)
+    for bad in ({**base, "expected_at": now + timedelta(days=2, minutes=1)},          # over 2 days
+                {**base, "expected_at": at(10, 30)},                                   # in the past
+                {**base, "expected_at": None, "callback_at": at(15)},                  # solve time still required
+                {**base, "expected_at": at(16), "callback_at": now + timedelta(days=2, minutes=1)}):
+        with pytest.raises(fu.FormError):
+            fu.validate(s, bad, c, now)
+
+
+def test_no_callback_waits_for_the_solve_time_then_a_note_closes_it(s):
+    start_on(s)
+    u = user(s)
+    c = mk(s, "orig", at(10))
+    f = form(s, c, u, filled=at(10, 5))
+    f.callback_at, f.expected_at = None, at(16)
+    mk(s, "other", at(12), direction="outbound", agent="104")     # a call without a promised callback: not "note"
+    s.commit()
+    d = _row(s, c).as_dict(at(13))
+    assert d["step"] == "waiting_solution" and d["callback"] is None and d["solve_by"] == at(16).isoformat()
+    assert _row(s, c).step(at(17, 1)) == "solution_overdue"
+    n = _note(s, c, u, at(14), solved=True)                       # a note is allowed while waiting
+    assert n.cb_call_id is None
+    assert _row(s, c).step(at(14, 1)) == "solved_after"
+
+
+def test_note_without_callback_keeps_waiting(s):
+    start_on(s)
+    u = user(s)
+    c = mk(s, "orig", at(10), number="")                           # no number: no callback possible, still fine
+    f = form(s, c, u, filled=at(10, 5))
+    f.callback_at, f.expected_at = None, at(16)
+    s.commit()
+    fu.add_note(s, c, {"round": 2, "what_happened": "waiting for IT", "solved": False,
+                       "responsible_kind": "other_department", "expected_at": at(20)}, u, EXTS, at(15))
+    r = _row(s, c)
+    assert r.step(at(19)) == "waiting_solution" and r.step(at(21, 1)) == "solution_overdue"

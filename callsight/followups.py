@@ -26,7 +26,8 @@ GRACE = timedelta(minutes=60)
 RANG_SECONDS = 10              # an unanswered callback attempt counts from this total time
 DAY_END_HOUR = 23
 LATE_CALL_EXTRA = timedelta(hours=2)
-MAX_CALLBACK_DAYS = 14
+MAX_CALLBACK_DAYS = 2         # callback (optional) within 2 days
+MAX_SOLVE = timedelta(days=2)  # a problem not solved must have an expected solve time within 2 days
 CAME_BACK = timedelta(hours=72)
 SETTING_START = "followup_start"
 SETTING_KPI = "followup_kpi_since"
@@ -35,10 +36,14 @@ RESPONSIBLE_KINDS = ("user", "customer", "other_department")
 CALLBACK_STATES = ("waiting", "on_time", "late", "missed", "no_number")
 # steps of one call (spec 2026-11-15-followup-stages), computed on read, never stored
 STEPS = ("required", "overdue", "no_followup", "solved_first", "waiting_callback", "callback_missed",
-         "note_needed", "solved_after", "no_number")
-OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number")      # list view "open"
-KPI_OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed")
-ACTION_STEPS = ("required", "overdue", "note_needed", "callback_missed")   # + waiting_callback due by today
+         "note_needed", "solved_after", "no_number", "waiting_solution", "solution_overdue")
+# not solved WITHOUT a callback time (callback is optional): waiting until the expected solve time, then overdue
+NO_CB_STEPS = ("waiting_solution", "solution_overdue")
+NOTE_STEPS = ("note_needed", *NO_CB_STEPS)         # steps where a note may be added
+OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number", *NO_CB_STEPS)   # list view "open"
+KPI_OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", *NO_CB_STEPS)
+ACTION_STEPS = ("required", "overdue", "note_needed", "callback_missed", "solution_overdue")
+# + waiting_callback / waiting_solution due by today
 
 
 def _utcnow() -> datetime:
@@ -212,10 +217,11 @@ class Row:
         last = self.notes[-1] if self.notes else f
         if last.solved is True:
             return "solved_after" if self.notes else "solved_first"
+        if last.callback_at is None:                     # no callback asked: wait for the expected solve time
+            due = last.expected_at
+            return "solution_overdue" if due is not None and now > due + GRACE else "waiting_solution"
         if not _has_number(self.call.customer_number):
             return "no_number"
-        if last.callback_at is None:                     # not solved without a time: odd data, keep it open
-            return "waiting_callback"
         if self.cb_of_round(len(self.notes) + 1) is not None:
             return "note_needed"
         return "callback_missed" if now > last.callback_at + GRACE else "waiting_callback"
@@ -237,6 +243,8 @@ class Row:
             "form": form_dict(f) if f else None,
             "step": step, "round": rnd,
             "note_deadline": after_deadline(cur.end).isoformat() if step == "note_needed" and cur else None,
+            "solve_by": (self.notes[-1] if self.notes else f).expected_at.isoformat()
+            if step in NO_CB_STEPS and (self.notes[-1] if self.notes else f).expected_at else None,
             "history": self.history(now, users or {}),
             "callback": None if cb_state is None else {
                 "at": open_.callback_at.isoformat(), "due": (open_.callback_at + GRACE).isoformat(),
@@ -469,13 +477,14 @@ def add_note(s: Session, call: Call, data: dict, user: AppUser, exts, now: datet
     the page showed (a second click or an old page gets 409 instead of a second note)."""
     now = now or _utcnow()
     row = one(s, call, exts, get_setting(s, SETTING_START))
-    if row is None or row.step(now) != "note_needed":
+    if row is None or row.step(now) not in NOTE_STEPS:
         raise NoteConflict("لا تحتاج هذه المكالمة ملاحظة الآن (أعد تحميل الصفحة)")
     rnd = len(row.notes) + 2                              # form = round 1, the note opens the next round
     if data.get("round") != rnd:
         raise NoteConflict("تغيّرت حالة المتابعة، أعد تحميل الصفحة")
     clean = validate(s, {**data, "no_followup": False}, call, now)
-    cb = row.cb_of_round(rnd - 1)
+    last = row.notes[-1] if row.notes else row.form
+    cb = row.cb_of_round(rnd - 1) if last.callback_at is not None else None     # no callback asked: none to report
     n = CallFollowupNote(call_id=call.id, round=rnd, cb_call_id=cb.id if cb else None,
                          what_happened=clean["what_happened"], solved=clean["solved"],
                          responsible_kind=clean["responsible_kind"], responsible_user_id=clean["responsible_user_id"],
@@ -500,7 +509,7 @@ class FormError(ValueError):
     pass
 
 
-def validate(s: Session, data: dict, call: Call, now: datetime) -> dict:
+def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: datetime | None = None) -> dict:
     """Server-side checks of a submitted form; returns the clean fields."""
     if data.get("no_followup"):
         return {"no_followup": True, "what_happened": None, "solved": None, "responsible_kind": None,
@@ -527,16 +536,22 @@ def validate(s: Session, data: dict, call: Call, now: datetime) -> dict:
             raise FormError("المسؤول غير موجود")
         clean["responsible_user_id"] = u.id
     expected, callback = data.get("expected_at"), data.get("callback_at")
-    if not isinstance(expected, datetime) or not isinstance(callback, datetime):
-        raise FormError("حدد وقت الحل المتوقع ووقت معاودة الاتصال")
-    if expected.tzinfo is None or callback.tzinfo is None:
+    if not isinstance(expected, datetime):
+        raise FormError("حدد وقت الحل المتوقع")
+    if callback is not None and not isinstance(callback, datetime):
+        raise FormError("وقت معاودة الاتصال غير صحيح")
+    if expected.tzinfo is None or (callback is not None and callback.tzinfo is None):
         raise FormError("الوقت يحتاج المنطقة الزمنية")
-    if callback <= now:
-        raise FormError("وقت معاودة الاتصال يجب أن يكون في المستقبل")
-    if callback > now + timedelta(days=MAX_CALLBACK_DAYS) or expected > now + timedelta(days=60):
-        raise FormError(f"وقت معاودة الاتصال خلال {MAX_CALLBACK_DAYS} يومًا على الأكثر")
-    if expected < call.start_time:
-        raise FormError("وقت الحل المتوقع قبل المكالمة")
+    if expected != keep_expected:                # an unchanged old time stays valid when a form is edited
+        if expected <= now:
+            raise FormError("وقت الحل المتوقع يجب أن يكون في المستقبل")
+        if expected > now + MAX_SOLVE:
+            raise FormError("أقصى وقت لحل المشكلة يومان")
+    if callback is not None:                     # optional
+        if callback <= now:
+            raise FormError("وقت معاودة الاتصال يجب أن يكون في المستقبل")
+        if callback > now + timedelta(days=MAX_CALLBACK_DAYS):
+            raise FormError(f"وقت معاودة الاتصال خلال {MAX_CALLBACK_DAYS} يومين على الأكثر")
     clean.update(responsible_kind=kind, expected_at=expected, callback_at=callback)
     return clean
 
@@ -544,7 +559,9 @@ def validate(s: Session, data: dict, call: Call, now: datetime) -> dict:
 def save(s: Session, call: Call, data: dict, user: AppUser, now: datetime | None = None) -> CallFollowup:
     now = now or _utcnow()
     f = s.scalars(select(CallFollowup).where(CallFollowup.call_id == call.id)).first()
-    clean =validate(s, data, call, now) if not _same_callback(f, data) else _validate_keep(s, data, call, now, f)
+    keep = f.expected_at if f is not None else None
+    clean = (validate(s, data, call, now, keep) if not _same_callback(f, data)
+             else _validate_keep(s, data, call, now, f))
     if f is None:
         f = CallFollowup(call_id=call.id, owner_ext=call.agent_ext, filled_by=user.id, first_filled_at=now,
                          updated_by=user.id, updated_at=now, **clean)
@@ -568,4 +585,4 @@ def _same_callback(f: CallFollowup | None, data: dict) -> bool:
 
 def _validate_keep(s: Session, data: dict, call: Call, now: datetime, f: CallFollowup) -> dict:
     """Editing a form without moving its callback time: the old time may be in the past by now (still valid)."""
-    return validate(s, data, call, min(now, f.callback_at - timedelta(seconds=1)))
+    return validate(s, data, call, min(now, f.callback_at - timedelta(seconds=1)), f.expected_at)

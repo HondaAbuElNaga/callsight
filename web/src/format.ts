@@ -70,14 +70,17 @@ export const STEP_LABEL: Record<string, string> = {
   required: "مطلوب", overdue: "لم يُعبّأ في وقته", no_followup: "لا تحتاج متابعة", solved_first: "حُلّت من أول مكالمة",
   waiting_callback: "بانتظار معاودة الاتصال", callback_missed: "معاودة فائتة", note_needed: "تم الاتصال – أضف ملاحظة",
   solved_after: "حُلّت بعد المتابعة", no_number: "بلا رقم للمعاودة",
+  waiting_solution: "بانتظار الحل", solution_overdue: "فات موعد الحل",
 };
 export const STEP_CLASS: Record<string, string> = {
   required: "off", overdue: "bad", no_followup: "ok", solved_first: "ok", waiting_callback: "off",
   callback_missed: "bad", note_needed: "warn", solved_after: "ok", no_number: "off",
+  waiting_solution: "off", solution_overdue: "bad",
 };
 export const STEP_NEXT: Record<string, string> = {
   required: "عبّئ نموذج المتابعة", overdue: "عبّئ نموذج المتابعة (تأخر)", note_needed: "اكتب ما حدث في مكالمة المعاودة",
   waiting_callback: "اتصل بالعميل في الموعد", callback_missed: "اتصل بالعميل الآن (فات الموعد)",
+  waiting_solution: "تابع الحل واكتب تحديثًا عند الحل (خلال يومين)", solution_overdue: "فات موعد الحل: اكتب تحديثًا الآن",
 };
 export const ROLE_LABEL: Record<string, string> = { admin: "مدير النظام", supervisor: "مشرف", agent: "موظف" };
 export const pct = (v: number | null | undefined) => (v === null || v === undefined ? "–" : `${(v * 100).toFixed(0)}%`);

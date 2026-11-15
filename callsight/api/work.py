@@ -25,7 +25,8 @@ STATES = ("", "action", "forms", "notes", "callbacks_today", "missed", "open", "
           "open_callbacks", "came_back")
 ACTION_LOOKBACK_DAYS = 62      # unfinished work before من is counted apart ("older_action"), never forgotten
 # most urgent first in "needs action"
-URGENCY = {"callback_missed": 0, "note_needed": 1, "overdue": 2, "waiting_callback": 3, "required": 4}
+URGENCY = {"callback_missed": 0, "solution_overdue": 1, "note_needed": 2, "overdue": 3, "waiting_callback": 4,
+           "waiting_solution": 5, "required": 6}
 
 
 class FollowupIn(BaseModel):
@@ -182,6 +183,8 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         if i["step"] in fu.ACTION_STEPS:
             return True
         cb = i["callback"]
+        if i["step"] == "waiting_solution" and i.get("solve_by"):
+            return datetime.fromisoformat(i["solve_by"]).astimezone(RIYADH).date() <= today
         return (i["step"] == "waiting_callback" and cb is not None
                 and datetime.fromisoformat(cb["at"]).astimezone(RIYADH).date() <= today)
 
@@ -192,7 +195,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
 
     def counts(items: list[dict], today: date) -> dict:
         return {"forms": sum(i["step"] in ("required", "overdue") for i in items),
-                "notes": sum(i["step"] == "note_needed" for i in items),
+                "notes": sum(i["step"] in ("note_needed", "solution_overdue") for i in items),
                 "callbacks_today": sum(today_cb(i, today) for i in items),
                 "missed": sum(i["step"] == "callback_missed" for i in items)}
 

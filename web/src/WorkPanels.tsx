@@ -21,6 +21,7 @@ function useFail(onExpired: () => void, setError: (m: string) => void) {
 // ---------- follow-up form + steps (agent-supervisor spec; steps and notes: follow-up stages spec) ----------
 
 type Solved = "" | "yes" | "no";
+const MAX_SOLVE_MS = 2 * 24 * 3600_000;     // a problem not solved: expected solve time within 2 days (server checks too)
 interface Problem { what: string; solved: Solved; resp: string; expected: string; callback: string }
 const EMPTY: Problem = { what: "", solved: "", resp: "", expected: "", callback: "" };
 
@@ -29,11 +30,13 @@ function problemBody(p: Problem): { body?: Omit<FollowupIn, "no_followup">; erro
   if (!p.what.trim()) return { error: "اكتب ما حدث في المكالمة" };
   if (!p.solved) return { error: "اختر: هل حُلّت المشكلة؟" };
   if (p.solved === "yes") return { body: { what_happened: p.what.trim(), solved: true } };
-  if (!p.resp || !p.expected || !p.callback) return { error: "حدد المسؤول ووقت الحل المتوقع ووقت معاودة الاتصال" };
+  if (!p.resp || !p.expected) return { error: "حدد المسؤول ووقت الحل المتوقع (خلال يومين)" };
+  if (new Date(fromRiyadhInput(p.expected)).getTime() - Date.now() > MAX_SOLVE_MS)
+    return { error: "أقصى وقت لحل المشكلة يومان" };
   const [kind, uid] = p.resp.split(":");
   return { body: { what_happened: p.what.trim(), solved: false, responsible_kind: kind,
     responsible_user_id: uid ? Number(uid) : null, expected_at: fromRiyadhInput(p.expected),
-    callback_at: fromRiyadhInput(p.callback) } };
+    ...(p.callback ? { callback_at: fromRiyadhInput(p.callback) } : {}) } };
 }
 
 function ProblemFields({ p, set, options, label }:
@@ -58,14 +61,15 @@ function ProblemFields({ p, set, options, label }:
               <option value="other_department">قسم آخر</option>
             </select>
           </label>
-          <label>وقت الحل المتوقع <input type="datetime-local" value={p.expected} onChange={(e) => set({ ...p, expected: e.target.value })} /></label>
-          <label>وقت معاودة الاتصال بالعميل <input type="datetime-local" value={p.callback} onChange={(e) => set({ ...p, callback: e.target.value })} /></label>
+          <label>وقت الحل المتوقع (خلال يومين على الأكثر) <input type="datetime-local" value={p.expected} onChange={(e) => set({ ...p, expected: e.target.value })} /></label>
+          <label>وقت معاودة الاتصال بالعميل (اختياري) <input type="datetime-local" value={p.callback} onChange={(e) => set({ ...p, callback: e.target.value })} /></label>
         </>
       )}
     </>
   );
 }
 
+const NOTE_STEPS: string[] = ["note_needed", "waiting_solution", "solution_overdue"];
 const RESP_LABEL: Record<string, string> = { customer: "العميل", other_department: "قسم آخر" };
 
 function History({ items }: { items: HistoryEntry[] }) {
@@ -74,13 +78,14 @@ function History({ items }: { items: HistoryEntry[] }) {
     <ol className="history">
       {items.map((h) => (
         <li key={h.round}>
-          <b>{h.round === 1 ? "النموذج" : `ملاحظة بعد المعاودة ${h.round - 1}`}</b>
+          <b>{h.round === 1 ? "النموذج" : `ملاحظة متابعة ${h.round - 1}`}</b>
           <span className="muted small"> · {formatDateTime(h.at)}{h.by ? ` · ${h.by}` : ""}</span>
           {h.no_followup ? <p>لا تحتاج متابعة.</p> : <>
             <p>{h.what_happened}</p>
             <p className="small">
               {h.solved ? <span className="state ok">حُلّت</span> : <span className="state warn">لم تُحل</span>}
               {h.solved === false && <> · المسؤول: {h.responsible ?? RESP_LABEL[h.responsible_kind ?? ""] ?? "–"}</>}
+              {h.solved === false && h.expected_at && <> · الحل المتوقع: {formatDateTime(h.expected_at)}</>}
               {h.callback_at && <> · معاودة الاتصال: {formatDateTime(h.callback_at)}</>}
               {h.callback_status && <> <span className={`state ${CB_CLASS[h.callback_status]}`}>{CALLBACK_LABEL[h.callback_status]}</span></>}
               {h.callback_call && <span className="muted"> · اتصل {h.callback_call.by_ext ?? "–"} {formatDateTime(h.callback_call.time)}
@@ -131,7 +136,8 @@ export function FollowupPanel({ callId, onExpired }: { callId: number; onExpired
     run(() => api.addNote(callId, { ...(r.body as Omit<NoteIn, "round">), round: view.round + 1 }), "تم حفظ الملاحظة.");
   };
   const ro = !view.can_edit || busy;
-  const formOpen = view.round === 1 && view.history.length <= 1 && view.step !== "note_needed";
+  const noteStep = NOTE_STEPS.includes(view.step);
+  const formOpen = view.round === 1 && view.history.length <= 1 && !noteStep;
   const next = STEP_NEXT[view.step];
   return (
     <section className={`panel work step-${STEP_CLASS[view.step]}`}>
@@ -140,6 +146,7 @@ export function FollowupPanel({ callId, onExpired }: { callId: number; onExpired
       {next && <p className="next-action">المطلوب منك: <b>{next}</b></p>}
       {(view.step === "required" || view.step === "overdue") &&
         <p className="muted small">آخر موعد للتعبئة: {formatDateTime(view.deadline)}</p>}
+      {view.solve_by && <p className="muted small">موعد الحل المتوقع: {formatDateTime(view.solve_by)}</p>}
       {view.step === "note_needed" && view.note_deadline &&
         <p className="muted small">آخر موعد للملاحظة: {formatDateTime(view.note_deadline)}</p>}
       {view.callback && view.step !== "note_needed" && (
@@ -149,10 +156,13 @@ export function FollowupPanel({ callId, onExpired }: { callId: number; onExpired
       )}
       {view.came_back && <p className="tag">اتصل العميل مرة أخرى خلال 72 ساعة بعد الحل</p>}
 
-      {view.step === "note_needed" && (
+      {noteStep && (
         <fieldset disabled={busy} className="form note-box">
-          <legend>ملاحظة بعد مكالمة المعاودة{view.callback?.by_ext ? ` (اتصل ${view.callback.by_ext}${view.callback.answered ? "، ردّ العميل" : "، لم يرد"})` : ""}</legend>
-          <ProblemFields p={note} set={setNote} options={view.options} label="ماذا حدث في مكالمة المعاودة؟" />
+          <legend>{view.step === "note_needed"
+            ? `ملاحظة بعد مكالمة المعاودة${view.callback?.by_ext ? ` (اتصل ${view.callback.by_ext}${view.callback.answered ? "، ردّ العميل" : "، لم يرد"})` : ""}`
+            : "تحديث المتابعة"}</legend>
+          <ProblemFields p={note} set={setNote} options={view.options}
+            label={view.step === "note_needed" ? "ماذا حدث في مكالمة المعاودة؟" : "ماذا حدث في المشكلة؟"} />
           <button type="button" className="primary" onClick={submitNote}>حفظ الملاحظة</button>
         </fieldset>
       )}

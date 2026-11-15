@@ -221,11 +221,12 @@ export interface FollowupItem {
   agent_name: string; talk_seconds: number; deadline: string; form_state: FormState; form: FollowupForm | null;
   callback: Callback | null; came_back: boolean;
   step: Step; round: number; note_deadline: string | null; history: HistoryEntry[];
+  solve_by?: string | null;     // not solved without a callback: the expected solve time (max 2 days)
   my_note?: string | null;      // the viewer's own private reminder (only they see it)
 }
 // follow-up stages (spec 2026-11-15-followup-stages)
 export type Step = "required" | "overdue" | "no_followup" | "solved_first" | "waiting_callback" | "callback_missed"
-  | "note_needed" | "solved_after" | "no_number";
+  | "note_needed" | "solved_after" | "no_number" | "waiting_solution" | "solution_overdue";
 export interface HistoryEntry {
   round: number; what_happened: string | null; solved: boolean | null; no_followup: boolean;
   responsible_kind: string | null; responsible_user_id: number | null; responsible: string | null;
