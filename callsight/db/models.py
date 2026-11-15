@@ -461,6 +461,27 @@ class CallFollowup(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class CallFollowupNote(Base):
+    """A note written after a callback (spec 2026-11-15-followup-stages): round >= 2. Append-only. cb_call_id = the
+    callback call it reports on. Not solved -> a new callback time (the next round). Personal data: erased with the
+    call's content."""
+    __tablename__ = "call_followup_note"
+    __table_args__ = (UniqueConstraint("call_id", "round", name="uq_call_followup_note_round"),
+                      CheckConstraint("round >= 2", name="ck_call_followup_note_round"))
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    round: Mapped[int] = mapped_column(Integer)
+    cb_call_id: Mapped[int | None] = mapped_column(ForeignKey("call.id", ondelete="SET NULL"))
+    what_happened: Mapped[str] = mapped_column(String(500))
+    solved: Mapped[bool] = mapped_column(Boolean)
+    responsible_kind: Mapped[str | None] = mapped_column(String(20))
+    responsible_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    expected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    callback_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class CallShare(Base):
     """A supervisor sends one call with a note to one agent (one-way; the agent marks it seen)."""
     __tablename__ = "call_share"

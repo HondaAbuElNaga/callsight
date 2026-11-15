@@ -333,3 +333,109 @@ def test_writes_from_another_origin_are_refused(env):
     assert client.post("/api/login", json={"username": "root", "password": "x"}, headers=evil).status_code == 403
     ok = {"origin": "http://testserver"}
     assert client.post(f"/api/admin/users/{ids['ali']}/password", headers=ok).status_code == 200
+
+
+# ---------- follow-up stages (spec 2026-11-15-followup-stages) ----------
+
+def _callback_call(Session, ids, uid="cb", agent="104", minutes_ago=-1, number="0501234567"):
+    """Default: rings 1 min after now, i.e. after the form the test just saved (a call before the form does not count)."""
+    with Session() as s:
+        t = _now_riyadh() - timedelta(minutes=minutes_ago)
+        s.add(Call(uid=uid, direction="outbound", entry="direct", customer_number=number, team="customer_service",
+                   agent_ext=agent, start_time=t, end_time=t + timedelta(seconds=40), talk_seconds=30,
+                   total_seconds=40, status="answered", recording_status="none"))
+        s.commit()
+
+
+def test_note_after_callback_flow(env):
+    client, Session, ids, *_ = env
+    switch_on(client)
+    login(client, "ali")
+    assert client.put(f"/api/calls/{ids['own']}/followup", json=not_solved(boss_id(Session))).status_code == 200
+    v = client.get(f"/api/calls/{ids['own']}/followup").json()
+    assert v["step"] == "waiting_callback" and v["round"] == 1
+    assert client.post(f"/api/calls/{ids['own']}/followup/notes",
+                       json={"round": 2, "what_happened": "x", "solved": True}).status_code == 409   # no callback yet
+    _callback_call(Session, ids)
+    v = client.get(f"/api/calls/{ids['own']}/followup").json()
+    assert v["step"] == "note_needed" and v["callback"]["by_ext"] == "104" and v["note_deadline"]
+    login(client, "sara")
+    assert client.post(f"/api/calls/{ids['own']}/followup/notes",
+                       json={"round": 2, "what_happened": "x", "solved": True}).status_code == 404
+    login(client, "ali")
+    r = client.post(f"/api/calls/{ids['own']}/followup/notes", json={"round": 2, "what_happened": "تم", "solved": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["step"] == "solved_after" and [h["round"] for h in r.json()["history"]] == [1, 2]
+    assert r.json()["history"][1]["by"] == "ali"
+    again = client.post(f"/api/calls/{ids['own']}/followup/notes", json={"round": 2, "what_happened": "تم", "solved": True})
+    assert again.status_code == 409
+    bad = client.post(f"/api/calls/{ids['own']}/followup/notes", json={"round": "2", "what_happened": "x"})
+    assert bad.status_code == 422
+
+
+def test_note_bad_text_is_422(env):
+    client, Session, ids, *_ = env
+    switch_on(client)
+    login(client, "ali")
+    client.put(f"/api/calls/{ids['own']}/followup", json=not_solved(boss_id(Session)))
+    _callback_call(Session, ids)
+    r = client.post(f"/api/calls/{ids['own']}/followup/notes", json={"round": 2, "what_happened": " ", "solved": True})
+    assert r.status_code == 422
+
+
+def test_needs_action_shows_old_overdue_forms_and_counts_match(env):
+    client, Session, ids, *_ = env
+    old = _now_riyadh() - timedelta(days=30)
+    with Session() as s:
+        s.add(Call(uid="old", direction="inbound", entry="queue", customer_number="0508888888", team="customer_service",
+                   agent_ext="119", start_time=old, end_time=old + timedelta(minutes=3), talk_seconds=100,
+                   total_seconds=180, status="answered", recording_status="none"))
+        s.commit()
+        old_id = s.scalars(select(Call.id).where(Call.uid == "old")).one()
+    login(client, "root")
+    assert client.put("/api/admin/settings", json={"followup_start": (old - timedelta(days=1)).date().isoformat()}
+                      ).status_code == 200
+    login(client, "ali")
+    d = client.get("/api/followups").json()                      # default view = needs action, last 7 days in من/إلى
+    steps = {i["call_id"]: i["step"] for i in d["items"]}
+    assert steps == {old_id: "overdue", ids["own"]: "required"}
+    assert [i["call_id"] for i in d["items"]] == [old_id, ids["own"]]          # overdue before required
+    assert d["counts"] == {"forms": 2, "notes": 0, "callbacks_today": 0, "missed": 0} and d["linked"] is True
+    assert {i["call_id"] for i in client.get("/api/followups", params={"state": ""}).json()["items"]} == {ids["own"]}
+
+
+def test_agent_without_team_extension_is_told(env):
+    client, Session, ids, *_ = env
+    switch_on(client)
+    with Session() as s:
+        s.execute(text("UPDATE app_user SET ext = '999' WHERE username = 'sara'"))
+        s.commit()
+    login(client, "sara")
+    d = client.get("/api/followups").json()
+    assert d["linked"] is False and d["items"] == []
+
+
+def test_opening_a_shared_call_marks_it_seen(env):
+    client, _, ids, *_ = env
+    login(client, "boss")
+    client.post(f"/api/calls/{ids['other']}/shares", json={"to_user_id": ids["ali"], "note": "استمع"})
+    login(client, "ali")
+    assert client.get("/api/shares").json()["unseen"] == 1
+    assert client.get(f"/api/calls/{ids['other']}/shares").json()["items"][0]["seen_at"]
+    assert client.get("/api/shares").json()["unseen"] == 0
+
+
+def test_form_is_frozen_once_a_note_exists_and_wrong_round_is_409(env):
+    client, Session, ids, *_ = env
+    switch_on(client)
+    login(client, "ali")
+    client.put(f"/api/calls/{ids['own']}/followup", json=not_solved(boss_id(Session)))
+    _callback_call(Session, ids)
+    wrong = client.post(f"/api/calls/{ids['own']}/followup/notes", json={"round": 3, "what_happened": "x", "solved": True})
+    assert wrong.status_code == 409
+    nxt = not_solved(boss_id(Session), minutes=24 * 60)
+    nxt.pop("what_happened")
+    r = client.post(f"/api/calls/{ids['own']}/followup/notes", json={"round": 2, "what_happened": "لم يُحل", **nxt})
+    assert r.status_code == 200 and r.json()["step"] == "waiting_callback" and r.json()["round"] == 2
+    login(client, "boss")
+    assert client.put(f"/api/calls/{ids['own']}/followup", json={"no_followup": True}).status_code == 409

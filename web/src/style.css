@@ -265,3 +265,21 @@ button.danger { color: #fff; background: var(--bad); border-color: var(--bad); }
 .panel.work.danger { border-color: var(--bad); }
 .panel.secret { border-color: var(--accent); }
 .big { font-size: 20px; font-weight: 600; letter-spacing: 1px; }
+
+/* follow-up stages spec: counters, urgent rows, step history, note box */
+.counters { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.counter { border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius); padding: 8px 14px;
+  cursor: pointer; display: flex; gap: 6px; align-items: baseline; }
+.counter b { font-size: 20px; }
+.counter.warn { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+.counter.bad { border-color: var(--bad); background: var(--bad-bg); color: var(--bad); }
+tr.row-warn td { background: var(--warn-bg); }
+tr.row-bad td { background: var(--bad-bg); }
+.next-action { margin: 4px 0 8px; }
+.panel.work.step-warn { border-color: var(--warn); }
+.panel.work.step-bad { border-color: var(--bad); }
+.note-box { border: 1px solid var(--warn); border-radius: var(--radius); padding: 10px; margin: 8px 0; }
+.note-box legend, .form legend { font-weight: 600; padding: 0 4px; }
+.history { list-style: none; padding: 0; margin: 8px 0; border-inline-start: 2px solid var(--line); }
+.history li { padding: 4px 10px 8px; }
+.history li p { margin: 2px 0; }

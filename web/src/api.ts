@@ -215,17 +215,34 @@ export interface FollowupForm {
   updated_at: string;
 }
 export interface Callback { at: string; due: string; status: CallbackStatus; by_ext: string | null; call_id: number | null; time: string | null;
-  answered: boolean | null }   // from the PBX record of the callback call (null = no callback call yet)
+  answered: boolean | null; round: number }   // from the PBX record of the callback call (null = no callback call yet)
 export interface FollowupItem {
   call_id: number; start_time: string; end_time: string; customer_number: string | null; agent_ext: string | null;
   agent_name: string; talk_seconds: number; deadline: string; form_state: FormState; form: FollowupForm | null;
   callback: Callback | null; came_back: boolean;
+  step: Step; round: number; note_deadline: string | null; history: HistoryEntry[];
 }
+// follow-up stages (spec 2026-11-15-followup-stages)
+export type Step = "required" | "overdue" | "no_followup" | "solved_first" | "waiting_callback" | "callback_missed"
+  | "note_needed" | "solved_after" | "no_number";
+export interface HistoryEntry {
+  round: number; what_happened: string | null; solved: boolean | null; no_followup: boolean;
+  responsible_kind: string | null; responsible_user_id: number | null; responsible: string | null;
+  expected_at: string | null; callback_at: string | null; at: string; by: string | null;
+  callback_status: CallbackStatus | null;
+  callback_call: { call_id: number; time: string; by_ext: string | null; answered: boolean | null } | null;
+}
+export interface NoteIn {
+  round: number; what_happened: string; solved: boolean; responsible_kind?: string;
+  responsible_user_id?: number | null; expected_at?: string; callback_at?: string;
+}
+export interface FollowupCounts { forms: number; notes: number; callbacks_today: number; missed: number }
 export interface Person { id: number; username: string; role: string; ext: string | null }
 export type FollowupView =
   | { needed: false; enabled: boolean }
   | (FollowupItem & { needed: true; enabled: true; can_edit: boolean; lock_reason: string | null; options: Person[] });
-export interface FollowupList { settings: Settings; items: FollowupItem[]; truncated?: boolean }
+export interface FollowupList { settings: Settings; items: FollowupItem[]; truncated?: boolean; linked: boolean;
+  counts: FollowupCounts }
 export interface FollowupIn {
   no_followup: boolean; what_happened?: string; solved?: boolean; responsible_kind?: string;
   responsible_user_id?: number | null; expected_at?: string; callback_at?: string;
@@ -248,6 +265,9 @@ export interface AdminLogRow { id: number; user: string; action: string; target:
 export interface FollowupKpiBucket {
   forms_due: number; forms_on_time: number; forms_rate: number | null;
   callbacks_due: number; callbacks_on_time: number; callbacks_rate: number | null; came_back: number;
+  // follow-up stages
+  answered_forms: number; solved_first: number; first_rate: number | null; solved_after: number; open: number;
+  rounds_to_solve: number; avg_rounds: number | null; notes_due: number; notes_on_time: number; notes_rate: number | null;
 }
 export interface FollowupKpi {
   enabled: boolean; active: boolean; start: string | null; since: string | null;
@@ -343,6 +363,7 @@ export const api = {
   logout: () => fetch("/api/logout", { method: "POST", credentials: "same-origin" }),
   followup: (id: number) => get<FollowupView>(`/api/calls/${id}/followup`),
   saveFollowup: (id: number, body: FollowupIn) => send<FollowupView>("PUT", `/api/calls/${id}/followup`, body),
+  addNote: (id: number, body: NoteIn) => send<FollowupView>("POST", `/api/calls/${id}/followup/notes`, body),
   followups: (p: { from?: string; to?: string; agent?: string; state?: string }) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(p)) if (v) q.set(k, v);

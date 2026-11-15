@@ -13,6 +13,8 @@
   new passwords, live on/off/log, sync-agents). Starting two at once cancels the waiting one. A password printed in a
   run log: delete that run after copying it. By hand: AWS console → EC2 Instance Connect (first add an SSH rule from
   `3.120.181.40/29` to security group callsight-main, delete it afterwards).
+- **Waiting for the user's yes:** merge branch `spec/2026-11-15-followup-stages` (follow-up stages + agent page
+  fixes, migration 0011) to `main` = live. After the deploy: check the agent page in the browser (not done yet).
 - **Next:** (1) GPU server (user step A4c in [user-steps](../specs/2026-11-15-aws-deploy/user-steps.md), quota approved)
   → transcription + analysis on AWS, then `ASR_START_DATE`; (2) create agent accounts on the users page, set the
   follow-up start date; (3) stop the PC's old services; (4) the rest of the order list in `docs/overnight-report.md`.
@@ -140,3 +142,8 @@ the HR/legal OK.
   no calls list, المتابعات is their only page (a call opens from it); follow-ups column "رد العميل؟" from the PBX
   record (any answered team callback), never a button (idea: user)
 - [ ] Create the agent accounts, set the follow-up start date (⚠ NEEDS USER)
+- [x] Follow-up stages per call + agent page fixes ([spec](../specs/2026-11-15-followup-stages/spec.md), branch
+  `spec/2026-11-15-followup-stages`, 3-agent review, 664 tests): مطلوب → حُلّت من أول مكالمة / بانتظار معاودة →
+  تم الاتصال – أضف ملاحظة → حُلّت بعد المتابعة or the next round; stage KPIs (first-call solve %, solved after
+  follow-up, open, average rounds, notes on time %); agent page: needs-action view (62 days), counters, urgent
+  rows, refresh 60 s, copy/call number, auto-seen notes, form first. NOT live until merged to `main` (idea: user)

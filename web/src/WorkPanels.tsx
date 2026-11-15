@@ -2,9 +2,10 @@
 import { useEffect, useState } from "react";
 import {
   api, Refused, Unauthorized,
-  type AgentSummary, type CallShares, type FollowupIn, type FollowupView, type Me,
+  type AgentSummary, type CallShares, type FollowupIn, type FollowupView, type HistoryEntry, type Me, type NoteIn,
+  type Person,
 } from "./api";
-import { CALLBACK_LABEL, FORM_LABEL, formatDateTime, fromRiyadhInput, toRiyadhInput } from "./format";
+import { CALLBACK_LABEL, STEP_CLASS, STEP_LABEL, STEP_NEXT, formatDateTime, fromRiyadhInput, toRiyadhInput } from "./format";
 
 export const CB_CLASS: Record<string, string> = { on_time: "ok", waiting: "off", late: "warn", missed: "bad", no_number: "off" };
 export const FORM_CLASS: Record<string, string> = { on_time: "ok", missing: "off", late: "warn", overdue: "bad" };
@@ -17,89 +18,157 @@ function useFail(onExpired: () => void, setError: (m: string) => void) {
   };
 }
 
-// ---------- follow-up form ----------
+// ---------- follow-up form + steps (agent-supervisor spec; steps and notes: follow-up stages spec) ----------
+
+type Solved = "" | "yes" | "no";
+interface Problem { what: string; solved: Solved; resp: string; expected: string; callback: string }
+const EMPTY: Problem = { what: "", solved: "", resp: "", expected: "", callback: "" };
+
+/** Check the fields; returns the body part or an error text. */
+function problemBody(p: Problem): { body?: Omit<FollowupIn, "no_followup">; error?: string } {
+  if (!p.what.trim()) return { error: "اكتب ما حدث في المكالمة" };
+  if (!p.solved) return { error: "اختر: هل حُلّت المشكلة؟" };
+  if (p.solved === "yes") return { body: { what_happened: p.what.trim(), solved: true } };
+  if (!p.resp || !p.expected || !p.callback) return { error: "حدد المسؤول ووقت الحل المتوقع ووقت معاودة الاتصال" };
+  const [kind, uid] = p.resp.split(":");
+  return { body: { what_happened: p.what.trim(), solved: false, responsible_kind: kind,
+    responsible_user_id: uid ? Number(uid) : null, expected_at: fromRiyadhInput(p.expected),
+    callback_at: fromRiyadhInput(p.callback) } };
+}
+
+function ProblemFields({ p, set, options, label }:
+  { p: Problem; set: (p: Problem) => void; options: Person[]; label: string }) {
+  return (
+    <>
+      <label>{label}
+        <textarea value={p.what} maxLength={500} rows={3} onChange={(e) => set({ ...p, what: e.target.value })} />
+      </label>
+      <div className="row">
+        هل حُلّت المشكلة؟
+        <label><input type="radio" checked={p.solved === "yes"} onChange={() => set({ ...p, solved: "yes" })} /> نعم</label>
+        <label><input type="radio" checked={p.solved === "no"} onChange={() => set({ ...p, solved: "no" })} /> لا</label>
+      </div>
+      {p.solved === "no" && (
+        <>
+          <label>من يجب أن يحلّها؟
+            <select value={p.resp} onChange={(e) => set({ ...p, resp: e.target.value })}>
+              <option value="">اختر…</option>
+              {options.map((o) => <option key={o.id} value={`user:${o.id}`}>{o.username}{o.ext ? ` · ${o.ext}` : ""}</option>)}
+              <option value="customer">العميل</option>
+              <option value="other_department">قسم آخر</option>
+            </select>
+          </label>
+          <label>وقت الحل المتوقع <input type="datetime-local" value={p.expected} onChange={(e) => set({ ...p, expected: e.target.value })} /></label>
+          <label>وقت معاودة الاتصال بالعميل <input type="datetime-local" value={p.callback} onChange={(e) => set({ ...p, callback: e.target.value })} /></label>
+        </>
+      )}
+    </>
+  );
+}
+
+const RESP_LABEL: Record<string, string> = { customer: "العميل", other_department: "قسم آخر" };
+
+function History({ items }: { items: HistoryEntry[] }) {
+  if (items.length === 0) return null;
+  return (
+    <ol className="history">
+      {items.map((h) => (
+        <li key={h.round}>
+          <b>{h.round === 1 ? "النموذج" : `ملاحظة بعد المعاودة ${h.round - 1}`}</b>
+          <span className="muted small"> · {formatDateTime(h.at)}{h.by ? ` · ${h.by}` : ""}</span>
+          {h.no_followup ? <p>لا تحتاج متابعة.</p> : <>
+            <p>{h.what_happened}</p>
+            <p className="small">
+              {h.solved ? <span className="state ok">حُلّت</span> : <span className="state warn">لم تُحل</span>}
+              {h.solved === false && <> · المسؤول: {h.responsible ?? RESP_LABEL[h.responsible_kind ?? ""] ?? "–"}</>}
+              {h.callback_at && <> · معاودة الاتصال: {formatDateTime(h.callback_at)}</>}
+              {h.callback_status && <> <span className={`state ${CB_CLASS[h.callback_status]}`}>{CALLBACK_LABEL[h.callback_status]}</span></>}
+              {h.callback_call && <span className="muted"> · اتصل {h.callback_call.by_ext ?? "–"} {formatDateTime(h.callback_call.time)}
+                {h.callback_call.answered === true ? " · ردّ العميل" : h.callback_call.answered === false ? " · لم يرد" : ""}</span>}
+            </p>
+          </>}
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 export function FollowupPanel({ callId, onExpired }: { callId: number; onExpired: () => void }) {
   const [view, setView] = useState<FollowupView | null>(null);
   const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);          // no double save (double click)
-  const [what, setWhat] = useState("");
-  const [solved, setSolved] = useState<"" | "yes" | "no">("");
-  const [resp, setResp] = useState("");            // "user:12" | "customer" | "other_department"
-  const [expected, setExpected] = useState("");
-  const [callback, setCallback] = useState("");
+  const [form, setForm] = useState<Problem>(EMPTY);
+  const [note, setNote] = useState<Problem>(EMPTY);
   const fail = useFail(onExpired, setError);
 
   const load = (v: FollowupView) => {
     setView(v);
+    setNote(EMPTY);
     if (!v.needed || !v.form) return;
     const f = v.form;
-    setWhat(f.what_happened ?? "");
-    setSolved(f.no_followup || f.solved === null ? "" : f.solved ? "yes" : "no");
-    setResp(f.responsible_kind === "user" ? `user:${f.responsible_user_id}` : f.responsible_kind ?? "");
-    setExpected(toRiyadhInput(f.expected_at));
-    setCallback(toRiyadhInput(f.callback_at));
+    setForm({ what: f.what_happened ?? "", solved: f.no_followup || f.solved === null ? "" : f.solved ? "yes" : "no",
+      resp: f.responsible_kind === "user" ? `user:${f.responsible_user_id}` : f.responsible_kind ?? "",
+      expected: toRiyadhInput(f.expected_at), callback: toRiyadhInput(f.callback_at) });
   };
   useEffect(() => { api.followup(callId).then(load).catch(fail); /* eslint-disable-next-line */ }, [callId]);
 
   if (!view || !view.needed) return null;
-  const save = async (body: FollowupIn) => {
+  const run = async (call: () => Promise<FollowupView>, done: string) => {
     if (busy) return;
-    setError(""); setSaved(false); setBusy(true);
-    try { load(await api.saveFollowup(callId, body)); setSaved(true); } catch (e) { fail(e); } finally { setBusy(false); }
+    setError(""); setSaved(""); setBusy(true);
+    try { load(await call()); setSaved(done); } catch (e) { fail(e); } finally { setBusy(false); }
   };
-  const submit = () => {
-    if (!what.trim()) { setError("اكتب ما حدث في المكالمة"); return; }
-    if (!solved) { setError("اختر: هل حُلّت المشكلة؟"); return; }
-    if (solved === "yes") { save({ no_followup: false, what_happened: what.trim(), solved: true }); return; }
-    if (!resp || !expected || !callback) { setError("حدد المسؤول ووقت الحل المتوقع ووقت معاودة الاتصال"); return; }
-    const [kind, uid] = resp.split(":");
-    save({ no_followup: false, what_happened: what.trim(), solved: false, responsible_kind: kind,
-      responsible_user_id: uid ? Number(uid) : null, expected_at: fromRiyadhInput(expected),
-      callback_at: fromRiyadhInput(callback) });
+  const saveForm = (body: FollowupIn) => run(() => api.saveFollowup(callId, body), "تم حفظ النموذج.");
+  const submitForm = () => {
+    const r = problemBody(form);
+    if (r.error) { setError(r.error); return; }
+    saveForm({ no_followup: false, ...r.body });
+  };
+  const submitNote = () => {
+    const r = problemBody(note);
+    if (r.error) { setError(r.error); return; }
+    run(() => api.addNote(callId, { ...(r.body as Omit<NoteIn, "round">), round: view.round + 1 }), "تم حفظ الملاحظة.");
   };
   const ro = !view.can_edit || busy;
+  const formOpen = view.round === 1 && view.history.length <= 1 && view.step !== "note_needed";
+  const next = STEP_NEXT[view.step];
   return (
-    <section className="panel work">
-      <h3>متابعة المكالمة <span className={`state ${FORM_CLASS[view.form_state]}`}>{FORM_LABEL[view.form_state]}</span></h3>
-      <p className="muted small">آخر موعد للتعبئة: {formatDateTime(view.deadline)}</p>
-      {view.form?.no_followup && <p>لا تحتاج متابعة.</p>}
-      {view.callback && (
+    <section className={`panel work step-${STEP_CLASS[view.step]}`}>
+      <h3>متابعة المكالمة <span className={`state ${STEP_CLASS[view.step]}`}>{STEP_LABEL[view.step]}</span>
+        {view.round > 1 && <span className="muted small"> · الجولة {view.round}</span>}</h3>
+      {next && <p className="next-action">المطلوب منك: <b>{next}</b></p>}
+      {(view.step === "required" || view.step === "overdue") &&
+        <p className="muted small">آخر موعد للتعبئة: {formatDateTime(view.deadline)}</p>}
+      {view.step === "note_needed" && view.note_deadline &&
+        <p className="muted small">آخر موعد للملاحظة: {formatDateTime(view.note_deadline)}</p>}
+      {view.callback && view.step !== "note_needed" && (
         <p>معاودة الاتصال: {formatDateTime(view.callback.at)}{" "}
           <span className={`state ${CB_CLASS[view.callback.status]}`}>{CALLBACK_LABEL[view.callback.status]}</span>
-          {view.callback.by_ext && <span className="muted small"> · اتصل {view.callback.by_ext}</span>}
         </p>
       )}
       {view.came_back && <p className="tag">اتصل العميل مرة أخرى خلال 72 ساعة بعد الحل</p>}
-      {ro && view.lock_reason && <p className="muted small">لا يمكنك التعديل: {lockText(view.lock_reason)}</p>}
-      <fieldset disabled={ro} className="form">
-        {!view.form && <button type="button" onClick={() => save({ no_followup: true })}>لا تحتاج متابعة (رقم خطأ، استفسار انتهى…)</button>}
-        <label>ماذا حدث؟
-          <textarea value={what} maxLength={500} rows={3} onChange={(e) => setWhat(e.target.value)} />
-        </label>
-        <div className="row">
-          هل حُلّت المشكلة؟
-          <label><input type="radio" checked={solved === "yes"} onChange={() => setSolved("yes")} /> نعم</label>
-          <label><input type="radio" checked={solved === "no"} onChange={() => setSolved("no")} /> لا</label>
-        </div>
-        {solved === "no" && (
-          <>
-            <label>من يجب أن يحلّها؟
-              <select value={resp} onChange={(e) => setResp(e.target.value)}>
-                <option value="">اختر…</option>
-                {view.options.map((o) => <option key={o.id} value={`user:${o.id}`}>{o.username}{o.ext ? ` · ${o.ext}` : ""}</option>)}
-                <option value="customer">العميل</option>
-                <option value="other_department">قسم آخر</option>
-              </select>
-            </label>
-            <label>وقت الحل المتوقع <input type="datetime-local" value={expected} onChange={(e) => setExpected(e.target.value)} /></label>
-            <label>وقت معاودة الاتصال بالعميل <input type="datetime-local" value={callback} onChange={(e) => setCallback(e.target.value)} /></label>
-          </>
-        )}
-        <button type="button" className="primary" onClick={submit}>حفظ</button>
-      </fieldset>
-      {saved && <p className="muted small">تم الحفظ.</p>}
+
+      {view.step === "note_needed" && (
+        <fieldset disabled={busy} className="form note-box">
+          <legend>ملاحظة بعد مكالمة المعاودة{view.callback?.by_ext ? ` (اتصل ${view.callback.by_ext}${view.callback.answered ? "، ردّ العميل" : "، لم يرد"})` : ""}</legend>
+          <ProblemFields p={note} set={setNote} options={view.options} label="ماذا حدث في مكالمة المعاودة؟" />
+          <button type="button" className="primary" onClick={submitNote}>حفظ الملاحظة</button>
+        </fieldset>
+      )}
+
+      <History items={view.history} />
+
+      {formOpen && <>
+        {ro && view.lock_reason && <p className="muted small">لا يمكنك التعديل: {lockText(view.lock_reason)}</p>}
+        <fieldset disabled={ro} className="form">
+          {view.form && <legend>تعديل النموذج</legend>}
+          {!view.form && <button type="button" onClick={() => saveForm({ no_followup: true })}>لا تحتاج متابعة (رقم خطأ، استفسار انتهى…)</button>}
+          <ProblemFields p={form} set={setForm} options={view.options} label="ماذا حدث؟" />
+          <button type="button" className="primary" onClick={submitForm}>حفظ</button>
+        </fieldset>
+      </>}
+      {saved && <p className="muted small">{saved}</p>}
       {error && <div className="error">{error}</div>}
     </section>
   );

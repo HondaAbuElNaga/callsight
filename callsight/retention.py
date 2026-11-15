@@ -30,7 +30,7 @@ AUDIT_DAYS = 730
 # per-call personal content (S2 / S5); deleted when present. blind_set stays (call ids only, keeps the test set's
 # membership); a rating note may hold personal data, and without its transcript a label is useless for training.
 CONTENT_TABLES = ("transcript", "call_analysis", "call_flag", "call_audio_metrics", "satisfaction_label",
-                  "call_followup", "call_share")     # agent-supervisor spec: the form text and notes are personal too
+                  "call_followup", "call_followup_note", "call_share")   # follow-up text + notes are personal too
 BATCH = 200
 
 

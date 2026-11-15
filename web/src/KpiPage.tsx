@@ -300,8 +300,34 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                   </tbody>
                 </table>
               </div>
+              <h3>مراحل المتابعة</h3>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>الموظف</th><th>نماذج بها مشكلة</th><th>حُلّت من أول مكالمة</th><th>نسبة الحل من أول مكالمة</th>
+                      <th>حُلّت بعد المتابعة</th><th>متوسط جولات المعاودة</th><th>ما زالت مفتوحة</th>
+                      <th>ملاحظات بعد المعاودة</th><th>في وقتها</th><th>نسبة الملاحظات</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...Object.entries(data.followup.agents).map(([ext, v]) => ({ key: ext, label: `${ext} ${data.agents.find((a) => a.ext === ext)?.name ?? ""}`, v })),
+                      ...(isAgent ? [] : [{ key: "all", label: "الإجمالي", v: data.followup.summary }])].map(({ key, label, v }) => (
+                      <tr key={key}>
+                        <td>{label}</td>
+                        <td className="num">{v.answered_forms}</td><td className="num">{v.solved_first}</td><td className="num">{pct(v.first_rate)}</td>
+                        <td className="num">{v.solved_after}</td><td className="num">{v.avg_rounds == null ? "–" : v.avg_rounds.toFixed(1)}</td>
+                        <td className="num">{v.open}</td>
+                        <td className="num">{v.notes_due}</td><td className="num">{v.notes_on_time}</td><td className="num">{pct(v.notes_rate)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               <p className="muted small">
                 تُحتسب من {data.followup.since ?? data.followup.start}. النموذج في وقته = قبل 23:00 يوم المكالمة (أو خلال ساعتين من نهاية مكالمة انتهت بعد 21:00). معاودة الاتصال في وقتها = خلال 60 دقيقة من الوقت المحدد، من أي موظف في الفريق.
+                المعاودات تُحتسب في كل جولة. الملاحظة بعد المعاودة في وقتها = قبل 23:00 يوم مكالمة المعاودة (أو خلال ساعتين منها).
+                «نماذج بها مشكلة» = النماذج المعبّأة عدا «لا تحتاج متابعة». «ما زالت مفتوحة» = بانتظار معاودة أو معاودة فائتة أو تحتاج ملاحظة.
                 «عاد العميل بعد الحل» للعرض فقط.
               </p>
             </section>
