@@ -3,7 +3,7 @@
 For the user (does not know AWS). One step at a time: give only the current step, wait for "done", then the next.
 If a screen looks different, ask for a screenshot. Tick a step here when the user confirms it.
 
-Current step: **A5** (supplier) and the "save" answer; A3 sent, waiting for AWS approval
+Current step: **A4c** (add the GPU server), as soon as AWS approves A3 (email). Everything before it is done.
 
 ## A2: location (free)
 - [x] done 2026-11-15: Bahrain was enabled but its website does not answer. The user chose **Europe (Frankfurt)**,
@@ -82,7 +82,8 @@ Same as A4c, steps 1–4, but change only **Wake the GPU server every 30 minutes
   answers with the server's address.
 
 ## A5: phone company opens API Access
-- [ ] asked
-- [ ] done
+- [x] asked (the user reported "done" on 2026-11-15)
+- [x] done 2026-11-15. The first login was refused (`70087 IP FORBIDDEN`) until System → Network → Yeastar FQDN →
+  API Access was confirmed and saved (Enabled, 63.184.90.120 / 255.255.255.255). Calls and recordings now arrive.
 Message to send: "Please enable **API Access** on our Yeastar FQDN (`sstli.ras.yeastar.com`) and permit one IP
 address only: 63.184.90.120."

@@ -2,8 +2,9 @@
 
 Written 2026-11-15 (spec `specs/2026-11-15-aws-deploy`). Region: Europe (Frankfurt), `eu-central-1`
 (changed from Bahrain on 2026-11-15: the Bahrain region did not answer; see the spec, "Region change").
-Status: the files are built and checked offline. **Nothing has been created on AWS yet**; everything marked
-"not verified" below is checked during the first setup.
+Status 2026-11-15: the **main server is live** (stack `callsight`, fixed address 63.184.90.120,
+https://calls.mohanadyehia.com). The PBX login is still refused and the GPU server does not exist yet: see
+`specs/2026-11-15-aws-deploy/tasks.md`. Items in section 10 about the GPU server are still not verified.
 
 ## 1. What runs where
 
@@ -138,6 +139,18 @@ ssh cs-gpu "sudo rm /etc/callsight/stay-on && sudo systemctl start callsight-gpu
 Stack updates: never change the two "System image" fields or the setup key afterwards. A new value there makes
 CloudFormation **replace the server** (its disk is deleted). Changing the other fields is safe.
 
+## 5b. Automatic update from GitHub
+
+- Repository (private): `HondaAbuElNaga/callsight`. It must stay private: anyone who can push to `main` can run
+  commands on the server.
+- Every push to `main` runs `.github/workflows/deploy.yml` on the runner `callsight-main`, which is installed on
+  the main server (`/home/ubuntu/actions-runner`, a systemd service). The runner connects out to GitHub; no port
+  is opened for it.
+- It runs `deploy/aws/deploy-main.sh`: copy the code to `/opt/callsight` (never `.env`), database dump, build and
+  restart, then check that the web page answers. A failed run is red in the repository's **Actions** tab.
+- So: run the tests first and push to `main` only what should go live. Other branches do not deploy.
+- Not covered: `.env` changes (edit on the server, then `up -d`) and the GPU server.
+
 ## 6. Cost
 
 Estimate ≈ **$113 a month** (range $90–140), to be replaced by the real bill after the first week:
@@ -178,8 +191,8 @@ Prices are from price-comparison sites for Bahrain, not from an AWS bill; Frankf
 
 ## 10. Not verified yet (checked during setup)
 
-- The stack has never been created: the template passed the offline checker `cfn-lint` for `eu-central-1` (two
-  warnings about the optional GPU image field), not AWS itself.
+- The stack was created with the main server only (CREATE_COMPLETE, 2026-11-15). The GPU part of the template
+  (GPU server, wake-up schedule and its permission) has not been created by AWS yet.
 - Whether the AWS GPU image has Docker with the NVIDIA runtime ready (`install-gpu.sh` checks and stops if not).
 - T4 speed for Whisper large-v3; whether Whisper (3.2 GB) + qwen2.5:7b (~5 GB) work side by side as expected.
 - The live board (WebSocket) through `sstli.ras.yeastar.com`. The live board stays off on AWS until tested.

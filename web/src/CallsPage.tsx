@@ -6,11 +6,16 @@ import {
 import { DIRECTION_LABEL, LEG_LABEL, STATUS_LABEL, STATUS_ORDER, duration, formatDateTime, riyadhToday } from "./format";
 import { TranscriptPanel } from "./TranscriptPanel";
 import { AnalysisPanel } from "./AnalysisPanel";
+import { AgentSummaryPanel, DeletePanel, FollowupPanel, SharePanel } from "./WorkPanels";
 
 interface Props {
   me: Me; onLogout: () => void; onExpired: () => void; onGoldset?: () => void; onKpi?: () => void; onHealth?: () => void;
   onRating?: () => void;
   onLive?: () => void;
+  onFollowups?: () => void;
+  onUsers?: () => void;
+  openCallId?: number | null;      // open this call's panel at once (from the follow-ups page)
+  onOpened?: () => void;           // called once openCallId was used (so it never reopens later)
 }
 
 // A function, not a constant: the page may stay open past midnight.
@@ -30,7 +35,8 @@ function wordsOk(text: string): boolean {
 
 interface Seek { id: number; t: number; n: number }
 
-export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth, onRating, onLive }: Props) {
+export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth, onRating, onLive, onFollowups, onUsers,
+  openCallId, onOpened }: Props) {
   const [filters, setFilters] = useState<Filters>(emptyFilters); // applied as soon as a field changes
   const [qText, setQText] = useState("");                  // number box: applied after typing stops
   const [wordsText, setWordsText] = useState("");          // transcript words: same, never in the page URL
@@ -111,6 +117,14 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
 
   const pages = data ? Math.max(1, Math.ceil(data.total / data.page_size)) : 1;
 
+  useEffect(() => {   // opened from the follow-ups page (a shared call is not in the agent's list)
+    if (!openCallId) return;
+    onOpened?.();
+    lastClicked.current = openCallId;
+    api.call(openCallId).then((d) => lastClicked.current === openCallId && setDetail(d)).catch(fail);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openCallId, fail]);
+
   async function openDetail(row: CallRow) {
     lastClicked.current = row.id;
     try {
@@ -125,10 +139,12 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
         <h1>سجل المكالمات</h1>
         <div className="who">
           {onLive && <button className="link" onClick={onLive}>المكالمات الحالية</button>}
+          {onFollowups && <button className="link" onClick={onFollowups}>المتابعات</button>}
           {onKpi && <button className="link" onClick={onKpi}>المؤشرات</button>}
           {onRating && <button className="link" onClick={onRating}>تقييم المكالمات</button>}
           {onGoldset && <button className="link" onClick={onGoldset}>النصوص المرجعية</button>}
           {onHealth && <button className="link" onClick={onHealth}>حالة النظام</button>}
+          {onUsers && <button className="link" onClick={onUsers}>المستخدمون</button>}
           <span className="muted">{me.username}{me.ext ? ` · تحويلة ${me.ext}` : ""}</span>
           <button className="link" onClick={onLogout}>خروج</button>
         </div>
@@ -235,13 +251,20 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
 
       {detail && (
         <DetailPanel call={detail} onClose={() => setDetail(null)} onPlay={() => { setSeek(null); setPlaying(detail); }}>
-          {canSearchText && (   /* admin + supervisor only: agents see nothing of the analysis (decision 9) */
+          {!canSearchText && <AgentSummaryPanel key={`s${detail.id}`} callId={detail.id} onExpired={onExpired} />}
+          <SharePanel key={`sh${detail.id}`} callId={detail.id} me={me} onExpired={onExpired} />
+          <FollowupPanel key={`f${detail.id}`} callId={detail.id} onExpired={onExpired} />
+          {canSearchText && (   /* admin + supervisor only: agents see the summary only (agent-supervisor decision 1) */
             <AnalysisPanel key={`a${detail.id}`} callId={detail.id} onExpired={onExpired}
               onSeek={detail.has_recording ? (t) => seekTo(detail, t) : undefined} />
           )}
           <TranscriptPanel key={detail.id} callId={detail.id} canSeek={detail.has_recording}
             time={playing?.id === detail.id && pos?.id === detail.id ? pos.t : null}
             onSeek={(t) => seekTo(detail, t)} onExpired={onExpired} />
+          {me.role === "admin" && (
+            <DeletePanel key={`d${detail.id}`} callId={detail.id} onExpired={onExpired}
+              onDone={() => { if (playing?.id === detail.id) setPlaying(null); setDetail(null); setFilters((f) => ({ ...f })); }} />
+          )}
         </DetailPanel>
       )}
       {playing && <Player call={playing} seek={seek} onTime={onTime} onClose={() => { setSeek(null); setPlaying(null); }} />}

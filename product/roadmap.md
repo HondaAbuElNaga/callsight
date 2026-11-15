@@ -2,7 +2,22 @@
 
 > Status: `[x]` done · `[~]` in progress · `[ ]` not started
 
-**Current position (2026-11-14):** All Phase 1 items **built**: call ingest ([spec](../specs/2026-11-12-call-ingest/spec.md)) and
+**Current position (2026-11-15, evening): AWS main server live and collecting calls; GPU server not there yet.**
+- AWS main server in Frankfurt: https://calls.mohanadyehia.com (valid certificate, account `admin`), fixed address
+  63.184.90.120. Pushing to `main` on GitHub (private repo `HondaAbuElNaga/callsight`) updates it automatically.
+- PBX link works through `sstli.ras.yeastar.com` (after FQDN → API Access was saved for 63.184.90.120): calls are
+  ingested every 2 minutes and recordings download. AWS holds calls from 2026-11-14 11:44 Riyadh on.
+- No transcripts or analyses on AWS yet: they need the GPU server. `ASR_START_DATE` is empty there until then.
+- The PC setup is no longer the live system (off the office network, its PBX permit line was removed). Its services
+  still run and should be stopped (`docker compose stop`); its old data stays on the PC.
+- Waiting: AWS approval of the GPU quota (request sent, "Case Opened"), then the GPU server and the schedule.
+- Agent + supervisor features (users page, follow-up form + callback check + KPIs, shared calls, delete content)
+  are **built and reviewed on branch `spec/2026-11-15-agent-supervisor`** (Phase 7), not live yet: merging to
+  `main` deploys them. Then: agent accounts on the users page, start date in Settings.
+- Step-by-step state: [tasks](../specs/2026-11-15-aws-deploy/tasks.md), the user's clicks:
+  [user-steps](../specs/2026-11-15-aws-deploy/user-steps.md), guide: [docs/aws.md](../docs/aws.md).
+
+**Position before the AWS move (2026-11-14):** All Phase 1 items **built**: call ingest ([spec](../specs/2026-11-12-call-ingest/spec.md)) and
 web call list ([spec](../specs/2026-11-13-web-call-list/spec.md)), Arabic page on http://127.0.0.1:8080 (this PC only; accounts admin + supervisor 114).
 **Phase 1 "Done when" still open:** 7 consecutive days of nightly reconcile = OK. Needs the PC on the office LAN as 192.168.50.189
 (on 2026-11-13/14 it was on another network, 192.168.100.x, so ingest paused; it catches up automatically).
@@ -102,3 +117,16 @@ the supervisor's phone and connects silently to the chosen call (customer + agen
 - [x] Pin exact dependency versions with hashes (pip-tools) (review 2026-11-12) ([spec](../specs/2026-11-14-hardening/spec.md))
 - [x] Monitoring: queue lengths, worker health, GPU usage ([spec](../specs/2026-11-14-hardening/spec.md))
 - [~] Scale-out guide: extra workers / second GPU box; add new agents/queues by config (short version: docs/scale-out.md) ([spec](../specs/2026-11-14-hardening/spec.md))
+
+## Phase 7: Agent + supervisor work ([spec](../specs/2026-11-15-agent-supervisor/spec.md))
+
+**Goal:** agents log in and close the loop on every real customer call; the supervisor sees kept / missed callbacks.
+**Done when:** agents fill forms for 2 weeks on the live server, and the admin switches the follow-up KPIs on after
+the HR/legal OK.
+
+- [x] Users page (admin): create / disable supervisors and agents, new password, extension (idea: user)
+- [x] Follow-up form after answered calls > 20 s, callback time; callback checked from outgoing calls (idea: user)
+- [x] Follow-up KPIs: forms on time %, callbacks on time % (show-only until the admin sets the date) (idea: user)
+- [x] Supervisor shares a call with a note; agent marks it seen; agents see the summary only (idea: user)
+- [x] Delete one call's content (recording, texts, forms) with reason + admin log (idea: user)
+- [ ] Live: merge to `main` (= deploy), create the agent accounts, set the start date (⚠ NEEDS USER)

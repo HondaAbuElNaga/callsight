@@ -118,6 +118,7 @@ export interface KpiReport {
   by_status: Record<Status, number> | null;
   top_repeaters: { number: string; repeats: number }[];
   days: { day: string; calls: number; answered: number; unanswered: number }[];
+  followup?: FollowupKpi;
 }
 
 export interface KpiFilters { period: "week" | "month"; start: string; team: string; agent: string }
@@ -199,6 +200,81 @@ export type LiveMessage =
       last_seen: number | null; server_time: number }
   | { type: "delta"; seq: number; status: string; deltas: LiveDelta[]; published_at: number };
 
+// ---------- agent + supervisor work (spec 2026-11-15-agent-supervisor) ----------
+export type CallbackStatus = "waiting" | "on_time" | "late" | "missed" | "no_number";
+export type FormState = "missing" | "overdue" | "on_time" | "late";
+export interface FollowupForm {
+  no_followup: boolean;
+  what_happened: string | null;
+  solved: boolean | null;
+  responsible_kind: "user" | "customer" | "other_department" | null;
+  responsible_user_id: number | null;
+  expected_at: string | null;
+  callback_at: string | null;
+  first_filled_at: string;
+  updated_at: string;
+}
+export interface Callback { at: string; due: string; status: CallbackStatus; by_ext: string | null; call_id: number | null; time: string | null }
+export interface FollowupItem {
+  call_id: number; start_time: string; end_time: string; customer_number: string | null; agent_ext: string | null;
+  agent_name: string; talk_seconds: number; deadline: string; form_state: FormState; form: FollowupForm | null;
+  callback: Callback | null; came_back: boolean;
+}
+export interface Person { id: number; username: string; role: string; ext: string | null }
+export type FollowupView =
+  | { needed: false; enabled: boolean }
+  | (FollowupItem & { needed: true; enabled: true; can_edit: boolean; lock_reason: string | null; options: Person[] });
+export interface FollowupList { settings: Settings; items: FollowupItem[]; truncated?: boolean }
+export interface FollowupIn {
+  no_followup: boolean; what_happened?: string; solved?: boolean; responsible_kind?: string;
+  responsible_user_id?: number | null; expected_at?: string; callback_at?: string;
+}
+export interface Share {
+  id: number; call_id: number; note: string; from: string; to: string; to_user_id: number; created_at: string;
+  seen_at: string | null; call_start: string | null; agent_ext: string | null;
+}
+export interface CallShares { items: Share[]; targets: { id: number; username: string; ext: string | null }[] }
+export interface AgentSummary {
+  call_id: number;
+  analysis: { status: string; summary?: string; topic_label?: string; action_items?: string[] } | null;
+}
+export interface Settings { followup_start: string | null; followup_kpi_since: string | null }
+export interface AppUserRow {
+  id: number; username: string; role: string; ext: string | null; active: boolean; locked: boolean;
+  created_at: string | null;
+}
+export interface AdminLogRow { id: number; user: string; action: string; target: string; reason: string | null; at: string }
+export interface FollowupKpiBucket {
+  forms_due: number; forms_on_time: number; forms_rate: number | null;
+  callbacks_due: number; callbacks_on_time: number; callbacks_rate: number | null; came_back: number;
+}
+export interface FollowupKpi {
+  enabled: boolean; active: boolean; start: string | null; since: string | null;
+  summary: FollowupKpiBucket; agents: Record<string, FollowupKpiBucket>;
+}
+
+/** A refused write: `message` is the server's reason (shown to the user). */
+export class Refused extends Error {}
+
+async function send<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const r = await fetch(url, {
+    method,
+    credentials: "same-origin",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (r.status === 401) throw new Unauthorized();
+  if (!r.ok) {
+    let msg = "";
+    try {
+      const d = await r.json();
+      msg = typeof d.detail === "string" ? d.detail : "";
+    } catch { /* not JSON */ }
+    throw new Refused(msg || `HTTP ${r.status}`);
+  }
+  return r.json() as Promise<T>;
+}
+
 export class Unauthorized extends Error {}
 export class NotFound extends Error {}
 export class BadRequest extends Error {}
@@ -264,6 +340,31 @@ export const api = {
     return r.json() as Promise<GoldClip>;
   },
   logout: () => fetch("/api/logout", { method: "POST", credentials: "same-origin" }),
+  followup: (id: number) => get<FollowupView>(`/api/calls/${id}/followup`),
+  saveFollowup: (id: number, body: FollowupIn) => send<FollowupView>("PUT", `/api/calls/${id}/followup`, body),
+  followups: (p: { from?: string; to?: string; agent?: string; state?: string }) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(p)) if (v) q.set(k, v);
+    return get<FollowupList>(`/api/followups?${q.toString()}`);
+  },
+  agentSummary: (id: number) => get<AgentSummary>(`/api/calls/${id}/summary`),
+  shares: () => get<{ items: Share[]; unseen: number }>("/api/shares"),
+  callShares: (id: number) => get<CallShares>(`/api/calls/${id}/shares`),
+  share: (id: number, to_user_id: number, note: string) =>
+    send<Share>("POST", `/api/calls/${id}/shares`, { to_user_id, note }),
+  shareSeen: (id: number) => send<Share>("POST", `/api/shares/${id}/seen`),
+  unshare: (id: number) => send<{ ok: true }>("DELETE", `/api/shares/${id}`),
+  users: () => get<AppUserRow[]>("/api/admin/users"),
+  createUser: (username: string, role: string, ext: string | null) =>
+    send<AppUserRow & { password: string }>("POST", "/api/admin/users", { username, role, ext }),
+  changeUser: (id: number, patch: { role?: string; ext?: string; clear_ext?: boolean; active?: boolean }) =>
+    send<AppUserRow>("PATCH", `/api/admin/users/${id}`, patch),
+  resetPassword: (id: number) => send<{ id: number; username: string; password: string }>("POST", `/api/admin/users/${id}/password`),
+  settings: () => get<Settings>("/api/admin/settings"),
+  saveSettings: (s: Settings) => send<Settings>("PUT", "/api/admin/settings", s),
+  adminLog: () => get<AdminLogRow[]>("/api/admin/log"),
+  deleteContent: (id: number, reason: string, confirm: number) =>
+    send<{ ok: true; deleted: string[] }>("POST", `/api/calls/${id}/delete-content`, { reason, confirm }),
   analysis: (id: number) => get<CallAnalysis>(`/api/calls/${id}/analysis`),
   ratingQueue: () => get<RatingQueue>("/api/rating/queue"),
   ratingCall: (id: number) => get<RatingCall>(`/api/rating/calls/${id}`),

@@ -241,6 +241,37 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
             ) : null}
           </section>
 
+          {data.followup?.enabled && (
+            <section className="panel">
+              <h2>المتابعة ومعاودة الاتصال {!data.followup.active && <span className="tag">للعرض فقط — لا تدخل في التقارير بعد</span>}</h2>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>الموظف</th><th>نماذج مطلوبة</th><th>في وقتها</th><th>نسبة النماذج</th>
+                      <th>معاودات مستحقة</th><th>في وقتها</th><th>نسبة المعاودة</th><th>عاد العميل بعد الحل</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...Object.entries(data.followup.agents).map(([ext, v]) => ({ key: ext, label: `${ext} ${data.agents.find((a) => a.ext === ext)?.name ?? ""}`, v })),
+                      ...(isAgent ? [] : [{ key: "all", label: "الإجمالي", v: data.followup.summary }])].map(({ key, label, v }) => (
+                      <tr key={key}>
+                        <td>{label}</td>
+                        <td className="num">{v.forms_due}</td><td className="num">{v.forms_on_time}</td><td className="num">{pct(v.forms_rate)}</td>
+                        <td className="num">{v.callbacks_due}</td><td className="num">{v.callbacks_on_time}</td><td className="num">{pct(v.callbacks_rate)}</td>
+                        <td className="num">{v.came_back}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="muted small">
+                تُحتسب من {data.followup.since ?? data.followup.start}. النموذج في وقته = قبل 23:00 يوم المكالمة (أو خلال ساعتين من نهاية مكالمة انتهت بعد 21:00). معاودة الاتصال في وقتها = خلال 60 دقيقة من الوقت المحدد، من أي موظف في الفريق.
+                «عاد العميل بعد الحل» للعرض فقط.
+              </p>
+            </section>
+          )}
+
           <div className="panels">
             <section className="panel">
               <h2>أكثر الأرقام تكراراً</h2>

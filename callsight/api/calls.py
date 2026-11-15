@@ -7,7 +7,7 @@ from datetime import date
 from sqlalchemy import Select, and_, exists, false, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
-from ..db.models import Agent, AppUser, Call, CallLeg, Transcript
+from ..db.models import Agent, AppUser, Call, CallLeg, CallShare, Transcript
 from ..ingest.service import day_bounds
 from ..transcripts import displayed_order
 from .auth import STAFF_ROLES
@@ -22,6 +22,7 @@ class Scope:
     """Which calls a user may see. Staff: all. Agent: only calls they answered/made (`agent_ext`). Else: none."""
     everything: bool = False
     agent_ext: str | None = None
+    user_id: int | None = None          # agents: calls shared with this user open one by one (never in the list)
 
     def where(self, stmt: Select) -> Select:
         if self.everything:
@@ -44,7 +45,7 @@ def visible_scope(user: AppUser) -> Scope:
     if user.role in STAFF_ROLES:
         return Scope(everything=True)
     if user.role == "agent" and user.ext:
-        return Scope(agent_ext=user.ext)
+        return Scope(agent_ext=user.ext, user_id=user.id)
     return Scope()
 
 
@@ -127,7 +128,19 @@ def summary(session: Session, f: CallFilter) -> dict:
 def visible_call(session: Session, call_id: int, scope: Scope) -> Call | None:
     """The call if this scope may see it; None (-> 404, so other agents' call ids are not even confirmed)."""
     call = session.get(Call, call_id)
-    return call if call is not None and scope.allows(call) else None
+    if call is None:
+        return None
+    if scope.allows(call) or is_shared_with(session, call_id, scope):
+        return call
+    return None
+
+
+def is_shared_with(session: Session, call_id: int, scope: Scope) -> bool:
+    """A supervisor shared this call with this agent (agent-supervisor spec, scope item 7)."""
+    if scope.everything or not scope.agent_ext or not scope.user_id:
+        return False
+    return session.scalar(select(CallShare.id).where(CallShare.call_id == call_id,
+                                                     CallShare.to_user_id == scope.user_id).limit(1)) is not None
 
 
 def call_detail(session: Session, call_id: int, scope: Scope) -> dict | None:

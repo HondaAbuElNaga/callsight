@@ -29,7 +29,8 @@ MIN_DAYS = 30
 AUDIT_DAYS = 730
 # per-call personal content (S2 / S5); deleted when present. blind_set stays (call ids only, keeps the test set's
 # membership); a rating note may hold personal data, and without its transcript a label is useless for training.
-CONTENT_TABLES = ("transcript", "call_analysis", "call_flag", "call_audio_metrics", "satisfaction_label")
+CONTENT_TABLES = ("transcript", "call_analysis", "call_flag", "call_audio_metrics", "satisfaction_label",
+                  "call_followup", "call_share")     # agent-supervisor spec: the form text and notes are personal too
 BATCH = 200
 
 
@@ -76,6 +77,48 @@ def _inside(root: Path, rel: str | None) -> Path | None:
     return p if p.is_relative_to(base) and p != base else None
 
 
+def erase_call_content(session: Session, c: Call, audio_dir: Path, backup_files_dir: Path | None,
+                       manifest: dict | None, tables=None) -> tuple[list[str], int, bool]:
+    """Delete one call's recording file (+ its backup copy when backup_files_dir is given) and its content rows;
+    mark the call deleted (the row stays for the KPIs). Returns (what, files deleted, manifest changed). No commit."""
+    tables = [t for t in CONTENT_TABLES if inspect(session.get_bind()).has_table(t)] if tables is None else tables
+    what: list[str] = []
+    files, pruned = 0, False
+    for root, label in ((audio_dir, "recording"), (backup_files_dir and backup_files_dir / "audio", "backup_copy")):
+        p = _inside(root, c.recording_path) if root else None
+        if p and p.is_file():
+            p.unlink()
+            files += 1
+            what.append(label)
+        if p and label == "backup_copy" and manifest is not None:   # drop its manifest line too (PDPL)
+            key = "audio/" + p.relative_to(root.resolve()).as_posix()
+            pruned = manifest.pop(key, None) is not None or pruned
+    for t in tables:
+        if session.execute(text(f'DELETE FROM "{t}" WHERE call_id = :id'), {"id": c.id}).rowcount:
+            what.append(t)
+    c.recording_status, c.recording_path = "deleted", None
+    c.content_deleted_at = c.content_deleted_at or _utcnow()   # follow-up KPIs leave erased calls out
+    return what, files, pruned
+
+
+def delete_backup_copy(backup_files_dir: Path, rel_path: str) -> bool:
+    """Worker side of an admin delete (the API cannot write BACKUP_DIR): remove the copy + its manifest line."""
+    from .backup import MANIFEST, read_manifest, write_manifest
+    root = backup_files_dir / "audio"
+    p = _inside(root, rel_path)
+    if p is None:
+        return False
+    gone = False
+    if p.is_file():
+        p.unlink()
+        gone = True
+    manifest_path = backup_files_dir / MANIFEST
+    manifest = read_manifest(manifest_path)
+    if manifest.pop("audio/" + p.relative_to(root.resolve()).as_posix(), None) is not None:
+        write_manifest(manifest_path, manifest)
+    return gone
+
+
 def run(session: Session, cfg: RetentionConfig, audio_dir: Path, backup_files_dir: Path | None,
         now: datetime | None = None, force_dry_run: bool = False) -> dict:
     now = now or _utcnow()
@@ -111,20 +154,9 @@ def run(session: Session, cfg: RetentionConfig, audio_dir: Path, backup_files_di
     pruned = False
     for i in range(0, len(calls), BATCH):
         for c in calls[i:i + BATCH]:
-            what = []
-            for root, label in ((audio_dir, "recording"), (backup_files_dir and backup_files_dir / "audio", "backup_copy")):
-                p = _inside(root, c.recording_path) if root else None
-                if p and p.is_file():
-                    p.unlink()
-                    files += 1
-                    what.append(label)
-                if p and label == "backup_copy":   # drop its manifest line too (PDPL: the name may hold a number)
-                    key = "audio/" + p.relative_to(root.resolve()).as_posix()
-                    pruned = manifest.pop(key, None) is not None or pruned
-            for t in present:
-                if session.execute(text(f'DELETE FROM "{t}" WHERE call_id = :id'), {"id": c.id}).rowcount:
-                    what.append(t)
-            c.recording_status, c.recording_path = "deleted", None
+            what, n, was_pruned = erase_call_content(session, c, audio_dir, backup_files_dir, manifest, present)
+            files += n
+            pruned = pruned or was_pruned
             session.add(RetentionLog(run_id=r.id, call_id=c.id, deleted_at=now, what=",".join(what) or "nothing"))
         session.commit()
         if pruned:

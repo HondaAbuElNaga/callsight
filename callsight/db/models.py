@@ -59,6 +59,8 @@ class Call(Base):
     recording_path: Mapped[str | None] = mapped_column(String(400))   # relative to AUDIO_DIR
     recording_status: Mapped[str] = mapped_column(String(10), default="none")  # none/pending/ok/error/missing/deleted
     recording_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    # agent-supervisor spec: an admin erased this call's personal content (recording, texts, forms); row kept for KPIs
+    content_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
                                                  onupdate=func.now())
@@ -124,7 +126,7 @@ class AppUser(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(50), unique=True)
     password_hash: Mapped[str] = mapped_column(String(200))
-    role: Mapped[str] = mapped_column(String(20))                 # admin / supervisor
+    role: Mapped[str] = mapped_column(String(20))                 # admin / supervisor / agent
     ext: Mapped[str | None] = mapped_column(String(16))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     token_version: Mapped[int] = mapped_column(Integer, default=0)  # +1 on password change/disable -> old logins end
@@ -434,3 +436,59 @@ LISTEN_AUDIT_APPEND_ONLY = (
 )
 for _sql in LISTEN_AUDIT_APPEND_ONLY:      # also for create_all (tests); migration 0009 runs the same statements
     event.listen(ListenAudit.__table__, "after_create", DDL(_sql).execute_if(dialect="postgresql"))
+
+
+# ---------- agent + supervisor work (spec 2026-11-15-agent-supervisor) ----------
+
+class CallFollowup(Base):
+    """The agent's short form after a needed call (personal data: deleted with the call's content).
+    responsible_kind: user (responsible_user_id) / customer / other_department. Callback status is computed on read
+    (callsight/followups.py), never stored."""
+    __tablename__ = "call_followup"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), unique=True)
+    owner_ext: Mapped[str] = mapped_column(String(16), index=True)           # call.agent_ext when filled
+    no_followup: Mapped[bool] = mapped_column(Boolean, default=False)
+    what_happened: Mapped[str | None] = mapped_column(String(500))
+    solved: Mapped[bool | None] = mapped_column(Boolean)
+    responsible_kind: Mapped[str | None] = mapped_column(String(20))
+    responsible_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    expected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    callback_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    filled_by: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    first_filled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_by: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CallShare(Base):
+    """A supervisor sends one call with a note to one agent (one-way; the agent marks it seen)."""
+    __tablename__ = "call_share"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    from_user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    to_user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    note: Mapped[str] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AppSetting(Base):
+    """Settings the admin changes on the web page (followup_start, followup_kpi_since: ISO dates or absent)."""
+    __tablename__ = "app_setting"
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[str] = mapped_column(String(200))
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AdminLog(Base):
+    """Who changed users / settings / shares or erased a call's content. Never holds passwords or call text.
+    target has no FK: the row outlives the call or user it names."""
+    __tablename__ = "admin_log"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40))
+    target: Mapped[str] = mapped_column(String(100))
+    reason: Mapped[str | None] = mapped_column(String(300))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
