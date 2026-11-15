@@ -13,6 +13,9 @@ on:
           - make-supervisor
           - new-admin-password
           - new-supervisor-password
+          - live-on
+          - live-off
+          - live-log
 
 permissions:
   contents: read
@@ -37,4 +40,13 @@ jobs:
             make-supervisor)         "${C[@]}" exec -T api python -m callsight create-user supervisor --role supervisor --ext 114 --generate ;;
             new-admin-password)      "${C[@]}" exec -T api python -m callsight set-password admin --generate ;;
             new-supervisor-password) "${C[@]}" exec -T api python -m callsight set-password supervisor --generate ;;
+            live-on)
+              grep -q '^LIVE_ENABLED=' .env && sed -i 's/^LIVE_ENABLED=.*/LIVE_ENABLED=true/' .env || echo 'LIVE_ENABLED=true' >> .env
+              "${C[@]}" up -d api
+              "${C[@]}" --profile live up -d --build live
+              sleep 45; "${C[@]}" --profile live logs --tail 40 live ;;
+            live-off)
+              sed -i 's/^LIVE_ENABLED=.*/LIVE_ENABLED=false/' .env
+              "${C[@]}" --profile live stop live; "${C[@]}" up -d api ;;
+            live-log) "${C[@]}" --profile live logs --tail 60 live ;;
           esac
