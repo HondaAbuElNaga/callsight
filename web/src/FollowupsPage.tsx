@@ -10,15 +10,17 @@ interface Props { me: Me; onCalls?: () => void;   // agents: no calls page (foll
   onLogout: () => void; onExpired: () => void }
 
 const STATE_OPTIONS: [string, string][] = [
-  ["action", "يحتاج عملاً"], ["open", "متابعات مفتوحة"], ["solved", "حُلّت"], ["came_back", "عاد العميل بعد الحل"],
-  ["", "الكل"],
+  ["action", "يحتاج عملاً"], ["forms", "نماذج مطلوبة"], ["notes", "ملاحظات بعد المعاودة"],
+  ["callbacks_today", "معاودات اليوم"], ["missed", "معاودات فائتة"], ["open", "متابعات مفتوحة"], ["solved", "حُلّت"],
+  ["came_back", "عاد العميل بعد الحل"], ["", "الكل"],
 ];
+const LOOKBACK_DAYS = 62;   // same as the server's look-back for unfinished work
 const REFRESH_MS = 60_000;
 const SOON_MS = 60 * 60_000;
 
-function weekAgo(): string {
+function daysAgo(n: number): string {
   const [y, m, d] = riyadhToday().split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d - 6)).toISOString().slice(0, 10);
+  return new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10);
 }
 
 /** Row colour (fix E): red = missed / overdue, yellow = callback within the hour or a note to write. */
@@ -77,7 +79,7 @@ function MyNote({ callId, text, onSaved, onFail }:
 
 export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
   const staff = me.role === "admin" || me.role === "supervisor";
-  const [from, setFrom] = useState(weekAgo);
+  const [from, setFrom] = useState(riyadhToday);     // the page opens on today; من/إلى go back
   const [to, setTo] = useState(riyadhToday);
   const [agent, setAgent] = useState("");
   const [state, setState] = useState("action");
@@ -107,12 +109,13 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
       .then((d) => { if (alive) { setData(d); setError(""); } }).catch((e) => alive && fail(e));
     return () => { alive = false; };
   }, [from, to, agent, state, fail, tick]);
-  const loadShares = useCallback(() => api.shares().then((d) => setShares(d.items)).catch(fail), [fail]);
+  // staff: with an agent picked, only the calls shared with that agent
+  const loadShares = useCallback(() => api.shares(staff ? agent : "").then((d) => setShares(d.items)).catch(fail),
+    [fail, staff, agent]);
   useEffect(() => { loadShares(); }, [loadShares, tick]);
 
   const now = Date.now();
   const c = data?.counts;
-  const dates = state !== "action";      // "needs action" looks back 62 days by itself (fix C)
   return (
     <div className="page">
       <header className="topbar">
@@ -130,16 +133,21 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
       )}
 
       {c && data?.settings.followup_start && data.linked && (
-        <div className="counters">   {/* fix D */}
-          <button type="button" className={`counter ${c.forms ? "bad" : ""}`} onClick={() => setState("action")}>
-            <b>{c.forms}</b> نماذج مطلوبة</button>
-          <button type="button" className={`counter ${c.notes ? "warn" : ""}`} onClick={() => setState("action")}>
-            <b>{c.notes}</b> ملاحظات بعد المعاودة</button>
-          <button type="button" className="counter" onClick={() => setState("action")}>
-            <b>{c.callbacks_today}</b> معاودات اليوم</button>
-          <button type="button" className={`counter ${c.missed ? "bad" : ""}`} onClick={() => setState("action")}>
-            <b>{c.missed}</b> معاودات فائتة</button>
+        <div className="counters">   {/* click = show only that kind; click again = back to "needs action" */}
+          {([["forms", c.forms, "نماذج مطلوبة", "bad"], ["notes", c.notes, "ملاحظات بعد المعاودة", "warn"],
+             ["callbacks_today", c.callbacks_today, "معاودات اليوم", ""], ["missed", c.missed, "معاودات فائتة", "bad"]] as const)
+            .map(([k, n, label, tone]) => (
+              <button key={k} type="button" aria-pressed={state === k}
+                className={`counter ${n ? tone : ""} ${state === k ? "active" : ""}`}
+                onClick={() => setState(state === k ? "action" : k)}>
+                <b>{n}</b> {label}</button>
+            ))}
         </div>
+      )}
+      {data && data.older_action > 0 && (
+        <p className="older">يوجد {data.older_action} عمل مطلوب في أيام قبل {from}.{" "}
+          <button type="button" className="link" onClick={() => { setFrom(daysAgo(LOOKBACK_DAYS)); setState("action"); }}>
+            عرضها</button></p>
       )}
 
       {(staff || shares.length > 0) && (   /* fix K: agents see this box only when there is a note */
@@ -169,10 +177,10 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
             {STATE_OPTIONS.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
         </label>
-        {dates ? <>
-          <label>من <input type="date" value={from} max={to} onChange={(e) => e.target.value && setFrom(e.target.value)} /></label>
-          <label>إلى <input type="date" value={to} min={from} onChange={(e) => e.target.value && setTo(e.target.value)} /></label>
-        </> : <span className="muted small">آخر 62 يومًا، الأهم أولًا</span>}
+        <label>من <input type="date" value={from} max={to} onChange={(e) => e.target.value && setFrom(e.target.value)} /></label>
+        <label>إلى <input type="date" value={to} min={from} max={riyadhToday()} onChange={(e) => e.target.value && setTo(e.target.value)} /></label>
+        {(from !== riyadhToday() || to !== riyadhToday()) &&
+          <button type="button" className="link" onClick={() => { setFrom(riyadhToday()); setTo(riyadhToday()); }}>اليوم</button>}
         {staff && (
           <label>الموظف
             <select value={agent} onChange={(e) => setAgent(e.target.value)}>

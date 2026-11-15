@@ -396,12 +396,21 @@ def test_needs_action_shows_old_overdue_forms_and_counts_match(env):
     assert client.put("/api/admin/settings", json={"followup_start": (old - timedelta(days=1)).date().isoformat()}
                       ).status_code == 200
     login(client, "ali")
-    d = client.get("/api/followups").json()                      # default view = needs action, last 7 days in من/إلى
-    steps = {i["call_id"]: i["step"] for i in d["items"]}
+    today = _now_riyadh().date()
+    d = client.get("/api/followups", params={"from": (today - timedelta(days=1)).isoformat(),
+                                             "to": today.isoformat()}).json()      # dates follow من/إلى
+    assert [i["call_id"] for i in d["items"]] == [ids["own"]]
+    assert d["counts"] == {"forms": 1, "notes": 0, "callbacks_today": 0, "missed": 0} and d["linked"] is True
+    assert d["older_action"] == 1                                    # the 30-day-old form is not forgotten
+    wide = client.get("/api/followups", params={"from": (today - timedelta(days=40)).isoformat(),
+                                                "to": today.isoformat()}).json()
+    steps = {i["call_id"]: i["step"] for i in wide["items"]}
     assert steps == {old_id: "overdue", ids["own"]: "required"}
-    assert [i["call_id"] for i in d["items"]] == [old_id, ids["own"]]          # overdue before required
-    assert d["counts"] == {"forms": 2, "notes": 0, "callbacks_today": 0, "missed": 0} and d["linked"] is True
-    assert {i["call_id"] for i in client.get("/api/followups", params={"state": ""}).json()["items"]} == {ids["own"]}
+    assert [i["call_id"] for i in wide["items"]] == [old_id, ids["own"]]          # overdue before required
+    assert wide["counts"]["forms"] == 2 and wide["older_action"] == 0
+    forms = client.get("/api/followups", params={"from": (today - timedelta(days=40)).isoformat(), "state": "forms"})
+    assert {i["call_id"] for i in forms.json()["items"]} == {old_id, ids["own"]}
+    assert client.get("/api/followups", params={"state": "notes"}).json()["items"] == []
 
 
 def test_agent_without_team_extension_is_told(env):
@@ -474,3 +483,14 @@ def test_private_note_erased_with_the_content(env):
     assert r.status_code == 200, r.text
     with Session() as s:
         assert s.query(CallPrivateNote).count() == 0
+
+
+def test_staff_share_list_follows_the_agent_filter(env):
+    client, _, ids, *_ = env
+    login(client, "boss")
+    client.post(f"/api/calls/{ids['other']}/shares", json={"to_user_id": ids["ali"], "note": "لعلي"})
+    assert len(client.get("/api/shares").json()["items"]) == 1
+    assert len(client.get("/api/shares", params={"agent": "119"}).json()["items"]) == 1
+    assert client.get("/api/shares", params={"agent": "104"}).json()["items"] == []
+    login(client, "sara")
+    assert client.get("/api/shares", params={"agent": "119"}).json()["items"] == []     # agents: own shares only

@@ -288,3 +288,7 @@ tr.row-bad td { background: var(--bad-bg); }
 .my-note { display: inline-block; max-width: 220px; white-space: pre-wrap; margin-inline-end: 6px; }
 .my-note-edit { display: flex; flex-direction: column; gap: 4px; min-width: 200px; }
 .my-note-edit textarea { font: inherit; }
+
+/* follow-ups: selected counter, earlier-days notice */
+.counter.active { outline: 2px solid var(--accent); outline-offset: 1px; font-weight: 600; }
+.older { background: var(--warn-bg); color: var(--warn); border-radius: var(--radius); padding: 6px 12px; margin: 6px 0; }

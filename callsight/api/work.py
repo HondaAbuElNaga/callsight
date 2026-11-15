@@ -21,8 +21,9 @@ from .calls import visible_call, visible_scope
 
 MAX_LIST_DAYS = 62
 LIST_LIMIT = 500
-STATES = ("", "action", "open", "solved", "todo", "callbacks", "open_callbacks", "came_back")
-ACTION_LOOKBACK_DAYS = 62      # "needs action" + the counters ignore the من date (old unfinished work stays visible)
+STATES = ("", "action", "forms", "notes", "callbacks_today", "missed", "open", "solved", "todo", "callbacks",
+          "open_callbacks", "came_back")
+ACTION_LOOKBACK_DAYS = 62      # unfinished work before من is counted apart ("older_action"), never forgotten
 # most urgent first in "needs action"
 URGENCY = {"callback_missed": 0, "note_needed": 1, "overdue": 2, "waiting_callback": 3, "required": 4}
 
@@ -184,14 +185,15 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         return (i["step"] == "waiting_callback" and cb is not None
                 and datetime.fromisoformat(cb["at"]).astimezone(RIYADH).date() <= today)
 
+    def today_cb(i: dict, today: date) -> bool:
+        cb = i["callback"]
+        return (i["step"] == "waiting_callback" and cb is not None
+                and datetime.fromisoformat(cb["at"]).astimezone(RIYADH).date() == today)
+
     def counts(items: list[dict], today: date) -> dict:
-        def today_cb(i):
-            cb = i["callback"]
-            return (i["step"] == "waiting_callback" and cb is not None
-                    and datetime.fromisoformat(cb["at"]).astimezone(RIYADH).date() == today)
         return {"forms": sum(i["step"] in ("required", "overdue") for i in items),
                 "notes": sum(i["step"] == "note_needed" for i in items),
-                "callbacks_today": sum(today_cb(i) for i in items),
+                "callbacks_today": sum(today_cb(i, today) for i in items),
                 "missed": sum(i["step"] == "callback_missed" for i in items)}
 
     @app.get("/api/followups")
@@ -206,13 +208,13 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             raise HTTPException(422, "unknown state")
         today = datetime.now(RIYADH).date()
         d_to = date_to or today
-        d_from = date_from or (d_to - timedelta(days=6))
+        d_from = date_from or d_to                     # the page opens on today (user, 2026-11-15)
         if d_to < d_from or (d_to - d_from).days > MAX_LIST_DAYS:
             raise HTTPException(422, "bad date range")
         st = fu.settings(s)
         out = {"settings": {k: v.isoformat() if v else None for k, v in st.items()}, "items": [],
                "linked": staff(user) or bool(user.ext and user.ext in team_exts()),
-               "counts": {"forms": 0, "notes": 0, "callbacks_today": 0, "missed": 0}}
+               "counts": {"forms": 0, "notes": 0, "callbacks_today": 0, "missed": 0}, "older_action": 0}
         start = st[fu.SETTING_START]
         if start is None:
             return out
@@ -231,18 +233,30 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         def load(lo: date, hi: date) -> list[dict]:
             return [r.as_dict(now, names, users) for r in fu.rows(s, exts, start, day_bounds(lo)[0],
                                                                    day_bounds(hi)[1], callers=team_exts())]
+        # The list and the counters follow من/إلى. Work left in earlier days (62-day look-back) is counted apart,
+        # so the page can say "N items need work in earlier days" and nothing old is forgotten.
         back = today - timedelta(days=ACTION_LOOKBACK_DAYS)
+        lo, hi = day_bounds(d_from)[0], day_bounds(d_to)[1]
         recent = load(back, today)
-        out["counts"] = counts(recent, today)
-        if state == "action":
-            items = sorted((i for i in recent if action_due(i, today)),
-                           key=lambda i: (URGENCY.get(i["step"], 9), i["start_time"]))
-        elif d_from >= back and d_to <= today:     # inside the window already loaded: no second query
-            lo, hi = day_bounds(d_from)[0], day_bounds(d_to)[1]
+        if d_from >= back and d_to <= today:     # inside the window already loaded: no second query
             items = [i for i in recent if lo <= datetime.fromisoformat(i["start_time"]) < hi]
         else:
             items = load(d_from, d_to)
-        if state == "open":
+        out["counts"] = counts(items, today)
+        out["older_action"] = sum(1 for i in recent if datetime.fromisoformat(i["start_time"]) < lo
+                                  and action_due(i, today))
+        if state == "action":
+            items = sorted((i for i in items if action_due(i, today)),
+                           key=lambda i: (URGENCY.get(i["step"], 9), i["start_time"]))
+        elif state == "forms":
+            items = [i for i in items if i["step"] in ("required", "overdue")]
+        elif state == "notes":
+            items = [i for i in items if i["step"] == "note_needed"]
+        elif state == "callbacks_today":
+            items = [i for i in items if today_cb(i, today)]
+        elif state == "missed":
+            items = [i for i in items if i["step"] == "callback_missed"]
+        elif state == "open":
             items = [i for i in items if i["step"] in fu.OPEN_STEPS]
         elif state == "solved":
             items = [i for i in items if i["step"] in ("solved_first", "solved_after")]
@@ -254,6 +268,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             items = [i for i in items if i["callback"] and i["callback"]["status"] in ("waiting", "missed")]
         elif state == "came_back":
             items = [i for i in items if i["came_back"]]
+        out["truncated"] = len(items) > LIST_LIMIT
         items = items[:LIST_LIMIT]
         mine = dict(s.execute(select(CallPrivateNote.call_id, CallPrivateNote.text).where(
             CallPrivateNote.user_id == user.id, CallPrivateNote.call_id.in_([i["call_id"] for i in items]))).all()
@@ -261,7 +276,6 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         for i in items:
             i["my_note"] = mine.get(i["call_id"])      # the caller's own note only (private-note spec)
         out["items"] = items
-        out["truncated"] = len(items) > LIST_LIMIT
         return out
 
     # ---------- agent summary (decision 1: summary only, never the estimate / reason / flags) ----------
@@ -314,10 +328,13 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
                 if u.ext and c.team and ext_team.get(u.ext) == c.team]
 
     @app.get("/api/shares")
-    def list_shares(user: User, s: DB) -> dict:
+    def list_shares(user: User, s: DB,
+                    agent: Annotated[str | None, Query(pattern=r"^\d{1,6}$")] = None) -> dict:
         stmt = select(CallShare).order_by(CallShare.created_at.desc(), CallShare.id.desc()).limit(LIST_LIMIT)
         if not staff(user):
             stmt = stmt.where(CallShare.to_user_id == user.id)
+        elif agent:     # staff picked one agent on the follow-ups page: only the calls shared with that agent
+            stmt = stmt.where(CallShare.to_user_id.in_(select(AppUser.id).where(AppUser.ext == agent)))
         names = usernames(s)
         items = [share_dict(s, sh, names) for sh in s.scalars(stmt)]
         return {"items": items, "unseen": sum(1 for i in items if i["seen_at"] is None)}

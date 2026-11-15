@@ -243,7 +243,7 @@ export type FollowupView =
   | { needed: false; enabled: boolean }
   | (FollowupItem & { needed: true; enabled: true; can_edit: boolean; lock_reason: string | null; options: Person[] });
 export interface FollowupList { settings: Settings; items: FollowupItem[]; truncated?: boolean; linked: boolean;
-  counts: FollowupCounts }
+  counts: FollowupCounts; older_action: number }   // older_action: work left before من (62-day look-back)
 export interface FollowupIn {
   no_followup: boolean; what_happened?: string; solved?: boolean; responsible_kind?: string;
   responsible_user_id?: number | null; expected_at?: string; callback_at?: string;
@@ -372,7 +372,7 @@ export const api = {
     return get<FollowupList>(`/api/followups?${q.toString()}`);
   },
   agentSummary: (id: number) => get<AgentSummary>(`/api/calls/${id}/summary`),
-  shares: () => get<{ items: Share[]; unseen: number }>("/api/shares"),
+  shares: (agent = "") => get<{ items: Share[]; unseen: number }>(`/api/shares${agent ? `?agent=${encodeURIComponent(agent)}` : ""}`),
   callShares: (id: number) => get<CallShares>(`/api/calls/${id}/shares`),
   share: (id: number, to_user_id: number, note: string) =>
     send<Share>("POST", `/api/calls/${id}/shares`, { to_user_id, note }),
