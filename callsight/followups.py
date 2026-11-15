@@ -509,7 +509,8 @@ class FormError(ValueError):
     pass
 
 
-def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: datetime | None = None) -> dict:
+def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: datetime | None = None,
+             real_now: datetime | None = None) -> dict:
     """Server-side checks of a submitted form; returns the clean fields."""
     if data.get("no_followup"):
         return {"no_followup": True, "what_happened": None, "solved": None, "responsible_kind": None,
@@ -542,16 +543,17 @@ def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: d
         raise FormError("وقت معاودة الاتصال غير صحيح")
     if expected.tzinfo is None or (callback is not None and callback.tzinfo is None):
         raise FormError("الوقت يحتاج المنطقة الزمنية")
+    t_now = real_now or now                      # _validate_keep moves `now` back for the callback only
     if expected != keep_expected:                # an unchanged old time stays valid when a form is edited
-        if expected <= now:
+        if expected <= t_now:
             raise FormError("وقت الحل المتوقع يجب أن يكون في المستقبل")
-        if expected > now + MAX_SOLVE:
+        if expected > t_now + MAX_SOLVE:
             raise FormError("أقصى وقت لحل المشكلة يومان")
     if callback is not None:                     # optional
         if callback <= now:
             raise FormError("وقت معاودة الاتصال يجب أن يكون في المستقبل")
         if callback > now + timedelta(days=MAX_CALLBACK_DAYS):
-            raise FormError(f"وقت معاودة الاتصال خلال {MAX_CALLBACK_DAYS} يومين على الأكثر")
+            raise FormError("وقت معاودة الاتصال خلال يومين على الأكثر")
     clean.update(responsible_kind=kind, expected_at=expected, callback_at=callback)
     return clean
 
@@ -585,4 +587,4 @@ def _same_callback(f: CallFollowup | None, data: dict) -> bool:
 
 def _validate_keep(s: Session, data: dict, call: Call, now: datetime, f: CallFollowup) -> dict:
     """Editing a form without moving its callback time: the old time may be in the past by now (still valid)."""
-    return validate(s, data, call, min(now, f.callback_at - timedelta(seconds=1)), f.expected_at)
+    return validate(s, data, call, min(now, f.callback_at - timedelta(seconds=1)), f.expected_at, now)

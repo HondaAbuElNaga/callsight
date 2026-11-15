@@ -22,17 +22,21 @@ function useFail(onExpired: () => void, setError: (m: string) => void) {
 
 type Solved = "" | "yes" | "no";
 const MAX_SOLVE_MS = 2 * 24 * 3600_000;     // a problem not solved: expected solve time within 2 days (server checks too)
+const nowIn = () => toRiyadhInput(new Date().toISOString());
+const maxIn = () => toRiyadhInput(new Date(Date.now() + MAX_SOLVE_MS).toISOString());
 interface Problem { what: string; solved: Solved; resp: string; expected: string; callback: string }
 const EMPTY: Problem = { what: "", solved: "", resp: "", expected: "", callback: "" };
 
 /** Check the fields; returns the body part or an error text. */
-function problemBody(p: Problem): { body?: Omit<FollowupIn, "no_followup">; error?: string } {
+function problemBody(p: Problem, keepExpected = ""): { body?: Omit<FollowupIn, "no_followup">; error?: string } {
   if (!p.what.trim()) return { error: "اكتب ما حدث في المكالمة" };
   if (!p.solved) return { error: "اختر: هل حُلّت المشكلة؟" };
   if (p.solved === "yes") return { body: { what_happened: p.what.trim(), solved: true } };
   if (!p.resp || !p.expected) return { error: "حدد المسؤول ووقت الحل المتوقع (خلال يومين)" };
-  if (new Date(fromRiyadhInput(p.expected)).getTime() - Date.now() > MAX_SOLVE_MS)
-    return { error: "أقصى وقت لحل المشكلة يومان" };
+  const left = (v: string) => new Date(fromRiyadhInput(v)).getTime() - Date.now();
+  if (p.expected !== keepExpected && left(p.expected) > MAX_SOLVE_MS) return { error: "أقصى وقت لحل المشكلة يومان" };
+  if (p.callback && left(p.callback) <= 0) return { error: "وقت معاودة الاتصال يجب أن يكون في المستقبل" };
+  if (p.callback && left(p.callback) > MAX_SOLVE_MS) return { error: "وقت معاودة الاتصال خلال يومين على الأكثر" };
   const [kind, uid] = p.resp.split(":");
   return { body: { what_happened: p.what.trim(), solved: false, responsible_kind: kind,
     responsible_user_id: uid ? Number(uid) : null, expected_at: fromRiyadhInput(p.expected),
@@ -61,8 +65,8 @@ function ProblemFields({ p, set, options, label }:
               <option value="other_department">قسم آخر</option>
             </select>
           </label>
-          <label>وقت الحل المتوقع (خلال يومين على الأكثر) <input type="datetime-local" value={p.expected} onChange={(e) => set({ ...p, expected: e.target.value })} /></label>
-          <label>وقت معاودة الاتصال بالعميل (اختياري) <input type="datetime-local" value={p.callback} onChange={(e) => set({ ...p, callback: e.target.value })} /></label>
+          <label>وقت الحل المتوقع (خلال يومين على الأكثر) <input type="datetime-local" value={p.expected} min={nowIn()} max={maxIn()} onChange={(e) => set({ ...p, expected: e.target.value })} /></label>
+          <label>وقت معاودة الاتصال بالعميل (اختياري) <input type="datetime-local" value={p.callback} min={nowIn()} max={maxIn()} onChange={(e) => set({ ...p, callback: e.target.value })} /></label>
         </>
       )}
     </>
@@ -126,7 +130,7 @@ export function FollowupPanel({ callId, onExpired }: { callId: number; onExpired
   };
   const saveForm = (body: FollowupIn) => run(() => api.saveFollowup(callId, body), "تم حفظ النموذج.");
   const submitForm = () => {
-    const r = problemBody(form);
+    const r = problemBody(form, toRiyadhInput(view.form?.expected_at));   // an unchanged old time stays valid
     if (r.error) { setError(r.error); return; }
     saveForm({ no_followup: false, ...r.body });
   };
@@ -137,7 +141,8 @@ export function FollowupPanel({ callId, onExpired }: { callId: number; onExpired
   };
   const ro = !view.can_edit || busy;
   const noteStep = NOTE_STEPS.includes(view.step);
-  const formOpen = view.round === 1 && view.history.length <= 1 && !noteStep;
+  // round 1 without a callback: the form stays editable (deadline rules on the server) next to the update box
+  const formOpen = view.round === 1 && view.history.length <= 1 && view.step !== "note_needed";
   const next = STEP_NEXT[view.step];
   return (
     <section className={`panel work step-${STEP_CLASS[view.step]}`}>

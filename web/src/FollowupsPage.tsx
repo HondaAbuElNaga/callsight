@@ -10,7 +10,7 @@ interface Props { me: Me; onCalls?: () => void;   // agents: no calls page (foll
   onLogout: () => void; onExpired: () => void }
 
 const STATE_OPTIONS: [string, string][] = [
-  ["action", "يحتاج عملاً"], ["forms", "نماذج مطلوبة"], ["notes", "ملاحظات بعد المعاودة"],
+  ["action", "يحتاج عملاً"], ["forms", "نماذج مطلوبة"], ["notes", "ملاحظات مطلوبة"],
   ["callbacks_today", "معاودات اليوم"], ["missed", "معاودات فائتة"], ["open", "متابعات مفتوحة"], ["solved", "حُلّت"],
   ["came_back", "عاد العميل بعد الحل"], ["", "الكل"],
 ];
@@ -135,7 +135,7 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
 
       {c && data?.settings.followup_start && data.linked && (
         <div className="counters">   {/* click = show only that kind; click again = back to "needs action" */}
-          {([["forms", c.forms, "نماذج مطلوبة", "bad"], ["notes", c.notes, "ملاحظات بعد المعاودة", "warn"],
+          {([["forms", c.forms, "نماذج مطلوبة", "bad"], ["notes", c.notes, "ملاحظات مطلوبة", "warn"],
              ["callbacks_today", c.callbacks_today, "معاودات اليوم", ""], ["missed", c.missed, "معاودات فائتة", "bad"]] as const)
             .map(([k, n, label, tone]) => (
               <button key={k} type="button" aria-pressed={state === k}
@@ -156,15 +156,18 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
           <h2>{staff ? "المكالمات المشاركة مع الموظفين" : "مكالمات أرسلها لك المشرف"}</h2>
           {shares.length === 0 ? <p className="muted">لا توجد.</p> : (
             <div className="table-wrap"><table>
-              <thead><tr><th>المكالمة</th><th>الملاحظة</th><th>من ← إلى</th><th>فتحها الموظف</th><th>الرد</th></tr></thead>
+              <thead><tr><th>المكالمة</th><th>الملاحظة</th><th>من ← إلى</th><th>{staff ? "فتحها الموظف" : "فتحتها"}</th><th>الرد</th></tr></thead>
               <tbody>
                 {shares.map((s) => (
-                  <tr key={s.id} onClick={() => onOpenCall(s.call_id)}>
+                  <tr key={s.id} onClick={() => {   // agent: one click opens the call AND shows the note
+                    if (!staff && !s.seen_at) api.shareSeen(s.id).then(loadShares).catch(fail).finally(() => onOpenCall(s.call_id));
+                    else onOpenCall(s.call_id);
+                  }}>
                     <td className="nowrap">{s.call_start ? formatDateTime(s.call_start) : "–"}</td>
-                    <td>{s.note ?? <span className="state warn">ملاحظة جديدة: اضغط لفتح المكالمة وعرضها</span>}</td>
+                    <td>{s.note ?? <span className="state warn">ملاحظة جديدة: اضغط لعرضها</span>}</td>
                     <td>{s.from} ← {s.to}</td>
-                    <td>{s.seen_at ? formatDateTime(s.seen_at) : <span className="state off">لم يفتحها</span>}</td>
-                    <td>{s.reply ?? "–"}</td>
+                    <td>{s.seen_at ? formatDateTime(s.seen_at) : <span className="state off">{staff ? "لم يفتحها" : "لم تفتحها"}</span>}</td>
+                    <td>{s.reply ? <>{s.reply} <span className="muted small">· {formatDateTime(s.reply_at!)}</span></> : "–"}</td>
                   </tr>
                 ))}
               </tbody>

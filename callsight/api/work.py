@@ -259,7 +259,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         elif state == "forms":
             items = [i for i in items if i["step"] in ("required", "overdue")]
         elif state == "notes":
-            items = [i for i in items if i["step"] == "note_needed"]
+            items = [i for i in items if i["step"] in ("note_needed", "solution_overdue")]   # = the counter
         elif state == "callbacks_today":
             items = [i for i in items if today_cb(i, today)]
         elif state == "missed":
@@ -404,6 +404,8 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             raise HTTPException(409, "this call's content was deleted")
         text_ = body.text.strip()
         sh.reply, sh.reply_at = (text_, _now()) if text_ else (None, None)
+        s.add(AdminLog(user_id=user.id, action="share_reply" if text_ else "share_reply_removed",
+                       target=f"call:{sh.call_id} share:{sh.id}", at=_now()))      # never the text itself
         s.commit()
         return share_dict(s, sh, usernames(s), user)
 
