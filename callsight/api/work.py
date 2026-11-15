@@ -9,11 +9,12 @@ from typing import Annotated
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import followups as fu
 from ..config import RIYADH
-from ..db.models import Agent, AdminLog, AppUser, Call, CallFollowup, CallFollowupNote, CallShare
+from ..db.models import Agent, AdminLog, AppUser, Call, CallFollowup, CallFollowupNote, CallPrivateNote, CallShare
 from ..ingest.service import day_bounds
 from . import auth
 from .calls import visible_call, visible_scope
@@ -47,6 +48,11 @@ class NoteIn(BaseModel):
     responsible_user_id: StrictInt | None = None
     expected_at: datetime | None = None
     callback_at: datetime | None = None
+
+
+class MyNoteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(max_length=300)
 
 
 class ShareIn(BaseModel):
@@ -145,6 +151,30 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             raise HTTPException(422, str(exc)) from None
         return form_payload(s, c, user, now)
 
+    @app.put("/api/calls/{call_id}/my-note")
+    def put_my_note(call_id: int, body: MyNoteIn, user: User, s: DB) -> dict:
+        """The user's own reminder on a call they can see; empty text deletes it. Nobody else ever reads it."""
+        c = owned_call(s, call_id, user)
+        text = body.text.strip()
+        row = s.scalars(select(CallPrivateNote).where(CallPrivateNote.call_id == c.id,
+                                                      CallPrivateNote.user_id == user.id)).first()
+        if not text:
+            if row is not None:
+                s.delete(row)
+                s.commit()
+            return {"call_id": c.id, "text": None}
+        if row is None:
+            row = CallPrivateNote(call_id=c.id, user_id=user.id, text=text, updated_at=_now())
+            s.add(row)
+        else:
+            row.text, row.updated_at = text, _now()
+        try:
+            s.commit()
+        except IntegrityError:      # two first saves at once: keep the other one
+            s.rollback()
+            raise HTTPException(409, "saved a moment ago, reload the page") from None
+        return {"call_id": c.id, "text": row.text}
+
     # ---------- follow-ups list ----------
 
     def action_due(i: dict, today: date) -> bool:
@@ -224,7 +254,13 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             items = [i for i in items if i["callback"] and i["callback"]["status"] in ("waiting", "missed")]
         elif state == "came_back":
             items = [i for i in items if i["came_back"]]
-        out["items"] = items[:LIST_LIMIT]
+        items = items[:LIST_LIMIT]
+        mine = dict(s.execute(select(CallPrivateNote.call_id, CallPrivateNote.text).where(
+            CallPrivateNote.user_id == user.id, CallPrivateNote.call_id.in_([i["call_id"] for i in items]))).all()
+        ) if items else {}
+        for i in items:
+            i["my_note"] = mine.get(i["call_id"])      # the caller's own note only (private-note spec)
+        out["items"] = items
         out["truncated"] = len(items) > LIST_LIMIT
         return out
 

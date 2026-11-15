@@ -221,6 +221,7 @@ export interface FollowupItem {
   agent_name: string; talk_seconds: number; deadline: string; form_state: FormState; form: FollowupForm | null;
   callback: Callback | null; came_back: boolean;
   step: Step; round: number; note_deadline: string | null; history: HistoryEntry[];
+  my_note?: string | null;      // the viewer's own private reminder (only they see it)
 }
 // follow-up stages (spec 2026-11-15-followup-stages)
 export type Step = "required" | "overdue" | "no_followup" | "solved_first" | "waiting_callback" | "callback_missed"
@@ -363,6 +364,7 @@ export const api = {
   logout: () => fetch("/api/logout", { method: "POST", credentials: "same-origin" }),
   followup: (id: number) => get<FollowupView>(`/api/calls/${id}/followup`),
   saveFollowup: (id: number, body: FollowupIn) => send<FollowupView>("PUT", `/api/calls/${id}/followup`, body),
+  myNote: (id: number, text: string) => send<{ call_id: number; text: string | null }>("PUT", `/api/calls/${id}/my-note`, { text }),
   addNote: (id: number, body: NoteIn) => send<FollowupView>("POST", `/api/calls/${id}/followup/notes`, body),
   followups: (p: { from?: string; to?: string; agent?: string; state?: string }) => {
     const q = new URLSearchParams();

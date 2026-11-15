@@ -439,3 +439,38 @@ def test_form_is_frozen_once_a_note_exists_and_wrong_round_is_409(env):
     assert r.status_code == 200 and r.json()["step"] == "waiting_callback" and r.json()["round"] == 2
     login(client, "boss")
     assert client.put(f"/api/calls/{ids['own']}/followup", json={"no_followup": True}).status_code == 409
+
+
+# ---------- private note per call (spec 2026-11-15-private-note) ----------
+
+def test_private_note_only_the_writer_sees_it(env):
+    client, Session, ids, *_ = env
+    switch_on(client)
+    login(client, "ali")
+    r = client.put(f"/api/calls/{ids['own']}/my-note", json={"text": " اتصل بعد الظهر "})
+    assert r.json()["text"] == "اتصل بعد الظهر"
+    assert client.put(f"/api/calls/{ids['own']}/my-note", json={"text": "تغيير"}).status_code == 200
+    item = client.get("/api/followups").json()["items"][0]
+    assert item["call_id"] == ids["own"] and item["my_note"] == "تغيير"
+    assert client.put(f"/api/calls/{ids['other']}/my-note", json={"text": "x"}).status_code == 404   # not his call
+    assert client.put(f"/api/calls/{ids['own']}/my-note", json={"text": "x" * 301}).status_code == 422
+    login(client, "boss")
+    seen = {i["call_id"]: i["my_note"] for i in client.get("/api/followups").json()["items"]}
+    assert seen[ids["own"]] is None                                   # the supervisor never sees it
+    login(client, "sara")
+    assert client.put(f"/api/calls/{ids['own']}/my-note", json={"text": "x"}).status_code == 404
+    login(client, "ali")
+    assert client.put(f"/api/calls/{ids['own']}/my-note", json={"text": "  "}).json()["text"] is None
+    assert client.get("/api/followups").json()["items"][0]["my_note"] is None
+
+
+def test_private_note_erased_with_the_content(env):
+    from callsight.db.models import CallPrivateNote
+    client, Session, ids, *_ = env
+    login(client, "ali")
+    client.put(f"/api/calls/{ids['own']}/my-note", json={"text": "تذكير"})
+    login(client, "root")
+    r = client.post(f"/api/calls/{ids['own']}/delete-content", json={"reason": "طلب العميل", "confirm": ids["own"]})
+    assert r.status_code == 200, r.text
+    with Session() as s:
+        assert s.query(CallPrivateNote).count() == 0

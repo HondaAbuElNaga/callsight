@@ -482,6 +482,17 @@ class CallFollowupNote(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class CallPrivateNote(Base):
+    """A user's own reminder on a call (private-note spec): only the writer ever sees it. Erased with the content."""
+    __tablename__ = "call_private_note"
+    __table_args__ = (UniqueConstraint("call_id", "user_id", name="uq_call_private_note"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"), index=True)
+    text: Mapped[str] = mapped_column(String(300))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class CallShare(Base):
     """A supervisor sends one call with a note to one agent (one-way; the agent marks it seen)."""
     __tablename__ = "call_share"

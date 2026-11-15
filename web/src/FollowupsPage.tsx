@@ -45,6 +45,36 @@ function Number_({ n }: { n: string | null }) {
   );
 }
 
+/** "ملاحظتي": the viewer's own reminder on a call, edited in place; nobody else sees it (private-note spec). */
+function MyNote({ callId, text, onSaved, onFail }:
+  { callId: number; text: string | null | undefined; onSaved: () => void; onFail: (e: unknown) => void }) {
+  const [edit, setEdit] = useState(false);
+  const [value, setValue] = useState(text ?? "");
+  const [busy, setBusy] = useState(false);
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();     // never opens the call
+  if (!edit)
+    return (
+      <span onClick={stop}>
+        {text ? <span className="my-note">{text}</span> : null}
+        <button type="button" className="link small" onClick={() => { setValue(text ?? ""); setEdit(true); }}>
+          {text ? "تعديل" : "+ ملاحظة"}</button>
+      </span>
+    );
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await api.myNote(callId, value); setEdit(false); onSaved(); } catch (e) { onFail(e); } finally { setBusy(false); }
+  };
+  return (
+    <span className="my-note-edit" onClick={stop}>
+      <textarea value={value} maxLength={300} rows={2} autoFocus onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Escape") setEdit(false); }} />
+      <button type="button" className="primary small" disabled={busy} onClick={save}>حفظ</button>
+      <button type="button" className="link small" onClick={() => setEdit(false)}>إلغاء</button>
+    </span>
+  );
+}
+
 export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
   const staff = me.role === "admin" || me.role === "supervisor";
   const [from, setFrom] = useState(weekAgo);
@@ -159,7 +189,7 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
         <div className="table-wrap">
           <table>
             <thead><tr>
-              <th>الوقت</th><th>رقم العميل</th>{staff && <th>الموظف</th>}<th>المرحلة</th><th>معاودة الاتصال</th><th>آخر موعد</th>
+              <th>الوقت</th><th>رقم العميل</th>{staff && <th>الموظف</th>}<th>المرحلة</th><th>معاودة الاتصال</th><th>آخر موعد</th><th>ملاحظتي</th>
             </tr></thead>
             <tbody>
               {data?.items.map((i) => (
@@ -181,10 +211,11 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
                     {i.step === "note_needed" && i.note_deadline ? formatDateTime(i.note_deadline)
                       : i.step === "required" || i.step === "overdue" ? formatDateTime(i.deadline) : "–"}
                   </td>
+                  <td><MyNote callId={i.call_id} text={i.my_note} onSaved={() => setTick((n) => n + 1)} onFail={fail} /></td>
                 </tr>
               ))}
               {data && data.items.length === 0 && (
-                <tr><td colSpan={staff ? 6 : 5} className="center muted">
+                <tr><td colSpan={staff ? 7 : 6} className="center muted">
                   {state === "action" ? "لا يوجد عمل مطلوب الآن" : "لا يوجد شيء لهذا الاختيار"}</td></tr>
               )}
             </tbody>

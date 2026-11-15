@@ -28,7 +28,7 @@ AGENT_ALLOWED = {
     ("GET", "/api/calls/{call_id}/transcript"), ("GET", "/api/calls/{call_id}/transcript.txt"),
     # agent-supervisor spec: own follow-up forms, calls shared with them, the summary of own/shared calls
     ("GET", "/api/calls/{call_id}/followup"), ("PUT", "/api/calls/{call_id}/followup"), ("GET", "/api/followups"),
-    ("POST", "/api/calls/{call_id}/followup/notes"),
+    ("POST", "/api/calls/{call_id}/followup/notes"), ("PUT", "/api/calls/{call_id}/my-note"),
     ("GET", "/api/shares"), ("GET", "/api/calls/{call_id}/shares"), ("POST", "/api/shares/{share_id}/seen"),
     ("GET", "/api/calls/{call_id}/summary"),
 }

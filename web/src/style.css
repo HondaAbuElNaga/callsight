@@ -283,3 +283,8 @@ tr.row-bad td { background: var(--bad-bg); }
 .history { list-style: none; padding: 0; margin: 8px 0; border-inline-start: 2px solid var(--line); }
 .history li { padding: 4px 10px 8px; }
 .history li p { margin: 2px 0; }
+
+/* private-note spec: "ملاحظتي" column */
+.my-note { display: inline-block; max-width: 220px; white-space: pre-wrap; margin-inline-end: 6px; }
+.my-note-edit { display: flex; flex-direction: column; gap: 4px; min-width: 200px; }
+.my-note-edit textarea { font: inherit; }
