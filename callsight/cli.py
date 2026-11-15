@@ -40,6 +40,8 @@
   blindset status                  blind set size and rating progress
   pbx-unblock            allow PBX logins again after a refused login / token limit set pbx:auth_blocked
                          (fix the cause first: Client ID/Secret, PBX API IP allow-list, other programs' logins)
+  gpu-work [--queue]     AWS: how many calls still wait for a transcript or an analysis (one number; 0 = the
+                         GPU server may power off). --queue also queues them now (no wait for the 5-min jobs)
   live                   live call board service (one PBX WebSocket). Does nothing unless LIVE_ENABLED=true;
                          in Docker: docker compose --profile live up -d live   (office LAN only)
 """
@@ -106,10 +108,13 @@ def main(argv: list[str] | None = None) -> int:
     bs = sub.add_parser("blindset"); bs.add_argument("action", choices=("create", "status"))
     bs.add_argument("--n", type=int, default=100); bs.add_argument("--min-pool", type=int, default=100)
     sub.add_parser("pbx-unblock")
+    gw = sub.add_parser("gpu-work"); gw.add_argument("--queue", action="store_true")
     sub.add_parser("live")
     a = p.parse_args(argv)
     if a.cmd == "pbx-unblock":
         return _pbx_unblock()
+    if a.cmd == "gpu-work":
+        return _gpu_work(a)
     if a.cmd == "live":
         from .live.service import main as live_main
         return live_main()
@@ -269,6 +274,28 @@ def _analyze(a: argparse.Namespace, p: argparse.ArgumentParser) -> int:
               file=sys.stderr)
         return 1
     print(f"{len(ids)} call(s) sent to the nlp queue for {cfg.model} ({pv})")
+    return 0
+
+
+def _gpu_work(a: argparse.Namespace) -> int:
+    """DB (+ Redis with --queue). Prints ONE number on stdout; details go to stderr. Any error = exit code 1
+    and no number, so the GPU server never powers off because of a failed check."""
+    from . import gpuwork
+    from .analysis.settings import LlmConfig
+    from .asr.queueing import AsrConfig
+    try:
+        cfg, nlp = AsrConfig.from_env(), LlmConfig.from_env().enabled
+        with wiring.session_factory()() as s:
+            if a.queue:
+                from . import jobs
+                gpuwork.queue_now(s, cfg, nlp, jobs.queue_transcripts, jobs.queue_analyses)
+            work = gpuwork.pending(s, cfg, nlp)
+    except Exception as exc:                              # noqa: BLE001  messages may hold the DB address
+        print(f"ERROR: work left unknown ({type(exc).__name__})", file=sys.stderr)
+        return 1
+    print(f"transcripts {work.transcripts}, analyses {work.analyses}"
+          + ("" if nlp else " (NLP_ENABLED is off: analyses are not counted)"), file=sys.stderr)
+    print(work.total)
     return 0
 
 

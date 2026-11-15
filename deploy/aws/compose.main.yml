@@ -1,0 +1,64 @@
+# AWS main server (always on): override of the normal docker-compose.yml (spec 2026-11-15-aws-deploy).
+# Run from the repository folder (/opt/callsight):
+#   docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml up -d --build
+#   docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml --profile live up -d live     (after the test)
+# The GPU services (asr-worker, ollama, nlp-worker) are NOT started here: they run on the GPU server
+# (deploy/aws/compose.gpu.yml). The PC setup does not use this file and is unchanged.
+#
+# Needs in .env (see deploy/aws/env.main.example): MAIN_IP, REDIS_PASSWORD, SITE_NAME.
+# Postgres and Redis are published on the server's network address so the GPU server can reach them. The AWS
+# security group is what keeps everyone else out (only the GPU server may open 5432 / 6379 / 2049; from the
+# internet only 80 and 443 are open). Do not open those ports in the security group.
+
+x-redis-url: &redis-url redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+
+services:
+  postgres:
+    ports:
+      - "${MAIN_IP:?set MAIN_IP in .env}:5432:5432"       # for the GPU server (same private network)
+
+  redis:
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}     # for the health check's redis-cli
+    ports:
+      - "${MAIN_IP:?set MAIN_IP in .env}:6379:6379"       # for the GPU server
+
+  worker:
+    environment:
+      REDIS_URL: *redis-url
+
+  beat:
+    environment:
+      REDIS_URL: *redis-url
+
+  api:
+    environment:
+      REDIS_URL: *redis-url
+      COOKIE_SECURE: "true"                               # login cookie only over HTTPS
+      LIVE_ORIGINS: https://${SITE_NAME:?set SITE_NAME in .env}
+
+  live:
+    environment:
+      REDIS_URL: *redis-url
+
+  # HTTPS in front of the web page: ports 80/443, automatic Let's Encrypt certificate for SITE_NAME, HTTP is
+  # redirected to HTTPS. No access log (addresses would hold searched phone numbers).
+  caddy:
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    environment:
+      SITE_NAME: ${SITE_NAME:?set SITE_NAME in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/aws/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data                                  # certificate + its private key
+      - caddy-config:/config
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

@@ -4,8 +4,9 @@
 **CallSight** (working name) helps a **small customer-service and after-sales team**
 **see the quality of every phone call** by **pulling calls from the office IP-PBX,
 transcribing them in Saudi Arabic, scoring customer satisfaction 1–10 with a local
-fine-tuned model, and producing weekly/monthly KPI reports**. Everything runs on a
-local server; no audio or text leaves the company.
+fine-tuned model, and producing weekly/monthly KPI reports**. Everything runs on
+servers that only the company controls (since 2026-11-15: AWS, region Frankfurt; before: one PC in the office);
+no audio or text is sent to an outside AI service.
 
 ## Users
 | User | Pain today | What they get |

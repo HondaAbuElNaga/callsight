@@ -1,0 +1,121 @@
+# AWS GPU server (g4dn.xlarge, woken every 30 minutes): the three GPU services only (spec 2026-11-15-aws-deploy).
+# A file of its own, not an override: no postgres, redis, api or PBX code path exists on this server.
+# Started and stopped by deploy/aws/gpu_run.py (systemd unit callsight-gpu). By hand, from /opt/callsight:
+#   docker compose -f deploy/aws/compose.gpu.yml --env-file .env up -d --build
+#
+# .env on this server (deploy/aws/env.gpu.example) holds NO PBX secret, NO APP_SECRET and no AWS key: only the
+# database + redis passwords and the transcription/analysis settings. The server has no public address; it reaches
+# the main server (database, redis, recordings over NFS) and nothing else once setup is finished.
+# The service definitions mirror docker-compose.yml: keep both in step when one changes.
+name: callsight-gpu
+
+x-env: &main-links
+  DATABASE_URL: postgresql+psycopg://callsight:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@${MAIN_IP:?set MAIN_IP in .env}:5432/callsight
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@${MAIN_IP:?set MAIN_IP in .env}:6379/0
+  AUDIO_DIR: /data/audio
+  TEAMS_FILE: /app/config/teams.yaml
+  ASR_MODEL: ${ASR_MODEL:-whisper-large-v3}
+  ASR_START_DATE: ${ASR_START_DATE:-}
+  ASR_MIN_TALK: ${ASR_MIN_TALK:-5}
+  ASR_MAX_SECONDS: ${ASR_MAX_SECONDS:-3600}
+  ASR_BATCH: ${ASR_BATCH:-50}
+  NLP_ENABLED: ${NLP_ENABLED:-false}
+  LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b}
+  LLM_NUM_CTX: ${LLM_NUM_CTX:-8192}
+  OLLAMA_URL: http://ollama:11434
+
+x-gpu: &gpu
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: 1
+          capabilities: [gpu]
+
+services:
+  asr-worker:
+    image: callsight-gpu-asr
+    build:
+      context: ../..
+      dockerfile: docker/asr-worker/Dockerfile
+    environment:
+      <<: *main-links
+      ASR_IDLE_UNLOAD_S: ${ASR_IDLE_UNLOAD_S:-300}
+      HF_HOME: /models
+      HF_HUB_OFFLINE: "1"                  # models come from the volume filled once by model-download
+    volumes:
+      - audio:/data/audio:ro
+      - config:/app/config:ro
+      - hf-models:/models:ro
+    restart: unless-stopped
+    deploy: *gpu
+
+  ollama:
+    image: ollama/ollama:0.40.13@sha256:b2f0122c476bc9fe7ce679d8bb4bd555351e25e2554eefb156f61cb0a89cf429
+    environment:
+      OLLAMA_KEEP_ALIVE: "0"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_DEBUG: "0"                    # off: Ollama then does not log prompts
+      OLLAMA_NO_CLOUD: "1"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy: *gpu
+
+  # Also answers "is any work left?" for gpu_run.py:  ... exec -T nlp-worker python -m callsight gpu-work --queue
+  nlp-worker:
+    build: ../..
+    command: celery -A callsight.analysis.tasks worker -Q nlp --concurrency=1 --prefetch-multiplier=1 -n nlp@%h -l info
+    environment: *main-links
+    volumes:
+      - audio:/data/audio:ro
+      - config:/app/config:ro
+    depends_on:
+      ollama: { condition: service_started }
+    restart: unless-stopped
+
+  # ---- once, during setup (needs internet; no call data mounted) ----
+  #   docker compose -f deploy/aws/compose.gpu.yml --env-file .env --profile setup run --rm model-download \
+  #       openai/whisper-large-v3 --revision <revision in callsight/asr/models.py>
+  model-download:
+    profiles: ["setup"]
+    image: callsight-gpu-asr
+    entrypoint: ["hf", "download"]
+    environment:
+      HF_HOME: /models
+      HF_HUB_OFFLINE: "0"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    volumes:
+      - hf-models:/models
+
+  #   docker compose -f deploy/aws/compose.gpu.yml --env-file .env --profile setup run --rm ollama-pull qwen2.5:7b
+  ollama-pull:
+    profiles: ["setup"]
+    image: ollama/ollama:0.40.13@sha256:b2f0122c476bc9fe7ce679d8bb4bd555351e25e2554eefb156f61cb0a89cf429
+    entrypoint: ["/bin/sh", "-c", "ollama serve >/dev/null 2>&1 & sleep 3 && ollama pull \"$$0\" && ollama list"]
+    command: ["qwen2.5:7b"]
+    volumes:
+      - ollama-models:/root/.ollama
+
+volumes:
+  hf-models:
+  ollama-models:
+  # Recordings and config/ live on the main server; read-only here, over NFS inside the private network.
+  audio:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=${MAIN_IP:?set MAIN_IP in .env},ro,nfsvers=4.2,hard,timeo=600,retrans=3"
+      device: ":/srv/callsight/audio"
+  config:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=${MAIN_IP:?set MAIN_IP in .env},ro,nfsvers=4.2,hard,timeo=600,retrans=3"
+      device: ":/opt/callsight/config"

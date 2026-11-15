@@ -1,0 +1,474 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  CallSight on AWS (spec 2026-11-15-aws-deploy): one small always-on server (calls, database, website) and one GPU
+  server that a schedule wakes every 30 minutes and that powers itself off when no call is waiting.
+  Region: Europe (Frankfurt), eu-central-1. Upload in CloudFormation, Create stack. See docs/aws.md.
+
+# The two image ids are fixed values on purpose (not "latest" look-ups): a look-up is repeated at every stack
+# update, and a newer image would make CloudFormation REPLACE the server, with everything on its disk.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: "1. Always needed" }
+        Parameters: [SshPublicKey, SshFromIp, MainImageId, BudgetEmail]
+      - Label: { default: "2. GPU server (second step)" }
+        Parameters: [Gpu, GpuImageId, GpuZone, GpuSchedule]
+      - Label: { default: "3. Leave as they are" }
+        Parameters: [MainInstanceType, GpuInstanceType]
+    ParameterLabels:
+      SshPublicKey: { default: "Setup key (public part)" }
+      SshFromIp: { default: "Setup allowed from this internet address" }
+      MainImageId: { default: "System image of the main server" }
+      BudgetEmail: { default: "Email for the cost alarm" }
+      Gpu: { default: "Create the GPU server?" }
+      GpuImageId: { default: "System image of the GPU server" }
+      GpuZone: { default: "Zone of the GPU server" }
+      GpuSchedule: { default: "Wake the GPU server every 30 minutes?" }
+
+Parameters:
+  SshPublicKey:
+    Type: String
+    Description: One line starting with ssh-ed25519 (made on the setup PC). The private part never leaves that PC.
+    AllowedPattern: "^ssh-(ed25519|rsa) [A-Za-z0-9+/=]+( .*)?$"
+    ConstraintDescription: must be one line that starts with ssh-ed25519 or ssh-rsa
+  SshFromIp:
+    Type: String
+    Default: ""
+    Description: >-
+      Internet address of the setup PC followed by /32, for example 203.0.113.7/32. Empty = setup access (port 22)
+      closed from the internet.
+    AllowedPattern: "^$|^(\\d{1,3}\\.){3}\\d{1,3}/32$"
+    ConstraintDescription: must be empty or an address like 203.0.113.7/32
+  MainImageId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-04bbcae8eccec8bce      # eu-central-1, looked up by the user in CloudShell on 2026-11-15
+    Description: Ubuntu Server 24.04 LTS (amd64) image id in this region, starts with ami-. Do not change it later.
+  BudgetEmail:
+    Type: String
+    Default: ""
+    Description: AWS sends an email here when the month's bill passes 120 USD, or is forecast to pass 150 USD. Empty = no alarm.
+    AllowedPattern: "^$|^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    ConstraintDescription: must be empty or an email address
+  Gpu:
+    Type: String
+    Default: "no"
+    AllowedValues: ["no", "yes"]
+    Description: >-
+      "no" for the first step (main server only). "yes" after AWS approved the quota "Running On-Demand G and VT
+      instances" (4). The GPU server costs money from the minute it is created.
+  GpuImageId:
+    Type: String
+    Default: ami-0b7e7967a14fff93a      # eu-central-1, looked up by the user in CloudShell on 2026-11-15
+    Description: >-
+      "Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 24.04)" image id in this region, starts with ami-.
+      Only used when the GPU server is created. Do not change it later.
+    AllowedPattern: "^$|^ami-[0-9a-f]{8,17}$"
+    ConstraintDescription: must be empty or start with ami-
+  GpuZone:
+    Type: String
+    Default: "1"
+    AllowedValues: ["1", "2", "3"]
+    Description: >-
+      Which of the region's three zones the GPU server lives in (1 = same zone as the main server). Only change it
+      when AWS answers that the GPU type is not offered in the zone.
+  GpuSchedule:
+    Type: String
+    Default: "off"
+    AllowedValues: ["off", "on"]
+    Description: >-
+      "off" while the GPU server is being set up. "on" = AWS starts it at :00 and :30, from 08:00 to 23:30
+      Riyadh time, every day.
+  MainInstanceType:
+    Type: String
+    Default: t3.medium
+  GpuInstanceType:
+    Type: String
+    Default: g4dn.xlarge
+
+Rules:
+  GpuNeedsImage:
+    RuleCondition: !Equals [!Ref Gpu, "yes"]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref GpuImageId, ""]]
+        AssertDescription: Fill in "System image of the GPU server" when the GPU server is created.
+
+Conditions:
+  HasGpu: !Equals [!Ref Gpu, "yes"]
+  HasSsh: !Not [!Equals [!Ref SshFromIp, ""]]
+  HasBudgetEmail: !Not [!Equals [!Ref BudgetEmail, ""]]
+  ScheduleOn: !Equals [!Ref GpuSchedule, "on"]
+  GpuZone1: !Equals [!Ref GpuZone, "1"]
+  GpuZone2: !Equals [!Ref GpuZone, "2"]
+
+Resources:
+  # ---------- network: one private network, the main server in a public part, the GPU server in a private part ----------
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.20.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: callsight }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{ Key: Name, Value: callsight }]
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  MainSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags: [{ Key: Name, Value: callsight-main }]
+
+  MainRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: callsight-main }]
+
+  MainDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref MainRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  MainSubnetRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MainSubnet
+      RouteTableId: !Ref MainRouteTable
+
+  # Three private parts (one per zone) so the GPU server can live in whichever zone offers its type.
+  GpuSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.11.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags: [{ Key: Name, Value: callsight-gpu-1 }]
+
+  GpuSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.12.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags: [{ Key: Name, Value: callsight-gpu-2 }]
+
+  GpuSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.13.0/24
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags: [{ Key: Name, Value: callsight-gpu-3 }]
+
+  # The private parts have no way to the internet of their own. Their only way out is THROUGH the main server,
+  # and the main server forwards nothing unless deploy/aws/setup-internet.sh was switched on by hand (used once,
+  # to download images and models during setup).
+  GpuRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: callsight-gpu }]
+
+  GpuDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref GpuRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      InstanceId: !Ref MainServer
+
+  GpuSubnet1Routes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref GpuSubnet1
+      RouteTableId: !Ref GpuRouteTable
+
+  GpuSubnet2Routes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref GpuSubnet2
+      RouteTableId: !Ref GpuRouteTable
+
+  GpuSubnet3Routes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref GpuSubnet3
+      RouteTableId: !Ref GpuRouteTable
+
+  # ---------- who may talk to whom ----------
+  MainSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: CallSight main server - website from anywhere, everything else only from the GPU server
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: "website (redirects to HTTPS)" }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: "website (HTTPS)" }
+      Tags: [{ Key: Name, Value: callsight-main }]
+
+  MainSshIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasSsh
+    Properties:
+      GroupId: !Ref MainSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref SshFromIp
+      Description: setup access from one address
+
+  MainFromGpuPostgres:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref MainSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref GpuSecurityGroup
+      Description: database, GPU server only
+
+  MainFromGpuRedis:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref MainSecurityGroup
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      SourceSecurityGroupId: !Ref GpuSecurityGroup
+      Description: job queue, GPU server only
+
+  MainFromGpuNfs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref MainSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref GpuSecurityGroup
+      Description: recordings read-only (NFS), GPU server only
+
+  GpuSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: CallSight GPU server - no way in from the internet
+      VpcId: !Ref Vpc
+      # Listing outbound rules removes the default "allow everything". 80/443 only lead to the main server's
+      # forwarding switch (see GpuRouteTable); with the switch off they lead nowhere.
+      SecurityGroupEgress:
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: "downloads during setup, through the main server" }
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: "downloads during setup, through the main server" }
+      Tags: [{ Key: Name, Value: callsight-gpu }]
+
+  GpuSshFromMain:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref GpuSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref MainSecurityGroup
+      Description: setup access, only through the main server
+
+  GpuToMainPostgres:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref GpuSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      DestinationSecurityGroupId: !Ref MainSecurityGroup
+      Description: database
+
+  GpuToMainRedis:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref GpuSecurityGroup
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      DestinationSecurityGroupId: !Ref MainSecurityGroup
+      Description: job queue
+
+  GpuToMainNfs:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref GpuSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      DestinationSecurityGroupId: !Ref MainSecurityGroup
+      Description: recordings read-only (NFS)
+
+  # ---------- setup key ----------
+  SetupKey:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: !Sub "${AWS::StackName}-setup"
+      PublicKeyMaterial: !Ref SshPublicKey
+
+  # ---------- main server (always on) ----------
+  MainServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref MainImageId
+      InstanceType: !Ref MainInstanceType
+      KeyName: !Ref SetupKey
+      SubnetId: !Ref MainSubnet
+      PrivateIpAddress: 10.20.1.10
+      SecurityGroupIds: [!Ref MainSecurityGroup]
+      SourceDestCheck: false            # may pass on the GPU server's downloads during setup (see GpuRouteTable)
+      DisableApiTermination: true       # cannot be deleted by a wrong click; see docs/aws.md "Remove everything"
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeSize: 100, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true }
+      Tags:
+        - { Key: Name, Value: callsight-main }
+        - { Key: callsight-backup, Value: daily }
+
+  ElasticIp:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags: [{ Key: Name, Value: callsight-main }]
+
+  ElasticIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt ElasticIp.AllocationId
+      InstanceId: !Ref MainServer
+
+  # ---------- daily copies of the main server's disk, kept 7 days ----------
+  SnapshotRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: dlm.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole"
+
+  DailySnapshots:
+    Type: AWS::DLM::LifecyclePolicy
+    Properties:
+      Description: CallSight main server daily disk snapshot - 7 kept
+      State: ENABLED
+      ExecutionRoleArn: !GetAtt SnapshotRole.Arn
+      PolicyDetails:
+        PolicyType: EBS_SNAPSHOT_MANAGEMENT
+        ResourceTypes: [INSTANCE]
+        TargetTags:
+          - { Key: callsight-backup, Value: daily }
+        Schedules:
+          - Name: daily-0330-riyadh
+            CopyTags: true
+            CreateRule: { Interval: 24, IntervalUnit: HOURS, Times: ["00:30"] }   # UTC = 03:30 Riyadh
+            RetainRule: { Count: 7 }
+
+  # ---------- cost alarm (whole AWS account) ----------
+  CostAlarm:
+    Type: AWS::Budgets::Budget
+    Condition: HasBudgetEmail
+    Properties:
+      Budget:
+        BudgetName: !Sub "${AWS::StackName}-monthly"
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: { Amount: 150, Unit: USD }
+      NotificationsWithSubscribers:
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref BudgetEmail }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref BudgetEmail }]
+
+  # ---------- GPU server (only with Gpu = yes) ----------
+  GpuServer:
+    Type: AWS::EC2::Instance
+    Condition: HasGpu
+    Properties:
+      ImageId: !Ref GpuImageId
+      InstanceType: !Ref GpuInstanceType
+      KeyName: !Ref SetupKey
+      SubnetId: !If [GpuZone1, !Ref GpuSubnet1, !If [GpuZone2, !Ref GpuSubnet2, !Ref GpuSubnet3]]
+      SecurityGroupIds: [!Ref GpuSecurityGroup]
+      InstanceInitiatedShutdownBehavior: stop     # its own "power off" = stopped (disk kept), never deleted
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeSize: 100, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true }
+      Tags:
+        - { Key: Name, Value: callsight-gpu }
+
+  # The schedule may do one thing only: start this one server. No AWS key is stored on any server for it.
+  WakeRole:
+    Type: AWS::IAM::Role
+    Condition: HasGpu
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" }
+      Policies:
+        - PolicyName: start-the-gpu-server
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ec2:StartInstances
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${GpuServer}"
+
+  WakeSchedule:
+    Type: AWS::Scheduler::Schedule
+    Condition: HasGpu
+    Properties:
+      Name: !Sub "${AWS::StackName}-gpu-wake"
+      Description: Start the CallSight GPU server at :00 and :30, 08:00-23:30 Riyadh time. It powers itself off.
+      ScheduleExpression: "cron(0/30 8-23 * * ? *)"
+      ScheduleExpressionTimezone: Asia/Riyadh
+      FlexibleTimeWindow: { Mode: "OFF" }
+      State: !If [ScheduleOn, ENABLED, DISABLED]
+      Target:
+        Arn: arn:aws:scheduler:::aws-sdk:ec2:startInstances
+        RoleArn: !GetAtt WakeRole.Arn
+        Input: !Sub '{"InstanceIds":["${GpuServer}"]}'
+        # e.g. the server is still powering off from the last run, or AWS has no free GPU server right now
+        RetryPolicy: { MaximumRetryAttempts: 5, MaximumEventAgeInSeconds: 900 }
+
+Outputs:
+  FixedAddress:
+    Description: The server's fixed internet address - for the website's DNS record and for the PBX permit list
+    Value: !Ref ElasticIp
+  MainPrivateAddress:
+    Description: MAIN_IP in both .env files
+    Value: !GetAtt MainServer.PrivateIp
+  GpuPrivateAddress:
+    Condition: HasGpu
+    Description: Reached only through the main server
+    Value: !GetAtt GpuServer.PrivateIp
+  GpuServerId:
+    Condition: HasGpu
+    Value: !Ref GpuServer

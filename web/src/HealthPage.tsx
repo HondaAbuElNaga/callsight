@@ -38,6 +38,10 @@ function describe(i: HealthItem): [string, string] {
     case "workers":
       return ["العمّال (Celery)", `${v.answering} يستجيب`];
     case "gpu":
+      if (name === "wait")
+        return ["أقدم مكالمة تنتظر التفريغ / التحليل", i.state === "off" ? "التفريغ التلقائي متوقف" :
+          !v.waiting ? "لا توجد مكالمات تنتظر" :
+          `${v.waiting} مكالمة تنتظر · الأقدم منذ ${v.oldest_min} دقيقة${i.state === "warn" ? " · أكثر من 90 دقيقة: خادم كرت الشاشة لم يعمل" : ""}`];
       return ["كرت الشاشة (عامل التفريغ)", v.running ? `${v.used_mb} / ${v.total_mb} MB مستخدم` : "عامل التفريغ لا يعمل"];
     case "backup":
       if (name === "age")

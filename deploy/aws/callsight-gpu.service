@@ -1,0 +1,19 @@
+# GPU server only. Install:
+#   sudo cp /opt/callsight/deploy/aws/callsight-gpu.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable callsight-gpu
+# Runs once per boot: starts the containers, works until nothing is left, powers the server off.
+# To keep the server on for setup/repairs:  sudo touch /etc/callsight/stay-on   (remove the file afterwards)
+[Unit]
+Description=CallSight GPU work: transcribe + analyse waiting calls, then power off
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/callsight/deploy/aws/gpu_run.py
+Restart=no
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+# Website over HTTPS (AWS main server). SITE_NAME = the web address without https://, e.g. calls.example.com
+# Its DNS record (type A) must point to the server's fixed address before the first start, or no certificate
+# can be issued.
+{$SITE_NAME} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	reverse_proxy api:8080
+}
