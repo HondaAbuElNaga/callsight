@@ -105,7 +105,7 @@ export interface KpiAgent {
   repeats: number;
 }
 
-export interface KpiPeriod { kind: "week" | "month"; start: string; end: string; partial: boolean }
+export interface KpiPeriod { kind: "week" | "month" | "range"; start: string; end: string; partial: boolean }
 
 export interface KpiReport {
   period: KpiPeriod;
@@ -121,7 +121,7 @@ export interface KpiReport {
   followup?: FollowupKpi;
 }
 
-export interface KpiFilters { period: "week" | "month"; start: string; team: string; agent: string }
+export interface KpiFilters { from: string; to: string; team: string; agent: string }   // from/to: YYYY-MM-DD, both days included
 
 export interface ArchivedReport {
   id: number;
@@ -289,7 +289,7 @@ async function get<T>(url: string): Promise<T> {
 }
 
 function kpiQuery(f: KpiFilters): string {
-  const p = new URLSearchParams({ period: f.period, start: f.start });
+  const p = new URLSearchParams({ date_from: f.from, date_to: f.to });
   if (f.team) p.set("team", f.team);
   if (f.agent) p.set("agent", f.agent);
   return p.toString();

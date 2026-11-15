@@ -89,7 +89,26 @@ def test_kpi_team_and_agent_filters(env):
     assert m["summary"]["calls"] == 17 and m["previous_period"]["start"] == "2026-10-01"
 
 
+def test_kpi_date_range_same_numbers_as_week_and_previous_same_length(env):
+    client, _, _ = env
+    login(client)
+    r = client.get("/api/kpi", params={"date_from": "2026-11-01", "date_to": "2026-11-07"}).json()
+    w = client.get("/api/kpi", params=WEEK).json()
+    assert r["period"] == {"kind": "range", "start": "2026-11-01", "end": "2026-11-07", "partial": False}
+    assert r["previous_period"]["start"] == "2026-10-25" and r["previous_period"]["end"] == "2026-10-31"
+    assert r["summary"] == w["summary"] and r["agents"] == w["agents"] and r["previous"] == w["previous"]
+    one = client.get("/api/kpi", params={"date_from": "2026-11-03", "date_to": "2026-11-03"}).json()
+    assert len(one["days"]) == 1 and one["previous_period"]["start"] == one["previous_period"]["end"] == "2026-11-02"
+    pdf = client.get("/api/reports/pdf", params={"date_from": "2026-11-01", "date_to": "2026-11-07"})
+    if pdf.status_code != 503:   # WeasyPrint only inside the Docker image
+        assert pdf.status_code == 200
+        assert "callsight-2026-11-01-to-2026-11-07-all.pdf" in pdf.headers["content-disposition"]
+
+
 @pytest.mark.parametrize("params", [
+    {"date_from": "2026-11-07", "date_to": "2026-11-01"}, {"date_from": "2026-11-01"}, {"date_to": "2026-11-01"},
+    {"date_from": "2025-01-01", "date_to": "2026-11-01"}, {"date_from": "1900-01-01", "date_to": "2026-11-01"},
+    {"date_from": "2026-11-01", "date_to": "2026-13-01"},
     {"period": "year"}, {"start": "2026-13-01"}, {"start": "1900-01-01"}, {"team": "sales"},
     {"team": "Robert'); drop"}, {"agent": "114"}, {"agent": "302"}, {"agent": "1; drop table call"},
     {"team": "after_sales", "agent": "104"},

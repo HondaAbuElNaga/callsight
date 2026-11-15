@@ -13,11 +13,18 @@ const OK = "#1e7a46";
 const BAD = "#b3261e";
 const NA = "غير متاح";
 
-// Move the chosen day one week / one month back or forward (dates as YYYY-MM-DD, no time zone involved).
-function shift(f: KpiFilters, step: number): string {
-  const [y, m, d] = f.start.split("-").map(Number);
-  const dt = f.period === "week" ? new Date(Date.UTC(y, m - 1, d + 7 * step)) : new Date(Date.UTC(y, m - 1 + step, 1));
+const MAX_DAYS = 366;   // same limit as the server
+
+// Sunday of the week that contains `day` (YYYY-MM-DD, no time zone involved): the default "from" date.
+function weekStart(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - dt.getUTCDay());
   return dt.toISOString().slice(0, 10);
+}
+
+function days(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
 }
 
 const pct = (v: number | null) => (v === null ? "–" : `${(v * 100).toFixed(1)}%`);
@@ -36,6 +43,13 @@ const TEAM_TILES: TileDef[] = [
   { key: "outbound", label: "المكالمات الصادرة", kind: "count", goodUp: true },
   { key: "outbound_aht", label: "متوسط مدة الصادرة", kind: "seconds", goodUp: false },
   { key: "repeats", label: "متكررة خلال 72 ساعة", kind: "count", goodUp: false },
+];
+// Teams that only make calls (no incoming queue): their page shows outgoing numbers only.
+const OUTBOUND_ONLY_TEAMS = ["after_sales"];
+const OUTBOUND_TILES: TileDef[] = [
+  { key: "outbound", label: "المكالمات الصادرة", kind: "count", goodUp: true },
+  { key: "outbound_answered", label: "الصادرة التي تم الرد عليها", kind: "count", goodUp: true },
+  { key: "outbound_aht", label: "متوسط مدة الصادرة", kind: "seconds", goodUp: false },
 ];
 const AGENT_TILES: TileDef[] = [
   { key: "calls", label: "مكالمات ردّ عليها", kind: "count", goodUp: true },
@@ -65,7 +79,7 @@ function Change({ cur, prev, kind, goodUp }: { cur: number | null; prev: number 
 }
 
 export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
-  const [f, setF] = useState<KpiFilters>(() => ({ period: "week", start: riyadhToday(), team: "", agent: "" }));
+  const [f, setF] = useState<KpiFilters>(() => { const today = riyadhToday(); return { from: weekStart(today), to: today, team: "", agent: "" }; });
   const [data, setData] = useState<KpiReport | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [archive, setArchive] = useState<ArchivedReport[]>([]);
@@ -80,18 +94,23 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
   const staff = me.role === "admin" || me.role === "supervisor";   // agents: own KPIs only (server enforces it)
 
   useEffect(() => {
+    api.agents().then(setAgents).catch(fail);   // an agent gets only their own row (decides the outgoing-only view)
     if (!staff) return;
-    api.agents().then(setAgents).catch(fail);
     api.reports().then(setArchive).catch(fail);
   }, [fail, staff]);
 
+  const rangeError = !f.from || !f.to ? "اختر تاريخ البداية والنهاية"
+    : f.to < f.from ? "تاريخ النهاية قبل تاريخ البداية"
+    : days(f.from, f.to) > MAX_DAYS ? `أقصى مدة ${MAX_DAYS} يوماً` : "";
+
   useEffect(() => {   // filters apply at once (no "show" button)
+    if (rangeError) return;
     let alive = true;
     setLoading(true);
     setError("");
     api.kpi(f).then((d) => alive && setData(d)).catch((e) => { if (alive) { setData(null); fail(e); } }).finally(() => alive && setLoading(false));
     return () => { alive = false; };
-  }, [f, fail]);
+  }, [f, fail, rangeError]);
 
   const set = (patch: Partial<KpiFilters>) => setF((old) => ({ ...old, ...patch }));
   const teams = useMemo(() => [...new Set(agents.map((a) => a.team).filter((t): t is string => !!t))].sort(), [agents]);
@@ -125,7 +144,9 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
     };
   }, [data]);
 
-  const tiles = isAgent ? AGENT_TILES : TEAM_TILES;
+  const viewTeam = data?.scope.agent ? agents.find((a) => a.ext === data.scope.agent)?.team : data?.scope.team;
+  const outboundOnly = !!viewTeam && OUTBOUND_ONLY_TEAMS.includes(viewTeam);
+  const tiles = outboundOnly ? OUTBOUND_TILES : isAgent ? AGENT_TILES : TEAM_TILES;
 
   return (
     <div className="page">
@@ -139,19 +160,12 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
       </header>
 
       <form className="filters" onSubmit={(e) => e.preventDefault()}>
-        <label>الفترة
-          <select value={f.period} onChange={(e) => set({ period: e.target.value as KpiFilters["period"] })}>
-            <option value="week">أسبوع (الأحد – السبت)</option>
-            <option value="month">شهر</option>
-          </select>
+        <label>من
+          <input type="date" value={f.from} max={f.to || undefined} onChange={(e) => set({ from: e.target.value })} />
         </label>
-        <label>يوم داخل الفترة
-          <input type="date" value={f.start} onChange={(e) => e.target.value && set({ start: e.target.value })} />
+        <label>إلى
+          <input type="date" value={f.to} min={f.from || undefined} onChange={(e) => set({ to: e.target.value })} />
         </label>
-        <div className="filter-actions step">
-          <button type="button" onClick={() => set({ start: shift(f, -1) })}>→ السابق</button>
-          <button type="button" onClick={() => set({ start: shift(f, 1) })}>التالي ←</button>
-        </div>
         {staff && <>
         <label>الفريق
           <select value={f.team} onChange={(e) => set({ team: e.target.value, agent: "" })}>
@@ -166,21 +180,24 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
           </select>
         </label>
         <div className="filter-actions">
-          <a className="button primary" href={api.reportPdfUrl(f)} download>تصدير PDF</a>
+          {rangeError ? <button type="button" className="primary" disabled>تصدير PDF</button>
+            : <a className="button primary" href={api.reportPdfUrl(f)} download>تصدير PDF</a>}
         </div>
         </>}
       </form>
 
-      {error && <div className="error">{error}</div>}
+      {rangeError && <div className="error">{rangeError}</div>}
+      {error && !rangeError && <div className="error">{error}</div>}
       {data && !data.trusted && <div className="banner">الأرقام غير موثقة بعد: لم تكتمل 7 مطابقات ليلية ناجحة</div>}
 
-      {data && (
+      {data && !rangeError && (
         <div className={loading ? "kpi dim" : "kpi"}>
           <p className="period-line">
             من <span dir="ltr" className="num">{data.period.start}</span> إلى <span dir="ltr" className="num">{data.period.end}</span>
             {data.period.partial && <span className="tag">جزئي</span>}
             <span className="muted"> · مقارنة مع <span dir="ltr" className="num">{data.previous_period.start}</span> – <span dir="ltr" className="num">{data.previous_period.end}</span></span>
           </p>
+          {outboundOnly && <p className="muted small">ما بعد البيع: مكالمات صادرة فقط (لا يستقبل مكالمات واردة).</p>}
 
           <div className="tiles">
             {tiles.map((t) => (
@@ -197,7 +214,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
             </div>
           </div>
 
-          <div className="panels">
+          {!outboundOnly && <div className="panels">
             <section className="panel wide">
               <h2>المكالمات الواردة يومياً</h2>
               <Chart option={dayOption} label="المكالمات يومياً" />
@@ -208,7 +225,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                 <Chart option={statusOption} height={220} label="حالات المكالمات" />
               </section>
             )}
-          </div>
+          </div>}
 
           <section className="panel">
             <h2>الموظفون</h2>

@@ -24,7 +24,7 @@ from test_api import SECRET, PASSWORD, TEAM, engine, wav_bytes  # noqa: F401  (e
 PUBLIC = {("POST", "/api/login"), ("POST", "/api/logout")}
 AGENT_ALLOWED = {
     ("GET", "/api/me"), ("GET", "/api/agents"), ("GET", "/api/calls"), ("GET", "/api/calls/summary"),
-    ("GET", "/api/calls/{call_id}"), ("GET", "/api/calls/{call_id}/recording"), ("GET", "/api/kpi"),
+    ("GET", "/api/calls/{call_id}"), ("GET", "/api/calls/{call_id}/recording"),
     ("GET", "/api/calls/{call_id}/transcript"), ("GET", "/api/calls/{call_id}/transcript.txt"),
     # agent-supervisor spec: own follow-up forms, calls shared with them, the summary of own/shared calls
     ("GET", "/api/calls/{call_id}/followup"), ("PUT", "/api/calls/{call_id}/followup"), ("GET", "/api/followups"),
@@ -32,6 +32,7 @@ AGENT_ALLOWED = {
     ("GET", "/api/calls/{call_id}/summary"),
 }
 STAFF_ONLY = {
+    ("GET", "/api/kpi"),   # KPI page: admin + supervisor only (user's decision 2026-11-15)
     ("GET", "/api/reports/pdf"), ("GET", "/api/reports"), ("GET", "/api/reports/{report_id}/pdf"),
     ("GET", "/api/goldset"), ("GET", "/api/goldset/{clip_id}"), ("PUT", "/api/goldset/{clip_id}"),
     ("GET", "/api/goldset/{clip_id}/audio"), ("GET", "/api/health"),
@@ -272,15 +273,12 @@ def test_staff_still_see_everything(env):
 
 # ---------- own KPIs only ----------
 
-def test_kpi_is_forced_to_own_extension(env):
+def test_agent_gets_no_kpis(env):
+    """Decided by the user 2026-11-15: the KPI page is for admin and supervisor only."""
     client, *_ = env
     login(client)
-    for params in ({}, {"team": "after_sales"}, {"agent": "104"}, {"team": "customer_service", "agent": "116"}):
-        r = client.get("/api/kpi", params={"period": "week", **params})
-        assert r.status_code == 200, params
-        d = r.json()
-        assert d["scope"] == {"team": None, "agent": "119"}
-        assert [a["ext"] for a in d["agents"]] == ["119"] and d["by_status"] is None
+    for params in ({}, {"team": "after_sales"}, {"agent": "119"}, {"date_from": "2026-11-01", "date_to": "2026-11-07"}):
+        assert client.get("/api/kpi", params=params).status_code == 403, params
 
 
 def test_agent_whose_ext_left_the_team_gets_no_kpis(env):

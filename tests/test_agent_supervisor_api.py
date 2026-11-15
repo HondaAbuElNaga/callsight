@@ -174,9 +174,11 @@ def test_followups_list_scope(env):
 def test_kpi_has_followup_block(env):
     client, _, _, *_ = env
     switch_on(client)
-    login(client, "ali")
-    k = client.get("/api/kpi").json()["followup"]
+    login(client, "boss")
+    k = client.get("/api/kpi", params={"agent": "119"}).json()["followup"]
     assert k["enabled"] is True and k["active"] is False and set(k["agents"]) == {"119"}
+    login(client, "ali")
+    assert client.get("/api/kpi").status_code == 403
 
 
 # ---------- agent summary (decision 1) ----------

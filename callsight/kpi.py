@@ -35,6 +35,8 @@ class Period:
         return day_bounds(self.start)[0], day_bounds(self.end)[0]
 
     def previous(self) -> "Period":
+        if self.kind == "range":            # same number of days, just before
+            return Period("range", self.start - (self.end - self.start), self.start)
         return period_for(self.kind, self.start - timedelta(days=1))
 
     def is_partial(self, now: datetime | None = None) -> bool:
@@ -58,6 +60,18 @@ def period_for(kind: str, day: date) -> Period:
         end = date(start.year + start.month // 12, start.month % 12 + 1, 1)
         return Period(kind, start, end)
     raise ValueError(f"period must be one of {PERIODS}")
+
+
+MAX_RANGE_DAYS = 366
+
+
+def date_range(first: date, last: date) -> Period:
+    """Any days chosen by the user, `last` included (shown as من … إلى …)."""
+    if last < first:
+        raise ValueError("the end date is before the start date")
+    if (last - first).days + 1 > MAX_RANGE_DAYS:
+        raise ValueError(f"at most {MAX_RANGE_DAYS} days")
+    return Period("range", first, last + timedelta(days=1))
 
 
 def last_closed(kind: str, now: datetime | None = None) -> Period:

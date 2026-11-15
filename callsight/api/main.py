@@ -207,12 +207,25 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         user: User,
         period: Annotated[str, Query(pattern=r"^(week|month)$")] = "week",
         start: Annotated[date | None, Query()] = None,
+        date_from: Annotated[date | None, Query()] = None,
+        date_to: Annotated[date | None, Query()] = None,
         team: Annotated[str | None, Query(pattern=r"^[a-z_]{1,50}$")] = None,
         agent: Annotated[str | None, Query(pattern=r"^\d{1,6}$")] = None,
     ) -> KpiQuery:
         day = start or datetime.now(RIYADH).date()
         if not date(2020, 1, 1) <= day <= date(2100, 1, 1):
             raise HTTPException(422, "bad start date")
+        if (date_from is None) != (date_to is None):
+            raise HTTPException(422, "give both date_from and date_to")
+        if date_from is not None:
+            if not (date(2020, 1, 1) <= date_from <= date(2100, 1, 1) and date(2020, 1, 1) <= date_to <= date(2100, 1, 1)):
+                raise HTTPException(422, "bad date")
+            try:
+                chosen = kpi.date_range(date_from, date_to)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+        else:
+            chosen = kpi.period_for(period, day)
         teams = cfg.teams()
         scope = visible_scope(user)
         if scope.is_agent:                   # own KPIs only: no team view, no comparison with colleagues
@@ -223,7 +236,7 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
             raise HTTPException(422, "unknown team")
         if agent and (agent not in teams.ext_team or (team and teams.ext_team[agent] != team)):
             raise HTTPException(422, "extension is not a team agent (teams.yaml)")
-        return KpiQuery(kpi.period_for(period, day), team or None, agent or None)
+        return KpiQuery(chosen, team or None, agent or None)
 
     Kpi = Annotated[KpiQuery, Depends(kpi_query)]
 
@@ -322,7 +335,7 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
     # ---------- KPIs (agents: their own only) + reports (admin + supervisor) ----------
 
     @app.get("/api/kpi")
-    def kpis(user: User, s: DB, q: Kpi) -> dict:
+    def kpis(user: Manager, s: DB, q: Kpi) -> dict:   # agents: no KPI page (decided by the user 2026-11-15)
         return kpi.report(s, q.period, cfg.teams(), team=q.team, agent=q.agent)
 
     @app.get("/api/reports/pdf")

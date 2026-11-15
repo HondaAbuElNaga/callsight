@@ -56,7 +56,7 @@ export function App() {
   else if (view === "followups")
     page = <FollowupsPage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)}
       onOpenCall={(id) => { setOpenCall(id); setView("calls"); }} />;
-  else if (view === "kpi")
+  else if (view === "kpi" && isStaff)
     page = <KpiPage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else
     page = (
@@ -65,7 +65,7 @@ export function App() {
         onLogout={logout}
         onExpired={() => setMe(null)}
         onGoldset={isAdmin ? () => setView("goldset") : undefined}
-        onKpi={() => setView("kpi")}
+        onKpi={isStaff ? () => setView("kpi") : undefined}
         onLive={isStaff ? () => setView("live") : undefined}
         onHealth={isAdmin ? () => setView("health") : undefined}
         onRating={isStaff ? () => setView("rating") : undefined}

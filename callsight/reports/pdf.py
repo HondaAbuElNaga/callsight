@@ -5,7 +5,7 @@ on every machine. Numbers are wrapped in <bdi dir="ltr"> so digits never get mix
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from html import escape
 from pathlib import Path
 from string import Template
@@ -22,7 +22,7 @@ FONTS = HERE / "fonts"
 TEMPLATE = HERE / "templates" / "report.html"
 
 TEAM_LABEL = {"customer_service": "خدمة العملاء", "after_sales": "ما بعد البيع"}
-KIND_LABEL = {"week": "أسبوعي", "month": "شهري"}
+KIND_LABEL = {"week": "أسبوعي", "month": "شهري", "range": "فترة مختارة"}
 STATUS_LABEL = {"answered": "تم الرد", "abandoned_queue": "أغلق أثناء الانتظار", "abandoned_ivr": "أغلق في القائمة",
                 "no_answer": "لم يتم الرد", "busy": "مشغول", "voicemail": "بريد صوتي"}
 NOT_TRUSTED = "الأرقام غير موثقة بعد: لم تكتمل 7 مطابقات ليلية ناجحة"
@@ -301,4 +301,7 @@ def make_pdf(session: Session, period: kpi.Period, teams: TeamConfig, team: str 
 
 def filename(period: kpi.Period, team: str | None = None, agent: str | None = None) -> str:
     scope = f"agent-{agent}" if agent else (team or "all")
+    if period.kind == "range":
+        last = (period.end - timedelta(days=1)).isoformat()
+        return f"callsight-{period.start.isoformat()}-to-{last}-{scope}.pdf"
     return f"callsight-{period.kind}-{period.start.isoformat()}-{scope}.pdf"

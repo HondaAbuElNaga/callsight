@@ -155,12 +155,12 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
           onChange={(e) => e.target.value && set({ from: e.target.value, to: e.target.value > filters.to ? e.target.value : filters.to })} /></label>
         <label>إلى <input type="date" value={filters.to} min={filters.from || undefined}
           onChange={(e) => e.target.value && set({ to: e.target.value, from: e.target.value < filters.from ? e.target.value : filters.from })} /></label>
-        <label>الموظف
+        {canSearchText && <label>الموظف
           <select value={filters.agent} onChange={(e) => set({ agent: e.target.value })}>
             <option value="">الكل</option>
             {agents.map((a) => <option key={a.ext} value={a.ext}>{a.ext} · {a.name}</option>)}
           </select>
-        </label>
+        </label>}
         <label>الحالة
           <select value={filters.status} onChange={(e) => set({ status: e.target.value })}>
             <option value="">الكل</option>
