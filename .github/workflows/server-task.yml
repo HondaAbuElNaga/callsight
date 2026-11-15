@@ -16,6 +16,7 @@ on:
           - live-on
           - live-off
           - live-log
+          - sync-agents
 
 permissions:
   contents: read
@@ -49,4 +50,5 @@ jobs:
               sed -i 's/^LIVE_ENABLED=.*/LIVE_ENABLED=false/' .env
               "${C[@]}" --profile live stop live; "${C[@]}" up -d api ;;
             live-log) "${C[@]}" --profile live logs --tail 60 live ;;
+            sync-agents) "${C[@]}" exec -T worker python -m callsight sync-agents ;;
           esac
