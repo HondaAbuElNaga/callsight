@@ -2,16 +2,14 @@
 
 > Status: `[x]` done · `[~]` in progress · `[ ]` not started
 
-**Current position (2026-11-15, evening): moving to AWS, blocked on the PBX login.**
-- AWS main server is live in Frankfurt: https://calls.mohanadyehia.com (valid certificate, account `admin`), fixed
-  address 63.184.90.120, database empty (AWS starts with new calls only). Pushing to `main` on GitHub
-  (private repo `HondaAbuElNaga/callsight`) updates the server automatically.
-- **Blocker:** the server's first PBX login through `sstli.ras.yeastar.com` was refused (`errcode 70087 IP FORBIDDEN`,
-  1 failed attempt, the server does not retry). 63.184.90.120 is in Integrations → API → IP Restriction; the FQDN
-  page (System → Network → Yeastar FQDN → API Access) is not checked yet. The user will report back.
-- **No calls are being collected right now:** the PC is not on the office network (PBX unreachable; last call in the
-  PC database 2026-11-14 22:21 Riyadh) and its line was removed from the PBX permit list. The PBX keeps its call
-  records; they are pulled after the login works (`backfill`).
+**Current position (2026-11-15, evening): AWS main server live and collecting calls; GPU server not there yet.**
+- AWS main server in Frankfurt: https://calls.mohanadyehia.com (valid certificate, account `admin`), fixed address
+  63.184.90.120. Pushing to `main` on GitHub (private repo `HondaAbuElNaga/callsight`) updates it automatically.
+- PBX link works through `sstli.ras.yeastar.com` (after FQDN → API Access was saved for 63.184.90.120): calls are
+  ingested every 2 minutes and recordings download. AWS holds calls from 2026-11-14 11:44 Riyadh on.
+- No transcripts or analyses on AWS yet: they need the GPU server. `ASR_START_DATE` is empty there until then.
+- The PC setup is no longer the live system (off the office network, its PBX permit line was removed). Its services
+  still run and should be stopped (`docker compose stop`); its old data stays on the PC.
 - Waiting: AWS approval of the GPU quota (request sent, "Case Opened"), then the GPU server and the schedule.
 - New feature ideas from the user (users page, delete, supervisor notes, agent follow-up form, callback KPI) are in
   [ideas.md](ideas.md); the user asked for discussion first, no spec yet.

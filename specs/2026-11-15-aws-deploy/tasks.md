@@ -11,7 +11,7 @@ Spec: [spec.md](spec.md) · Branch: `spec/2026-11-15-aws-deploy`
 - [x] A3b. (done 2026-11-15: both image ids written into the template; GPU type offered in all three zones) Paste one command in AWS CloudShell and send the answer (image ids + zones that offer the GPU type).
 - [x] A4. (main server created 2026-11-15, CREATE_COMPLETE) Upload `deploy/aws/callsight.yaml` in CloudFormation (main server first), guided. A4c = GPU server, A6 = schedule on.
 - [x] A4b. DNS record added 2026-11-15: `calls.mohanadyehia.com` → 63.184.90.120 (Cloudflare, DNS only; the user's own domain).
-- [ ] A5. Supplier enables FQDN API Access and permits the Elastic IP. User reported "done" 2026-11-15, but the login is refused (see task 12): FQDN page to be checked.
+- [x] A5. Supplier enables FQDN API Access and permits the Elastic IP. User reported "done" 2026-11-15, but the login was refused until the FQDN → API Access entry was saved; works since 2026-11-15 (see task 12).
 
 ## Preparation in the repository (no AWS cost)
 - [x] 2. `product/tech-stack.md`: AWS services, Caddy, NFS, cfn-lint added; "100 % local" principle changed (also
@@ -62,6 +62,11 @@ Spec: [spec.md](spec.md) · Branch: `spec/2026-11-15-aws-deploy`
          `docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml exec -T worker python -m callsight pbx-unblock`
          on the server, watch the worker log for `ingest:`; then `backfill --days N` for the calls missed since
          2026-11-14 22:21 Riyadh, set `ASR_START_DATE`, stop the PC services.
+         **Later on 2026-11-15: login WORKS.** The missing part was System → Network → Yeastar FQDN → API Access
+         (the user confirmed + saved it: Enabled, 63.184.90.120 / 255.255.255.255). After `pbx-unblock` the first
+         ingest brought 88 calls (2026-11-14 11:44 → 2026-11-15 11:01 Riyadh) and recordings download through the
+         FQDN (16 ok / 17 pending a few minutes later). Still open in this task: live board test through the FQDN.
+         `ASR_START_DATE` stays empty until the GPU server exists (then: 2026-11-15, so all AWS calls are done).
 - [x] 12b. (added) Automatic update from GitHub: private repo `HondaAbuElNaga/callsight`, self-hosted runner
          `callsight-main` on the main server, `.github/workflows/deploy.yml` → `deploy/aws/deploy-main.sh` on every
          push to `main` (code copy without `.env`, DB backup, build + restart, web check). First run OK (1m51s).
