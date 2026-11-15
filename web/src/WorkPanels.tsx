@@ -102,7 +102,9 @@ function History({ items }: { items: HistoryEntry[] }) {
   );
 }
 
-export function FollowupPanel({ callId, onExpired }: { callId: number; onExpired: () => void }) {
+export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: Me; onExpired: () => void }) {
+  // supervisors/admins only watch: the agent fills the form and the notes (no form, no note box, no "your task")
+  const staff = me.role === "admin" || me.role === "supervisor";
   const [view, setView] = useState<FollowupView | null>(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
@@ -140,15 +142,16 @@ export function FollowupPanel({ callId, onExpired }: { callId: number; onExpired
     run(() => api.addNote(callId, { ...(r.body as Omit<NoteIn, "round">), round: view.round + 1 }), "تم حفظ الملاحظة.");
   };
   const ro = !view.can_edit || busy;
-  const noteStep = NOTE_STEPS.includes(view.step);
+  const noteStep = !staff && NOTE_STEPS.includes(view.step);
   // round 1 without a callback: the form stays editable (deadline rules on the server) next to the update box
-  const formOpen = view.round === 1 && view.history.length <= 1 && view.step !== "note_needed";
+  const formOpen = !staff && view.round === 1 && view.history.length <= 1 && view.step !== "note_needed";
   const next = STEP_NEXT[view.step];
   return (
     <section className={`panel work step-${STEP_CLASS[view.step]}`}>
       <h3>متابعة المكالمة <span className={`state ${STEP_CLASS[view.step]}`}>{STEP_LABEL[view.step]}</span>
         {view.round > 1 && <span className="muted small"> · الجولة {view.round}</span>}</h3>
-      {next && <p className="next-action">المطلوب منك: <b>{next}</b></p>}
+      {next && <p className="next-action">{staff ? "المطلوب من الموظف" : "المطلوب منك"}: <b>{next}</b></p>}
+      {staff && view.history.length === 0 && <p className="muted small">لم يعبّئ الموظف النموذج بعد.</p>}
       {(view.step === "required" || view.step === "overdue") &&
         <p className="muted small">آخر موعد للتعبئة: {formatDateTime(view.deadline)}</p>}
       {view.solve_by && <p className="muted small">موعد الحل المتوقع: {formatDateTime(view.solve_by)}</p>}
@@ -190,8 +193,8 @@ export function FollowupPanel({ callId, onExpired }: { callId: number; onExpired
 }
 
 function lockText(reason: string): string {
-  if (reason.startsWith("after the form deadline")) return "انتهى وقت التعبئة، يعدّلها المشرف فقط";
-  if (reason.startsWith("the callback time")) return "مرّ وقت معاودة الاتصال، يعدّلها المشرف فقط";
+  if (reason.startsWith("after the form deadline")) return "انتهى وقت التعبئة";
+  if (reason.startsWith("the callback time")) return "مرّ وقت معاودة الاتصال";
   return "ليست مكالمتك";
 }
 

@@ -259,7 +259,7 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
       {detail && (
         <DetailPanel call={detail} onClose={() => { setDetail(null); if (detailOnly) onFollowups?.(); }} onPlay={() => { setSeek(null); setPlaying(detail); }}>
           {/* the follow-up box first: it says what the agent must do next (follow-up stages spec, fix I) */}
-          <FollowupPanel key={`f${detail.id}`} callId={detail.id} onExpired={onExpired} />
+          <FollowupPanel key={`f${detail.id}`} callId={detail.id} me={me} onExpired={onExpired} />
           {!canSearchText && <AgentSummaryPanel key={`s${detail.id}`} callId={detail.id} onExpired={onExpired} />}
           <SharePanel key={`sh${detail.id}`} callId={detail.id} me={me} onExpired={onExpired} />
           {canSearchText && (   /* admin + supervisor only: agents see the summary only (agent-supervisor decision 1) */
