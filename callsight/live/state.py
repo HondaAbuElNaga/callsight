@@ -2,11 +2,16 @@
 
 No snapshot API is assumed (decision 6): on every (re)connect the state is cleared and the board shows
 "syncing" until events arrive. Calls whose end event got lost are pruned after 4 h; at most 500 calls (decision 8).
+
+Team only (user, 2026-11-16): with a TeamConfig, every call is still tracked (an IVR call may ring a team agent later),
+but only calls that touched a team extension or a team queue are published; other calls never leave this process.
+Once a call touched the team it stays on the board until it ends (a transfer out is still the team's call).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..ingest.classify import TeamConfig
 from .events import GONE, HOLD, RINGING, TALKING, CallEnd, CallState, Member
 
 MAX_CALLS = 500
@@ -21,6 +26,7 @@ class LiveCall:
     members: dict[str, Member] = field(default_factory=dict)   # by channel_id
     answered_at: float | None = None
     queue: str | None = None
+    team: bool = False          # touched a team extension / queue at some point (sticky)
 
     @property
     def state(self) -> str:
@@ -56,16 +62,21 @@ class LiveCall:
 
 
 class LiveState:
-    def __init__(self, max_calls: int = MAX_CALLS, max_age: float = MAX_AGE):
+    def __init__(self, max_calls: int = MAX_CALLS, max_age: float = MAX_AGE, team: TeamConfig | None = None):
         self.calls: dict[str, LiveCall] = {}
         self.max_calls, self.max_age = max_calls, max_age
+        self.team = team            # None = every call is shown (tests, no teams.yaml)
+
+    def _touches_team(self, m: Member) -> bool:
+        return self.team is None or (m.ext is not None and m.ext in self.team.ext_team) \
+            or (m.queue is not None and m.queue in self.team.queue_team)
 
     def reset(self) -> list[dict]:
         self.calls.clear()
         return [{"op": "reset"}]
 
     def snapshot(self) -> list[dict]:
-        return [c.to_dict() for c in sorted(self.calls.values(), key=lambda c: c.started_at)]
+        return [c.to_dict() for c in sorted(self.calls.values(), key=lambda c: c.started_at) if c.team]
 
     def apply(self, event: CallState | CallEnd, now: float) -> list[dict]:
         """Returns the deltas to publish: {"op": "upsert", "call": {...}} / {"op": "remove", "call_id": ...}."""
@@ -85,12 +96,14 @@ class LiveState:
                 call.members[m.channel_id] = m
                 if m.queue and not call.queue:
                     call.queue = m.queue
+                if not call.team and self._touches_team(m):
+                    call.team = True
         if not call.members:
             return out + self._remove(call.call_id)
         call.updated_at = now
         if call.state in ("talking", "holding") and call.answered_at is None:
             call.answered_at = now
-        return out + [{"op": "upsert", "call": call.to_dict()}]
+        return out + ([{"op": "upsert", "call": call.to_dict()}] if call.team else [])
 
     def prune(self, now: float) -> list[dict]:
         """Calls older than max_age (their end event got lost)."""
@@ -105,4 +118,5 @@ class LiveState:
         return out
 
     def _remove(self, call_id: str) -> list[dict]:
-        return [{"op": "remove", "call_id": call_id}] if self.calls.pop(call_id, None) is not None else []
+        call = self.calls.pop(call_id, None)
+        return [{"op": "remove", "call_id": call_id}] if call is not None and call.team else []

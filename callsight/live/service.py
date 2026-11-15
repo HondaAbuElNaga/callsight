@@ -179,13 +179,13 @@ Connect = Callable[..., Any]   # websockets.connect-like: async context manager 
 class LiveService:
     def __init__(self, adapter, redis, connect: Connect, *, guard: AuthGuard, base_url: str,
                  ssl_ctx: ssl.SSLContext | None = None, timing: Timing = Timing(), backoff: Backoff | None = None,
-                 token_file: Path | None = None,
+                 token_file: Path | None = None, team=None,
                  wall=time.time, mono=time.monotonic, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep):
         self.adapter, self.redis, self.connect, self.guard = adapter, redis, connect, guard
         self.base_url, self.ssl_ctx, self.t = base_url, ssl_ctx, timing
         self.backoff = backoff or Backoff()
         self._wall, self._mono, self._sleep = wall, mono, sleep
-        self.state = LiveState()
+        self.state = LiveState(team=team)       # team only: other company calls are never published
         self.pub = Publisher(redis, clock=wall)
         self.tokens = TokenStore(token_file, clock=wall)
         self.status = "disconnected"
@@ -378,6 +378,7 @@ def build_service() -> LiveService:
     import websockets
 
     from .. import app as wiring
+    from ..config import load_teams
     from ..pbx.tls import verify_setting
     from ..pbx.yeastar import YeastarAdapter
     s = wiring.settings()
@@ -391,7 +392,8 @@ def build_service() -> LiveService:
                              max_login_failures=1)
     return LiveService(adapter, redis, websockets.connect, guard=guard, base_url=s.yeastar_base_url,
                        ssl_ctx=ssl_context(verify),
-                       token_file=Path(os.getenv("LIVE_TOKEN_FILE", TOKEN_FILE_DEFAULT)))
+                       token_file=Path(os.getenv("LIVE_TOKEN_FILE", TOKEN_FILE_DEFAULT)),
+                       team=load_teams(s.teams_file))
 
 
 def main(enabled: Callable[[], bool] = lambda: env_true("LIVE_ENABLED"),

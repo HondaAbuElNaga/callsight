@@ -15,6 +15,7 @@ from callsight.live.events import CallEnd, CallState, mask_number, parse
 from callsight.live.service import (Backoff, LiveService, LoginGate, LoginRateLimited, Timing, TokenStore, main,
                                     ws_url)
 from callsight.live.state import LiveState
+from callsight.ingest.classify import TeamConfig
 from callsight.pbx.authblock import AUTH_BLOCKED_KEY, AuthGuard, unblock
 from callsight.pbx.base import AuthBlocked, AuthError, PbxError, TokenLimit
 from callsight.pbx.yeastar import YeastarAdapter
@@ -138,6 +139,39 @@ def test_prune_after_4_hours_and_reset():
     assert st.prune(now=4 * 3600.0 + 1) == [{"op": "remove", "call_id": "1731574800.101"}]
     assert list(st.calls) == ["1731575000.202"]
     assert st.reset() == [{"op": "reset"}] and st.calls == {}
+
+
+# ---------- team only (user, 2026-11-16) ----------
+
+TEAM_ONLY = TeamConfig(ext_team={"104": "customer_service", "119": "customer_service", "116": "after_sales"},
+                       queue_team={"6401": "customer_service"})
+
+
+def test_other_company_calls_are_never_published():
+    st = LiveState(team=TEAM_ONLY)
+    other = CallState("o1", (events.Member("extension", "a", "ANSWERED", ext="302"),
+                             events.Member("outbound", "b", "ANSWERED", party="••••9999")))
+    assert st.apply(other, now=1.0) == [] and st.snapshot() == []
+    assert st.apply(CallEnd("o1"), now=2.0) == [] and st.calls == {}     # its end is not published either
+
+
+def test_ivr_call_appears_when_a_team_agent_rings_and_stays_after_transfer_out():
+    st = LiveState(team=TEAM_ONLY)
+    assert st.apply(CallState("c1", (events.Member("inbound", "t", "ANSWERED", party="••••1111"),)), now=1.0) == []
+    d = st.apply(CallState("c1", (events.Member("inbound", "t", "ANSWERED", party="••••1111"),
+                                  events.Member("extension", "e", "RING", ext="116"))), now=2.0)
+    assert d[0]["op"] == "upsert" and d[0]["call"]["ringing"] == ["116"]
+    d = st.apply(CallState("c1", (events.Member("extension", "e", "BYE", ext="116"),
+                                  events.Member("extension", "x", "ANSWERED", ext="302"))), now=3.0)
+    assert d[0]["op"] == "upsert" and d[0]["call"]["agents"] == ["302"]     # once the team's call, kept
+    assert [c["call_id"] for c in st.snapshot()] == ["c1"]
+    assert st.apply(CallEnd("c1"), now=4.0) == [{"op": "remove", "call_id": "c1"}]
+
+
+def test_team_queue_waiting_call_is_shown():
+    st = LiveState(team=TEAM_ONLY)
+    d = st.apply(CallState("q", (events.Member("inbound", "t", "ANSWERED", party="••••1", queue="6401"),)), now=1.0)
+    assert d[0]["call"]["state"] == "waiting"
 
 
 def test_memory_cap_drops_the_stalest_call():

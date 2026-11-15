@@ -151,6 +151,7 @@ export function LivePage({ me, onCalls, onLogout, onExpired }: Props) {
     <div className="page">
       <header className="topbar">
         <h1>المكالمات الحالية</h1>
+        <p className="muted small">مكالمات موظفي الفريق وطابور خدمة العملاء فقط.</p>
         <div className="who">
           <button className="link" onClick={onCalls}>سجل المكالمات</button>
           <span className="muted">{me.username}{me.ext ? ` · تحويلة ${me.ext}` : ""}</span>
