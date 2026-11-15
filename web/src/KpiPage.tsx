@@ -44,6 +44,7 @@ const TEAM_TILES: TileDef[] = [
   { key: "outbound_aht", label: "متوسط مدة الصادرة", kind: "seconds", goodUp: false },
   { key: "early_hangups", label: "قفل مبكر (أقل من 30 ث رنين)", kind: "count", goodUp: false },
   { key: "proper_rate", label: "محاولات صحيحة %", kind: "rate", goodUp: true },
+  { key: "outbound_avg_ring", label: "متوسط ثواني الرنين (بلا رد)", kind: "seconds", goodUp: true },
   { key: "repeats", label: "متكررة خلال 72 ساعة", kind: "count", goodUp: false },
 ];
 // Teams that only make calls (no incoming queue): their page shows outgoing numbers only.
@@ -65,6 +66,7 @@ const AGENT_TILES: TileDef[] = [
   { key: "outbound_aht", label: "متوسط مدة الصادرة", kind: "seconds", goodUp: false },
   { key: "early_hangups", label: "قفل مبكر (أقل من 30 ث رنين)", kind: "count", goodUp: false },
   { key: "proper_rate", label: "محاولات صحيحة %", kind: "rate", goodUp: true },
+  { key: "outbound_avg_ring", label: "متوسط ثواني الرنين (بلا رد)", kind: "seconds", goodUp: true },
   { key: "repeats", label: "متكررة منسوبة للموظف", kind: "count", goodUp: false },
 ];
 
@@ -263,7 +265,8 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                 <thead>
                   <tr>
                     <th>الموظف</th><th>الفريق</th><th>مكالمات ردّ عليها</th><th>AHT</th><th>رنات فائتة</th>
-                    <th>الصادرة (تم الرد)</th><th>AHT الصادرة</th><th>قفل مبكر</th><th>متكررة</th>
+                    <th>الصادرة (تم الرد)</th><th>AHT الصادرة</th><th>قفل مبكر</th><th>محاولات صحيحة</th>
+                    <th>متوسط الرنين</th><th>متكررة</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -277,6 +280,8 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                       <td className="num">{a.outbound} ({a.outbound_answered})</td>
                       <td className="num">{secs(a.outbound_aht)}</td>
                       <td className={a.early_hangups ? "num bad" : "num"}>{a.early_hangups}</td>
+                      <td className="num">{pct(a.proper_rate)}</td>
+                      <td className="num">{secs(a.outbound_avg_ring)}</td>
                       <td className="num">{a.repeats}</td>
                     </tr>
                   ))}

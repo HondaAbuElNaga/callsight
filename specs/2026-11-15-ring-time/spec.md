@@ -1,7 +1,7 @@
 # Spec: Outbound ring time and who hung up ("رن كام ثانية ومين قفل")
 
 **Roadmap item:** Phase 7 follow-on (idea: user, 2026-11-15).
-**Status:** approved (user, 2026-11-15: "one time call but ring must be big 30 second, less this kpi of agent reduced")
+**Status:** done on the branch (not live); approved (user, 2026-11-15: "one time call but ring must be big 30 second, less this kpi of agent reduced")
 
 ## Goal
 Supervisors need to see whether an agent really tried to reach a customer, or rang for 1-10 seconds and hung up.
@@ -11,8 +11,8 @@ The PBX already sends, for every outgoing call, the ring seconds (`ring_duration
 
 ## Facts (PC database, outgoing calls up to 2026-11-14, 387 calls, one leg each)
 - Not answered, agent hung up: 44 calls, **37 under 15 s** of ringing (shortest 1 s). All from after-sales (ext 116).
-- Not answered, customer side ended: 109 calls; **91 ended at 61-63 s** = the line closes by itself after
-  **about 62 s** (phone network limit, not the agent).
+- Not answered, customer side ended: 109 calls; **91 rang 55-70 s (87 of them 61-63 s)** = the line closes by itself
+  after **about 62 s** (phone network limit, not the agent).
 - Busy: 61 calls (1-11 s).
 - Some legs have no `ring_duration` (agent hung up while dialling) → treated as 0 s.
 
@@ -28,7 +28,8 @@ a separate list page of short calls.
 ## Requirements
 1. New column `call.hangup_by` (migration 0014): for outbound calls `agent` / `customer` / `busy`, from the
    external leg's `reason` (`src hangup` → agent, `dst extension_busy...` or status busy → busy, other `dst ...` →
-   customer); NULL for inbound/internal or unknown reason. Filled by ingest (`classify`) and back-filled for old
+   customer); NULL for inbound/internal or unknown reason (unknown is never blamed on the agent). Outbound not
+   answered: ring seconds come only from `ring_duration` (missing = 0, never the whole leg time). Filled by ingest (`classify`) and back-filled for old
    calls by the migration. Outbound `wait_seconds` stays = ring seconds (already true).
 2. Constant `EARLY_HANGUP_SECONDS = 30`. An outbound call is an **early hang-up** when it was not answered,
    `hangup_by = agent` and ring seconds < 30.
@@ -37,7 +38,7 @@ a separate list page of short calls.
    rule "answered or total ≥ 10 s". So early hang-ups never close a callback; busy and customer-declined tries do.
 4. Follow-ups API + page: per callback round, besides the counted callback, the number of early hang-ups to that
    customer in that round and the latest one's ring seconds. Text on the page (column "رد العميل؟" / round history):
-   - counted, not answered: «لم يرد · رن 62 ث · انقطع الخط» / «· العميل رفض» / «· مشغول» / «· الموظف قفل بعد 25 ث»
+   - counted, not answered: «لم يرد · رن 62 ث · انقطع الخط» / «· العميل رفض» / «· مشغول» / «رن 35 ث · الموظف قفل»
    - early tries: «محاولة لم تُحسب: رن 6 ث والموظف قفل» (+ «×3» when more than one).
 5. Call panel (`/api/calls/{id}` + panel): outbound calls show «رن X ث · قفل: الموظف / العميل / مشغول», and a red
    mark «قفل مبكر» on an early hang-up.
@@ -50,13 +51,14 @@ a separate list page of short calls.
 7. "Customer side ended at ≥ 55 s" is shown as «انقطع الخط» (line closed by itself), under 55 s as «العميل رفض».
 
 ## Acceptance criteria
-- [ ] classify tests: src hangup / dst hangup / busy / no ring_duration → right `hangup_by`; inbound → NULL.
-- [ ] Migration 0014 up/down/up; after up, the PC DB has `hangup_by=agent` on exactly the 44 calls above.
-- [ ] Follow-up tests: an agent try of 6 s does not close the callback (step stays waiting / missed); a 35 s
+- [x] classify tests: src hangup / dst hangup / busy / no ring_duration → right `hangup_by`; inbound → NULL.
+- [x] Migration 0014 up/down/up; after up, the PC DB has `hangup_by=agent` on exactly the 44 NOT-answered calls
+      above (151 incl. answered calls the agent ended).
+- [x] Follow-up tests: an agent try of 6 s does not close the callback (step stays waiting / missed); a 35 s
       agent try closes it (29 s does not); a 2 s busy or customer-declined try closes it; answered closes it; early-try count shown.
-- [ ] KPI tests: early hang-up count and average ring seconds per agent and team; PDF has the two columns.
-- [ ] API test: call detail has ring seconds + `hangup_by` + early flag; agents see it only on calls they may see.
-- [ ] Full pytest green (except the known `.env` test), web build OK.
+- [x] KPI tests: early hang-up count and average ring seconds per agent and team; PDF has the two columns.
+- [x] API test: call detail has ring seconds + `hangup_by` + early flag; agents see it only on calls they may see.
+- [x] Full pytest green (except the known `.env` test), web build OK.
 
 ## Technical approach
 - Only Python/SQLAlchemy/React already in use; no new tool.

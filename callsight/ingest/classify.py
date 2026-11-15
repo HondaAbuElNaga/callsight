@@ -196,6 +196,8 @@ def classify(legs: list[dict], team: TeamConfig) -> CallFields:
         wait_seconds = _int(queue_legs[0].get("duration"))
     elif answered:
         wait_seconds = _int(answered[0][0].get("ring_duration"))
+    elif ring_legs and direction == "outbound":     # ring-time spec: ring seconds only, missing = 0
+        wait_seconds = _int(ring_legs[0][0].get("ring_duration"))
     elif ring_legs:
         wait_seconds = _int(ring_legs[0][0].get("ring_duration")) or _int(ring_legs[0][0].get("duration"))
     else:

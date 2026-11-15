@@ -96,7 +96,7 @@ function History({ items }: { items: HistoryEntry[] }) {
               {h.callback_status && <> <span className={`state ${CB_CLASS[h.callback_status]}`}>{CALLBACK_LABEL[h.callback_status]}</span></>}
               {h.callback_call && <span className="muted"> · اتصل {h.callback_call.by_ext ?? "–"} {formatDateTime(h.callback_call.time)}
                 {h.callback_call.answered === true ? " · ردّ العميل" : h.callback_call.answered === false ? " · لم يرد" : ""}
-                {ringText(h.callback_call.ring_seconds, h.callback_call.hangup_by, !!h.callback_call.call_answered)
+                {h.callback_call.answered !== true && ringText(h.callback_call.ring_seconds, h.callback_call.hangup_by, !!h.callback_call.call_answered)
                   ? " · " + ringText(h.callback_call.ring_seconds, h.callback_call.hangup_by, !!h.callback_call.call_answered) : ""}</span>}
               {h.early_tries && <span className="bad-text"> · {earlyText(h.early_tries)}</span>}
             </p>

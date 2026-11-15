@@ -221,16 +221,16 @@ def test_early_hang_ups_lower_the_proper_rate(session):
     session.commit()
     r = kpi.compute(session, *WEEK, teams=TEAM)
     a = agents(r)
-    # 116: C17 (no ring data, who hung up unknown -> early) + O1..O4
-    assert (a["116"]["outbound"], a["116"]["early_hangups"]) == (5, 2)
-    assert a["116"]["proper_rate"] == pytest.approx(3 / 5)
+    # 116: C17 (who hung up unknown -> not blamed) + O1..O4; only O1 (agent, 5 s) is early
+    assert (a["116"]["outbound"], a["116"]["early_hangups"]) == (5, 1)
+    assert a["116"]["proper_rate"] == pytest.approx(4 / 5)
     assert a["116"]["outbound_avg_ring"] == pytest.approx((0 + 5 + 35 + 2 + 62) / 5)
     assert (a["119"]["early_hangups"], a["119"]["proper_rate"], a["119"]["outbound_avg_ring"]) == (0, 1.0, None)
     assert (a["104"]["early_hangups"], a["104"]["proper_rate"]) == (0, None)
     t = kpi.compute(session, *WEEK, teams=TEAM, team=AS)["summary"]
-    assert (t["early_hangups"], t["proper_rate"]) == (2, pytest.approx(3 / 5))
+    assert (t["early_hangups"], t["proper_rate"]) == (1, pytest.approx(4 / 5))
     one = kpi.compute(session, *WEEK, teams=TEAM, agent="116")["summary"]
-    assert (one["early_hangups"], one["proper_rate"]) == (2, pytest.approx(3 / 5))
+    assert (one["early_hangups"], one["proper_rate"]) == (1, pytest.approx(4 / 5))
 
 
 def test_agent_scope(session):

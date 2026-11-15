@@ -8,5 +8,11 @@
 - [x] 6. Web: follow-ups page texts, call panel line + «قفل مبكر» mark. → format.ts ringText/earlyText; FollowupsPage, WorkPanels history, CallsPage panel «الرنين» + «قفل مبكر».
 - [x] 7. KPI: early hang-ups, "محاولات صحيحة %" + average ring seconds (team + agent), page tiles/columns, PDF; tests. → early_hangups, proper_rate, outbound_avg_ring (team/agent/one agent); KPI page tiles + columns; PDF rows, columns, footnote.
 - [x] 8. Verify: full pytest, web build, migration on PC DB (44 agent hang-ups). → full pytest 687 passed, 9 skipped, 1 failed (known `.env` test); web build (tsc + vite) in Docker OK.
-- [ ] 9. Review: 3 subagents (bugs, security, accuracy); fix findings.
+- [x] 9. Review: 3 subagents (bugs, security, accuracy); fix findings.
+  → security: 0. bugs + accuracy: 3 medium + 8 low, all confirmed and fixed: unknown hang-up no longer blamed on the
+    agent (early = hangup_by agent only, as spec req 2); outbound ring seconds never fall back to the whole leg time
+    (PC data: 0 calls affected); avg ring + proper % added to every team/agent tile and table (page + PDF); round-1
+    history no longer shows ring text next to 'answered'; PDF test checks the tables, not the footnote; API test checks
+    agent access; spec numbers/wording fixed (91 = 55-70 s, 87 at 61-63 s; 44 = not answered). Re-test: 687 passed,
+    9 skipped, 1 failed (known `.env` test); web build OK.
 - [ ] 10. Roadmap + memory update; push to `main` only on the user's yes (push = live).

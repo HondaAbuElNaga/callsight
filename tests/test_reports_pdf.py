@@ -72,7 +72,8 @@ def test_after_sales_pdf_shows_outgoing_only(session):
         html = pdf.build_html(session, WEEK, TEAM, now=NOW, **kw)
         assert "المكالمات الصادرة" in html and "الصادرة التي تم الرد عليها" in html, kw
         assert "المكالمات الواردة يومياً" not in html and "حالات المكالمات الواردة" not in html, kw
-        assert "قفل مبكر" in html and "محاولات صحيحة" in html, kw          # spec 2026-11-15-ring-time
+        head = html.split('<ol class="notes">')[0]                # spec 2026-11-15-ring-time: in the tables
+        assert "قفل مبكر" in head and "محاولات صحيحة" in head and "متوسط ثواني الرنين" in head, kw
         body = html.split('<ol class="notes">')[0]                # the footnotes explain every term: not counted
         assert "<td>رنات فائتة" not in body and "<td>نسبة الرد" not in body and "<th class=\"n\">رنات فائتة" not in body, kw
 

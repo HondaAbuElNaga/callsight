@@ -48,20 +48,19 @@ ACTION_STEPS = ("required", "overdue", "note_needed", "callback_missed", "soluti
 
 
 def proper_try_sql(o):
-    """SQL: an outbound call that counts as a real callback try (spec 2026-11-15-ring-time): answered, or ended by
-    the customer side / busy (not the agent's fault), or rang >= 30 s. Unknown who hung up -> needs 30 s."""
-    return or_(o.status == "answered", o.hangup_by.in_(("customer", "busy")), o.wait_seconds >= EARLY_HANGUP_SECONDS)
+    """SQL: an outbound call that counts as a real callback try (spec 2026-11-15-ring-time): every call except an
+    early hang-up (see early_hangup_sql). Unknown who hung up is not blamed on the agent."""
+    return or_(o.status == "answered", func.coalesce(o.hangup_by, "") != "agent",
+               o.wait_seconds >= EARLY_HANGUP_SECONDS)
 
 
 def early_hangup_sql(o):
-    """SQL: not answered, the agent hung up (or unknown) and it rang < 30 s = the try does not count."""
-    return and_(o.status != "answered", func.coalesce(o.hangup_by, "").notin_(("customer", "busy")),
-                o.wait_seconds < EARLY_HANGUP_SECONDS)
+    """SQL: not answered, the agent hung up and it rang < 30 s = the try does not count (spec requirement 2)."""
+    return and_(o.status != "answered", o.hangup_by == "agent", o.wait_seconds < EARLY_HANGUP_SECONDS)
 
 
 def is_proper_try(c: Call) -> bool:
-    return (c.status == "answered" or c.hangup_by in ("customer", "busy")
-            or (c.wait_seconds or 0) >= EARLY_HANGUP_SECONDS)
+    return c.status == "answered" or c.hangup_by != "agent" or (c.wait_seconds or 0) >= EARLY_HANGUP_SECONDS
 
 
 def ring_info(c: Call) -> dict | None:

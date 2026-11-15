@@ -186,7 +186,7 @@ def test_busy_or_customer_declined_counts_even_after_2_seconds(s, hung):
     assert cb["status"] == "on_time" and cb["hangup_by"] == hung and cb["early_tries"] is None
 
 
-def test_unknown_hang_up_needs_30_seconds(s):
+def test_unknown_hang_up_is_not_blamed_on_the_agent(s):
     start_on(s)
     u = user(s)
     c = mk(s, "orig", at(10))
@@ -194,7 +194,8 @@ def test_unknown_hang_up_needs_30_seconds(s):
     x = mk(s, "x", at(14, 5), direction="outbound", status="no_answer", agent="104", talk=0, total=20)
     x.hangup_by = None
     s.flush()
-    assert rows(s)["orig"]["callback"]["status"] == "missed"
+    cb = rows(s)["orig"]["callback"]
+    assert cb["status"] == "on_time" and cb["early_tries"] is None
 
 
 def test_early_tries_before_the_real_callback_are_listed(s):

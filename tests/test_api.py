@@ -287,6 +287,18 @@ def test_detail_has_ring_seconds_and_who_hung_up(env):
         c.hangup_by, c.wait_seconds = "agent", 6
         s.commit()
     assert client.get(f"/api/calls/{cid}").json()["ring"]["early_hangup"] is True
+    # agents: only on calls they may see (116 made the call; 119 gets 404, nothing about the ring)
+    with Session() as s:
+        owner = s.get(Call, cid).agent_ext
+        auth.create_user(s, "own", PASSWORD, "agent", owner, TEAM.ext_team)
+        auth.create_user(s, "other", PASSWORD, "agent", "119" if owner != "119" else "104", TEAM.ext_team)
+        s.commit()
+    client.post("/api/logout")
+    login(client, user="other")
+    assert client.get(f"/api/calls/{cid}").status_code == 404
+    client.post("/api/logout")
+    login(client, user="own")
+    assert client.get(f"/api/calls/{cid}").json()["ring"]["early_hangup"] is True
 
 
 # ---------- recordings ----------

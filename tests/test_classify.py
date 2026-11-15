@@ -190,9 +190,9 @@ def test_outbound_hangup_by(reason, disp, expected):
 
 def test_outbound_ring_seconds_without_ring_duration_is_zero():
     legs = shape("Outbound: NUM:NO ANSWER", team=True)
-    legs[0].update(reason="src hangup", ring_duration=None, duration=None)
+    legs[0].update(reason="src hangup", ring_duration=None, duration=40)
     f = classify(legs, TEAM)
-    assert f.hangup_by == "agent" and f.wait_seconds == 0
+    assert f.hangup_by == "agent" and f.wait_seconds == 0          # not the whole leg time (40 s)
 
 
 def test_outbound_ring_seconds_kept():

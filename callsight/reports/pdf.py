@@ -169,13 +169,15 @@ def agents_table(agents: list[dict], outbound_only: bool = False) -> str:
         return "".join(out)
     out = ['<table><tr><th>الموظف</th><th>الفريق</th><th class="n">مكالمات ردّ عليها</th><th class="n">AHT</th>'
            '<th class="n">رنات فائتة</th><th class="n">الصادرة (تم الرد)</th><th class="n">AHT الصادرة</th>'
-           '<th class="n">قفل مبكر</th><th class="n">متكررة</th></tr>']
+           '<th class="n">قفل مبكر</th><th class="n">محاولات صحيحة</th><th class="n">متوسط الرنين</th>'
+           '<th class="n">متكررة</th></tr>']
     for a in agents:
         out.append(f'<tr><td>{num(a["ext"])} {escape(a["name"])}</td><td>{escape(TEAM_LABEL.get(a["team"], a["team"]))}</td>'
                    f'<td class="n">{num(a["calls"])}</td><td class="n">{dur(a["aht"])}</td>'
                    f'<td class="n">{num(a["missed_rings"])}</td>'
                    f'<td class="n">{num(str(a["outbound"]) + " (" + str(a["outbound_answered"]) + ")")}</td>'
                    f'<td class="n">{dur(a["outbound_aht"])}</td><td class="n">{num(a["early_hangups"])}</td>'
+                   f'<td class="n">{pct(a["proper_rate"])}</td><td class="n">{dur(a["outbound_avg_ring"])}</td>'
                    f'<td class="n">{num(a["repeats"])}</td></tr>')
     out.append("</table>")
     return "".join(out)
@@ -243,6 +245,7 @@ AGENT_TILES = [("calls", "مكالمات ردّ عليها", "count", "count", T
                ("outbound_aht", "متوسط مدة الصادرة", "seconds", "seconds", False),
                ("early_hangups", "قفل مبكر (أقل من 30 ث رنين)", "count", "count", False),
                ("proper_rate", "محاولات صحيحة %", "rate", "rate", True),
+               ("outbound_avg_ring", "متوسط ثواني الرنين (الصادرة بلا رد)", "seconds", "seconds", True),
                ("repeats", "مكالمات متكررة منسوبة", "count", "count", False),
                ("satisfaction", "متوسط الرضا", "na", "count", True)]
 
