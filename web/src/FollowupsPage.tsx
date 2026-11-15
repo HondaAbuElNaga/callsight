@@ -34,8 +34,10 @@ export function FollowupsPage({ me, onCalls, onOpenCall, onLogout, onExpired }: 
 
   useEffect(() => { if (staff) api.agents().then(setAgents).catch(fail); }, [staff, fail]);
   useEffect(() => {
+    let alive = true;                 // filters apply at once: an older, slower answer must not win
     setError("");
-    api.followups({ from, to, agent, state }).then(setData).catch(fail);
+    api.followups({ from, to, agent, state }).then((d) => alive && setData(d)).catch((e) => alive && fail(e));
+    return () => { alive = false; };
   }, [from, to, agent, state, fail]);
   const loadShares = useCallback(() => api.shares().then((d) => setShares(d.items)).catch(fail), [fail]);
   useEffect(() => { loadShares(); }, [loadShares]);

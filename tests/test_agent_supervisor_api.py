@@ -310,3 +310,24 @@ def test_delete_call_content(env):
     assert client.get(f"/api/calls/{ids['own']}/followup").json()["needed"] is False
     log = client.get("/api/admin/log").json()
     assert log[0]["action"] == "delete_call_content"
+
+
+def test_delete_drops_the_gold_draft_text(env):
+    import json
+    client, _, ids, _, tmp = env
+    (tmp / "goldset" / "drafts.json").write_text(json.dumps({"own.wav": {"text": "نص"}, "x.wav": {"text": "y"}}),
+                                                 encoding="utf-8")
+    login(client, "root")
+    assert client.post(f"/api/calls/{ids['own']}/delete-content",
+                       json={"reason": "طلب العميل", "confirm": ids["own"]}).status_code == 200
+    assert json.loads((tmp / "goldset" / "drafts.json").read_text(encoding="utf-8")) == {"x.wav": {"text": "y"}}
+
+
+def test_writes_from_another_origin_are_refused(env):
+    client, _, ids, *_ = env
+    login(client, "root")
+    evil = {"origin": "https://evil.example.com"}
+    assert client.post(f"/api/admin/users/{ids['ali']}/password", headers=evil).status_code == 403
+    assert client.post("/api/login", json={"username": "root", "password": "x"}, headers=evil).status_code == 403
+    ok = {"origin": "http://testserver"}
+    assert client.post(f"/api/admin/users/{ids['ali']}/password", headers=ok).status_code == 200

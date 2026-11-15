@@ -72,6 +72,7 @@ export function App() {
         onFollowups={() => { setOpenCall(null); setView("followups"); }}
         onUsers={isAdmin ? () => setView("users") : undefined}
         openCallId={openCall}
+        onOpened={() => setOpenCall(null)}
       />
     );
   return <>{banner}{page}</>;

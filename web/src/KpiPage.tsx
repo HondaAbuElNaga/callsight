@@ -266,7 +266,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                 </table>
               </div>
               <p className="muted small">
-                تُحتسب من {data.followup.since ?? data.followup.start}. النموذج في وقته = قبل 23:00 يوم المكالمة. معاودة الاتصال في وقتها = خلال 60 دقيقة من الوقت المحدد، من أي موظف في الفريق.
+                تُحتسب من {data.followup.since ?? data.followup.start}. النموذج في وقته = قبل 23:00 يوم المكالمة (أو خلال ساعتين من نهاية مكالمة انتهت بعد 21:00). معاودة الاتصال في وقتها = خلال 60 دقيقة من الوقت المحدد، من أي موظف في الفريق.
                 «عاد العميل بعد الحل» للعرض فقط.
               </p>
             </section>

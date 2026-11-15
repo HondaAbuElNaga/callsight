@@ -15,6 +15,7 @@ interface Props {
   onFollowups?: () => void;
   onUsers?: () => void;
   openCallId?: number | null;      // open this call's panel at once (from the follow-ups page)
+  onOpened?: () => void;           // called once openCallId was used (so it never reopens later)
 }
 
 // A function, not a constant: the page may stay open past midnight.
@@ -35,7 +36,7 @@ function wordsOk(text: string): boolean {
 interface Seek { id: number; t: number; n: number }
 
 export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth, onRating, onLive, onFollowups, onUsers,
-  openCallId }: Props) {
+  openCallId, onOpened }: Props) {
   const [filters, setFilters] = useState<Filters>(emptyFilters); // applied as soon as a field changes
   const [qText, setQText] = useState("");                  // number box: applied after typing stops
   const [wordsText, setWordsText] = useState("");          // transcript words: same, never in the page URL
@@ -118,8 +119,10 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
 
   useEffect(() => {   // opened from the follow-ups page (a shared call is not in the agent's list)
     if (!openCallId) return;
+    onOpened?.();
     lastClicked.current = openCallId;
     api.call(openCallId).then((d) => lastClicked.current === openCallId && setDetail(d)).catch(fail);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openCallId, fail]);
 
   async function openDetail(row: CallRow) {

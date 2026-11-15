@@ -1,7 +1,7 @@
 # Spec: Agent + supervisor work — users page, call follow-up form, callback check + KPIs, shared calls, delete call content
 
 **Roadmap item:** Phase 7 "Agent + supervisor work" (idea: user, 2026-11-15; `product/ideas.md` last section).
-**Status:** approved (2026-11-15: the user asked that every question for them is decided by 3 judge agents and the
+**Status:** done on the branch (built + 3 reviews, 2026-11-15; NOT live until merged to `main`). Approved 2026-11-15: the user asked that every question for them is decided by 3 judge agents and the
 best answer taken; decisions below are the judges' answers, all three agreed unless noted)
 
 ## Goal
@@ -114,8 +114,8 @@ call's personal content on request (PDPL) from the web page instead of the comma
   place used by the page, the KPI page and the PDF); `callsight/api/admin.py` (users, settings, delete);
   `callsight/api/work.py` (follow-ups, shares, agent summary); `visible_call` gets "or shared with this agent";
   retention's per-call erase moved to one shared function used by retention and by delete.
-- **Web:** `UsersPage.tsx` (users + settings), `FollowupsPage.tsx`, `FollowupPanel.tsx` + share box + delete box in
-  the call panel, agent summary box, KPI columns.
+- **Web:** `UsersPage.tsx` (users + settings), `FollowupsPage.tsx`, `WorkPanels.tsx` (form, share box, delete box,
+  agent summary) in the call panel, agent summary box, KPI columns.
 - **Risks:** wrong callback matching (tested at the edges); agents gaming the form (deadline lock, callback ≤ 14
   days); privacy (shares audited, summary only, deleted content really gone except old DB dumps until rotation
   — the same note as retention).

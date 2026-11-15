@@ -176,7 +176,7 @@ def test_agent_allowed_routes_answer(env):
     client, _, ids, app = env
     login(client)
     for method, path in sorted(_api_routes(app) & AGENT_ALLOWED):
-        if method != "GET":          # writes are tested with real bodies in test_work_api.py
+        if method != "GET":          # writes are tested with real bodies in test_agent_supervisor_api.py
             continue
         url = path.replace("{call_id}", str(ids["own"]))
         params = today() if path.startswith("/api/calls") else None

@@ -282,7 +282,8 @@ def report(session: Session, period: Period, teams: TeamConfig, team: str | None
             "scope": {"team": team, "agent": agent}, "trusted": data_trusted(session),
             **cur, "previous": prev,
             # agent-supervisor spec: forms + callbacks (show-only until the admin sets followup_kpi_since)
-            "followup": followups.kpi(session, lo, hi, _scope(teams, team, agent)[1], now)}
+            "followup": followups.kpi(session, lo, hi, _scope(teams, team, agent)[1], now,
+                                      callers=sorted(teams.ext_team))}
 
 
 # ---------- plain text (CLI, hand-calculation check) ----------

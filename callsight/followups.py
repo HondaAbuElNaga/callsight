@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import exists, or_, select, true
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from .config import RIYADH
@@ -114,11 +115,12 @@ def form_state(call: Call, form: CallFollowup | None, now: datetime) -> str:
 
 # ---------- queries ----------
 
-def _callback_lateral():
-    """First outbound saved call to the same number after the original call ended that really rang."""
+def _callback_lateral(callers):
+    """First outbound call by a team extension to the same number after the original call ended that really rang."""
     o = aliased(Call)
     return (select(o.id.label("cb_id"), o.start_time.label("cb_time"), o.agent_ext.label("cb_ext"))
             .where(o.direction == "outbound", o.id != Call.id, o.start_time > Call.end_time,
+                   o.agent_ext.in_(list(callers)), norm_number(Call.customer_number) != "",
                    norm_number(o.customer_number) == norm_number(Call.customer_number),
                    or_(o.status == "answered", o.total_seconds >= RANG_SECONDS))
             .order_by(o.start_time, o.id).limit(1).correlate(Call).lateral("cb"))
@@ -127,6 +129,7 @@ def _callback_lateral():
 def _came_back():
     i = aliased(Call)
     return exists().where(i.direction == "inbound", i.id != Call.id, i.start_time > Call.end_time,
+                          norm_number(Call.customer_number) != "",
                           i.start_time <= Call.end_time + CAME_BACK,
                           norm_number(i.customer_number) == norm_number(Call.customer_number))
 
@@ -166,9 +169,11 @@ def form_dict(f: CallFollowup) -> dict:
             "first_filled_at": f.first_filled_at.isoformat(), "updated_at": f.updated_at.isoformat()}
 
 
-def rows(s: Session, exts, start: date, lo: datetime, hi: datetime, call_ids: list[int] | None = None) -> list[Row]:
-    """Needed calls in [lo, hi) for these owner extensions, with form, first callback and came-back flag."""
-    cb = _callback_lateral()
+def rows(s: Session, exts, start: date, lo: datetime, hi: datetime, call_ids: list[int] | None = None, *,
+         callers) -> list[Row]:
+    """Needed calls in [lo, hi) for these owner extensions, with form, first callback and came-back flag.
+    callers = every team extension (teams.yaml): only their outbound calls count as a callback (decision 2)."""
+    cb = _callback_lateral(callers)
     stmt = (select(Call, CallFollowup, cb.c.cb_id, cb.c.cb_time, cb.c.cb_ext, _came_back().label("came_back"))
             .outerjoin(CallFollowup, CallFollowup.call_id == Call.id)
             .outerjoin(cb, true())
@@ -180,9 +185,10 @@ def rows(s: Session, exts, start: date, lo: datetime, hi: datetime, call_ids: li
 
 
 def one(s: Session, call: Call, exts, start: date | None) -> Row | None:
+    """exts = every team extension (owners and callers alike)."""
     if not is_needed(call, exts, start):
         return None
-    got = rows(s, exts, start, call.start_time, call.start_time + timedelta(microseconds=1), [call.id])
+    got = rows(s, exts, start, call.start_time, call.start_time + timedelta(microseconds=1), [call.id], callers=exts)
     return got[0] if got else None
 
 
@@ -199,7 +205,8 @@ def _empty() -> dict:
             "callbacks_rate": None, "came_back": 0}
 
 
-def kpi(s: Session, lo: datetime, hi: datetime, exts: list[str], now: datetime | None = None) -> dict:
+def kpi(s: Session, lo: datetime, hi: datetime, exts: list[str], now: datetime | None = None, *,
+        callers) -> dict:
     """Follow-up KPIs of [lo, hi), counted in the period of the original call. `active` = the admin switched them
     on (followup_kpi_since): until then they are show-only (page, never PDF). Counting starts at the later of
     followup_start and followup_kpi_since (when set)."""
@@ -212,7 +219,7 @@ def kpi(s: Session, lo: datetime, hi: datetime, exts: list[str], now: datetime |
     if start is None or not exts:
         return out
     count_from = max(start, since) if since else start
-    for r in rows(s, exts, count_from, lo, hi):
+    for r in rows(s, exts, count_from, lo, hi, callers=callers):
         d = r.as_dict(now)
         for bucket in (out["summary"], out["agents"].setdefault(r.call.agent_ext, _empty())):
             if d["form_state"] != "missing":          # deadline passed, or already filled
@@ -289,7 +296,11 @@ def save(s: Session, call: Call, data: dict, user: AppUser, now: datetime | None
         for k, v in clean.items():
             setattr(f, k, v)
         f.updated_by, f.updated_at = user.id, now
-    s.commit()
+    try:
+        s.commit()
+    except IntegrityError:          # two first saves at once (double click): the other one won
+        s.rollback()
+        raise FormError("حُفظ النموذج للتو من طلب آخر، أعد فتح المكالمة") from None
     return f
 
 

@@ -23,6 +23,7 @@ export function FollowupPanel({ callId, onExpired }: { callId: number; onExpired
   const [view, setView] = useState<FollowupView | null>(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);          // no double save (double click)
   const [what, setWhat] = useState("");
   const [solved, setSolved] = useState<"" | "yes" | "no">("");
   const [resp, setResp] = useState("");            // "user:12" | "customer" | "other_department"
@@ -44,8 +45,9 @@ export function FollowupPanel({ callId, onExpired }: { callId: number; onExpired
 
   if (!view || !view.needed) return null;
   const save = async (body: FollowupIn) => {
-    setError(""); setSaved(false);
-    try { load(await api.saveFollowup(callId, body)); setSaved(true); } catch (e) { fail(e); }
+    if (busy) return;
+    setError(""); setSaved(false); setBusy(true);
+    try { load(await api.saveFollowup(callId, body)); setSaved(true); } catch (e) { fail(e); } finally { setBusy(false); }
   };
   const submit = () => {
     if (!what.trim()) { setError("اكتب ما حدث في المكالمة"); return; }
@@ -57,7 +59,7 @@ export function FollowupPanel({ callId, onExpired }: { callId: number; onExpired
       responsible_user_id: uid ? Number(uid) : null, expected_at: fromRiyadhInput(expected),
       callback_at: fromRiyadhInput(callback) });
   };
-  const ro = !view.can_edit;
+  const ro = !view.can_edit || busy;
   return (
     <section className="panel work">
       <h3>متابعة المكالمة <span className={`state ${FORM_CLASS[view.form_state]}`}>{FORM_LABEL[view.form_state]}</span></h3>

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Callable, Iterator
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Path as FPath, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
@@ -126,6 +127,14 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
+        # Writes from a browser must come from this site: SameSite=strict still lets another *.domain page post
+        # a form. A browser always sends Origin on such a POST; scripts/tests without Origin are not browsers.
+        # Listen (/api/live/...) keeps its own stricter allowlist check, which also writes the audit row.
+        if (request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/")
+                and not request.url.path.startswith("/api/live/")):
+            origin = request.headers.get("origin")
+            if origin and urlsplit(origin).netloc.lower() != (request.headers.get("host") or "").lower():
+                return JSONResponse({"detail": "request not from the CallSight page"}, status_code=403)
         resp = await call_next(request)
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "DENY"

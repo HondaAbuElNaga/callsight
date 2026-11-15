@@ -60,3 +60,6 @@ Gaps: no maintained open-source "Asterisk queue KPI" or "Arabic call-center anal
 - Suggested order: users page, follow-up form + callback check, supervisor notes, the KPIs, delete with log.
 - **Open questions to the user:** (1) agents see the summary only, or also the score? (2) callback by any team
   member or only the same agent? (3) form for every answered call or only calls longer than ~20 s?
+- **Decided 2026-11-15 by 3 judge agents (the user's wish):** summary only; any team member, credited to the
+  form's owner; only calls > 20 s. All five ideas: **approved**, built in Phase 7
+  ([spec](../specs/2026-11-15-agent-supervisor/spec.md)).

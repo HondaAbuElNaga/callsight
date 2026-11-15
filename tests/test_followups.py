@@ -65,7 +65,7 @@ def start_on(s, day=DAY, kpi: date | None = None):
 
 def rows(s, now=None):
     return {r.call.uid: r.as_dict(now or at(12, day=DAY + timedelta(days=5))) for r in
-            fu.rows(s, EXTS, DAY, at(0), at(0, day=DAY + timedelta(days=5)))}
+            fu.rows(s, EXTS, DAY, at(0), at(0, day=DAY + timedelta(days=5)), callers=EXTS)}
 
 
 # ---------- which calls need a form (decision 3) ----------
@@ -88,7 +88,7 @@ def test_needed_calls(s):
 def test_feature_off_without_start(s):
     c = mk(s, "ok", at(9))
     assert not fu.is_needed(c, EXTS, None)
-    assert fu.kpi(s, at(0), at(0, day=DAY + timedelta(days=7)), EXTS)["enabled"] is False
+    assert fu.kpi(s, at(0), at(0, day=DAY + timedelta(days=7)), EXTS, callers=EXTS)["enabled"] is False
 
 
 # ---------- form deadline (decision 11) ----------
@@ -161,6 +161,30 @@ def test_other_number_does_not_count(s):
     assert _callback_case(s, at(14), number="0509999999")["status"] == "missed"
 
 
+def test_callback_by_a_non_team_extension_does_not_count(s):
+    assert _callback_case(s, at(14, 10), agent="114")["status"] == "missed"     # 114 is not in teams.yaml
+
+
+def test_no_digits_never_match(s):
+    start_on(s)
+    u = user(s)
+    a = mk(s, "a", at(10), number="anonymous")
+    form(s, a, u, filled=at(10, 5), solved=True)
+    mk(s, "again", at(12), agent="104", number="anonymous")
+    assert rows(s)["a"]["came_back"] is False
+
+
+def test_retention_erased_call_is_left_out(s, tmp_path):
+    from callsight import retention
+    start_on(s)
+    u = user(s)
+    a = mk(s, "a", at(10))
+    form(s, a, u, filled=at(10, 5), solved=True)
+    retention.erase_call_content(s, a, tmp_path, None, None)
+    s.flush()
+    assert rows(s) == {}
+
+
 def test_no_number_is_its_own_state(s):
     assert _callback_case(s, at(14), number="", orig_number="")["status"] == "no_number"
 
@@ -206,7 +230,7 @@ def test_kpi_numbers_and_show_only_flag(s):
     form(s, b, u, filled=at(23, 30), callback=at(15))           # form late, callback missed
     _ = c                                                          # no form at all -> overdue
     lo, hi = at(0), at(0, day=DAY + timedelta(days=1))
-    k = fu.kpi(s, lo, hi, EXTS, now=at(12, day=DAY + timedelta(days=2)))
+    k = fu.kpi(s, lo, hi, EXTS, callers=EXTS, now=at(12, day=DAY + timedelta(days=2)))
     assert k["enabled"] is True and k["active"] is False
     v = k["agents"]["119"]
     assert (v["forms_due"], v["forms_on_time"], v["callbacks_due"], v["callbacks_on_time"]) == (3, 1, 2, 1)
@@ -219,14 +243,14 @@ def test_kpi_counts_only_from_the_switch_on_date(s):
     start_on(s, kpi=DAY + timedelta(days=1))
     mk(s, "before", at(10))
     mk(s, "after", at(10, day=DAY + timedelta(days=1)), number="0504444444")
-    k = fu.kpi(s, at(0), at(0, day=DAY + timedelta(days=3)), EXTS, now=at(12, day=DAY + timedelta(days=3)))
+    k = fu.kpi(s, at(0), at(0, day=DAY + timedelta(days=3)), EXTS, callers=EXTS, now=at(12, day=DAY + timedelta(days=3)))
     assert k["active"] is True and k["summary"]["forms_due"] == 1
 
 
 def test_pending_form_is_not_counted_yet(s):
     start_on(s)
     mk(s, "a", at(10))
-    k = fu.kpi(s, at(0), at(0, day=DAY + timedelta(days=1)), EXTS, now=at(12))
+    k = fu.kpi(s, at(0), at(0, day=DAY + timedelta(days=1)), EXTS, callers=EXTS, now=at(12))
     assert k["summary"]["forms_due"] == 0
 
 

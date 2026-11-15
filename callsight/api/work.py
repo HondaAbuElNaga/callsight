@@ -145,7 +145,8 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             exts = [agent]
         now = _now()
         names = _names(s)
-        items = [r.as_dict(now, names) for r in fu.rows(s, exts, start, day_bounds(d_from)[0], day_bounds(d_to)[1])]
+        items = [r.as_dict(now, names) for r in fu.rows(s, exts, start, day_bounds(d_from)[0], day_bounds(d_to)[1],
+                                                         callers=team_exts())]
         if state == "todo":
             items = [i for i in items if i["form_state"] in ("missing", "overdue")]
         elif state == "callbacks":

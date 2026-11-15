@@ -97,6 +97,7 @@ def erase_call_content(session: Session, c: Call, audio_dir: Path, backup_files_
         if session.execute(text(f'DELETE FROM "{t}" WHERE call_id = :id'), {"id": c.id}).rowcount:
             what.append(t)
     c.recording_status, c.recording_path = "deleted", None
+    c.content_deleted_at = c.content_deleted_at or _utcnow()   # follow-up KPIs leave erased calls out
     return what, files, pruned
 
 
