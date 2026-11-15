@@ -44,8 +44,13 @@ Spec: [spec.md](spec.md) · Branch: `spec/2026-11-15-aws-deploy`
 - [x] 9. User created the stack with the main server only (A4). Elastic IP **63.184.90.120**. Checked from the PC: SSH
         login works (Ubuntu 24.04.5, 2 CPUs, 3.7 GB, 96 GB disk, 10.20.1.10); ports 80/443/5432/6379/2049 do not answer
         yet (nothing installed).
-- [ ] 10. Install the main server (Docker, NFS export, compose up, Caddy certificate); outside port check.
+- [x] 10. Main server installed 2026-11-15 (Docker 29.1.3, compose 2.40.3, NFS export, compose up). Let's Encrypt
+         certificate issued for `calls.mohanadyehia.com`; from the PC: HTTPS 200 with a valid certificate, HTTP → 308 to
+         HTTPS; ports 80/443 open, 22 open (allowed from the PC's address only), 5432/6379/2049/8080/5433 closed.
 - [ ] 11. Copy `config/` + new `.env`; create admin + supervisor accounts; set `ASR_START_DATE`; stop the PC services.
+         Done 2026-11-15: `config/` (with the code), new `.env` (new random passwords; PBX ID/secret left EMPTY so
+         no login is tried before the supplier confirms), account `admin`. Open: supervisor account,
+         `ASR_START_DATE`, PBX ID/secret, stopping the PC services (all at go-live, after A5).
 - [ ] 12. After A5: one PBX login through the FQDN; ingest runs; test the live board through the FQDN.
 - [ ] 13. After A3: user updates the stack with GPU = yes; models + images; measure Whisper speed on the T4;
          `setup-internet.sh off` + check that the GPU server reaches nothing but the main server.
