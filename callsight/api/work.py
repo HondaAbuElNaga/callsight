@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from .. import followups as fu
 from ..config import RIYADH
-from ..db.models import Agent, AdminLog, AppUser, Call, CallFollowup, CallShare
+from ..db.models import Agent, AdminLog, AppUser, Call, CallFollowup, CallFollowupNote, CallShare
 from ..ingest.service import day_bounds
 from . import auth
 from .calls import visible_call, visible_scope
@@ -117,6 +117,8 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         if not staff(user) and c.agent_ext != user.ext:
             raise HTTPException(404, "no such call")       # a shared call of a colleague: not even confirmed
         form = s.scalars(select(CallFollowup).where(CallFollowup.call_id == c.id)).first()
+        if s.scalar(select(CallFollowupNote.id).where(CallFollowupNote.call_id == c.id).limit(1)) is not None:
+            raise HTTPException(409, "notes after a callback exist: the form can no longer change")
         why = may_edit(form, c, user, now)        # a late FIRST form is allowed (it counts as late)
         if why:
             raise HTTPException(403, why)
@@ -199,11 +201,15 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         def load(lo: date, hi: date) -> list[dict]:
             return [r.as_dict(now, names, users) for r in fu.rows(s, exts, start, day_bounds(lo)[0],
                                                                    day_bounds(hi)[1], callers=team_exts())]
-        recent = load(today - timedelta(days=ACTION_LOOKBACK_DAYS), today)
+        back = today - timedelta(days=ACTION_LOOKBACK_DAYS)
+        recent = load(back, today)
         out["counts"] = counts(recent, today)
         if state == "action":
             items = sorted((i for i in recent if action_due(i, today)),
                            key=lambda i: (URGENCY.get(i["step"], 9), i["start_time"]))
+        elif d_from >= back and d_to <= today:     # inside the window already loaded: no second query
+            lo, hi = day_bounds(d_from)[0], day_bounds(d_to)[1]
+            items = [i for i in recent if lo <= datetime.fromisoformat(i["start_time"]) < hi]
         else:
             items = load(d_from, d_to)
         if state == "open":

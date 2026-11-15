@@ -337,7 +337,8 @@ def test_writes_from_another_origin_are_refused(env):
 
 # ---------- follow-up stages (spec 2026-11-15-followup-stages) ----------
 
-def _callback_call(Session, ids, uid="cb", agent="104", minutes_ago=10, number="0501234567"):
+def _callback_call(Session, ids, uid="cb", agent="104", minutes_ago=-1, number="0501234567"):
+    """Default: rings 1 min after now, i.e. after the form the test just saved (a call before the form does not count)."""
     with Session() as s:
         t = _now_riyadh() - timedelta(minutes=minutes_ago)
         s.add(Call(uid=uid, direction="outbound", entry="direct", customer_number=number, team="customer_service",
@@ -422,3 +423,19 @@ def test_opening_a_shared_call_marks_it_seen(env):
     assert client.get("/api/shares").json()["unseen"] == 1
     assert client.get(f"/api/calls/{ids['other']}/shares").json()["items"][0]["seen_at"]
     assert client.get("/api/shares").json()["unseen"] == 0
+
+
+def test_form_is_frozen_once_a_note_exists_and_wrong_round_is_409(env):
+    client, Session, ids, *_ = env
+    switch_on(client)
+    login(client, "ali")
+    client.put(f"/api/calls/{ids['own']}/followup", json=not_solved(boss_id(Session)))
+    _callback_call(Session, ids)
+    wrong = client.post(f"/api/calls/{ids['own']}/followup/notes", json={"round": 3, "what_happened": "x", "solved": True})
+    assert wrong.status_code == 409
+    nxt = not_solved(boss_id(Session), minutes=24 * 60)
+    nxt.pop("what_happened")
+    r = client.post(f"/api/calls/{ids['own']}/followup/notes", json={"round": 2, "what_happened": "لم يُحل", **nxt})
+    assert r.status_code == 200 and r.json()["step"] == "waiting_callback" and r.json()["round"] == 2
+    login(client, "boss")
+    assert client.put(f"/api/calls/{ids['own']}/followup", json={"no_followup": True}).status_code == 409

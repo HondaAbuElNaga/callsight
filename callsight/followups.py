@@ -36,7 +36,8 @@ CALLBACK_STATES = ("waiting", "on_time", "late", "missed", "no_number")
 # steps of one call (spec 2026-11-15-followup-stages), computed on read, never stored
 STEPS = ("required", "overdue", "no_followup", "solved_first", "waiting_callback", "callback_missed",
          "note_needed", "solved_after", "no_number")
-OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number")
+OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number")      # list view "open"
+KPI_OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed")
 ACTION_STEPS = ("required", "overdue", "note_needed", "callback_missed")   # + waiting_callback due by today
 
 
@@ -199,7 +200,7 @@ class Row:
         if rnd <= len(self.notes):                       # notes[rnd-1] = round rnd+1, reports on round rnd's callback
             nxt = self.notes[rnd - 1]
             c = self.cb_calls.get(nxt.cb_call_id or -1)
-            return Callback(c.id, c.start_time, c.end_time, c.agent_ext) if c else None
+            return Callback(c.id, c.start_time, c.end_time, c.agent_ext, c.status == "answered") if c else None
         return self.round1_cb() if rnd == 1 else self.current_cb
 
     def step(self, now: datetime) -> str:
@@ -370,6 +371,14 @@ def rows(s: Session, exts, start: date, lo: datetime, hi: datetime, call_ids: li
     for r in out:
         r.notes = notes.get(r.call.id, [])
         r.cb_calls = calls
+        f = r.form
+        if (f.solved is False and r.cb_time is not None and r.cb_time <= f.first_filled_at) if f else False:
+            # a call before the form was saved is not the callback promised in it: look again after the form
+            cb1 = find_callback(s, r.call, f.first_filled_at, callers)
+            r.cb_id, r.cb_time, r.cb_ext = (cb1.id, cb1.time, cb1.ext) if cb1 else (None, None, None)
+            r.cb_answered = bool(cb1 and cb1.answered)
+            if cb1 and cb1.id not in calls:
+                calls[cb1.id] = s.get(Call, cb1.id)
         if r.notes and r.open_entry() is not None:
             r.current_cb = find_callback(s, r.call, _anchor(r), callers)
     return out
@@ -441,7 +450,7 @@ def kpi(s: Session, lo: datetime, hi: datetime, exts: list[str], now: datetime |
             if step == "solved_after":
                 b["solved_after"] += 1
                 b["rounds_to_solve"] += len(r.notes)
-            b["open"] += step in OPEN_STEPS
+            b["open"] += step in KPI_OPEN_STEPS        # no_number: no callback possible, not "open" (spec 7)
             b["came_back"] += back
     for b in (out["summary"], *out["agents"].values()):
         b["forms_rate"] = _rate(b["forms_on_time"], b["forms_due"])

@@ -455,3 +455,42 @@ def test_pdf_table_has_the_stage_columns(s):
     k = fu.kpi(s, at(0), at(0, day=DAY + timedelta(days=1)), EXTS, callers=EXTS, now=at(12, day=DAY + timedelta(days=1)))
     html = pdf.followup_table(k, [{"ext": "119", "name": "علي"}])
     assert "حُلّت بعد المتابعة" in html and "نسبة الحل من أول مكالمة" in html and "1.0" in html
+
+
+# ---------- review fixes (2026-11-15) ----------
+
+def test_call_before_the_form_is_not_the_promised_callback(s):
+    start_on(s)
+    u = user(s)
+    c = mk(s, "orig", at(10))
+    mk(s, "early", at(10, 5), direction="outbound", agent="119")            # line dropped, rang back at once
+    form(s, c, u, filled=at(10, 30), callback=at(12))                        # then the form: not solved, 12:00
+    s.commit()
+    r = _row(s, c)
+    assert r.step(at(11)) == "waiting_callback" and r.step(at(13, 1)) == "callback_missed"
+    mk(s, "real", at(12, 10), direction="outbound", agent="104")
+    d = _row(s, c).as_dict(at(12, 20))
+    assert d["step"] == "note_needed" and d["callback"]["by_ext"] == "104" and d["callback"]["status"] == "on_time"
+
+
+def test_history_keeps_answered_for_finished_rounds(s):
+    c, u = _open_case(s)
+    _note(s, c, u, at(15), solved=True)
+    assert _row(s, c).as_dict(at(15, 5))["history"][0]["callback_call"]["answered"] is True
+
+
+def test_kpi_per_agent_split_and_no_number_is_not_open(s):
+    start_on(s)
+    u, sara = user(s), user(s, "sara", ext="104")
+    a = mk(s, "a", at(10))
+    form(s, a, u, filled=at(10, 5), solved=True)
+    b = mk(s, "b", at(11), agent="104", number="0502222222")
+    form(s, b, sara, filled=at(11, 5), callback=at(13))
+    hidden = mk(s, "hidden", at(12), agent="104", number="")
+    form(s, hidden, sara, filled=at(12, 5), callback=at(14))
+    k = fu.kpi(s, at(0), at(0, day=DAY + timedelta(days=1)), EXTS, callers=EXTS, now=at(12, day=DAY + timedelta(days=1)))
+    a119, a104, tot = k["agents"]["119"], k["agents"]["104"], k["summary"]
+    assert (a119["answered_forms"], a119["solved_first"], a119["open"]) == (1, 1, 0)
+    assert (a104["answered_forms"], a104["solved_first"], a104["open"]) == (2, 0, 1)      # "hidden" = no_number
+    for key in ("answered_forms", "solved_first", "open", "callbacks_due"):
+        assert tot[key] == a119[key] + a104[key]

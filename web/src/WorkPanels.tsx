@@ -131,7 +131,7 @@ export function FollowupPanel({ callId, onExpired }: { callId: number; onExpired
     run(() => api.addNote(callId, { ...(r.body as Omit<NoteIn, "round">), round: view.round + 1 }), "تم حفظ الملاحظة.");
   };
   const ro = !view.can_edit || busy;
-  const formOpen = view.round === 1 && (view.form === null || view.step !== "note_needed");
+  const formOpen = view.round === 1 && view.history.length <= 1 && view.step !== "note_needed";
   const next = STEP_NEXT[view.step];
   return (
     <section className={`panel work step-${STEP_CLASS[view.step]}`}>

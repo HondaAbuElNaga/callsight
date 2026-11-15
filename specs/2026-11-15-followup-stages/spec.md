@@ -1,7 +1,7 @@
 # Spec: Follow-up stages per call + agent page fixes
 
 **Roadmap item:** Phase 7 "Agent + supervisor work", follow-on (idea: user, 2026-11-15).
-**Status:** approved (user, 2026-11-15: "Yes, start" with Claude's recommended answers to the 4 open questions)
+**Status:** done on the branch (built + 3 reviews, 2026-11-15; NOT live until merged to `main`). Approved (user, 2026-11-15: "Yes, start" with Claude's recommended answers to the 4 open questions)
 
 ## Goal
 Every call that needs follow-up goes through clear **steps**, and the agent always sees which step each call is at
@@ -32,10 +32,14 @@ different KPI numbers for each path. The same work fixes the agent page problems
 | `callback_missed` | معاودة فائتة | latest note not solved, callback time + 60 min passed, no callback call |
 | `note_needed` | تم الاتصال – أضف ملاحظة | a callback call was found after the latest open note, no note for it yet |
 | `solved_after` | حُلّت بعد المتابعة | latest note after a callback says solved (end) |
+| `no_number` | بلا رقم للمعاودة | latest entry not solved but the call has no customer number (no callback can be checked; not counted as "open" in the KPI) |
 
-- **Round 1** = the first form; its callback = first outbound team call after the original call ended (as today).
+- **Round 1** = the first form; its callback = first outbound team call after the original call ended (as today),
+  except when the form says "not solved": then a call made **before the form was saved** does not count for the
+  promise in the form (review finding, 2026-11-15) and the search starts at the form's save time.
 - **Round n ≥ 2** = a note written after the callback of round n-1. If not solved, it sets a new callback time; its
-  callback = first outbound team call to the same number that **starts after the round n-1 callback call ended**.
+  callback = first outbound team call to the same number that **starts after the note was saved and after the round
+  n-1 callback call ended** (a second call made before the note was written is not the new round's callback).
 - A late callback call (after `callback_missed`) still moves the call to `note_needed`; the KPI keeps it as late.
 - The note after a callback has a deadline: the same rule as the form (23:00 Riyadh on the callback call's day, or
   2 h after it when that is later).
@@ -44,7 +48,8 @@ different KPI numbers for each path. The same work fixes the agent page problems
 1. New table `call_followup_note` (migration 0011): call_id (cascade), round (≥ 2), cb_call_id (the callback call the
    note reports on), what_happened (≤ 500), solved, responsible_kind / responsible_user_id, expected_at,
    callback_at, created_by, created_at. Unique (call_id, round). Added to `retention.CONTENT_TABLES`.
-2. `POST /api/calls/{id}/followup/notes`: allowed only when the step is `note_needed` (the agent who owns the call or
+2. Once a note exists, the round-1 form cannot be changed any more (PUT → 409; review finding).
+   `POST /api/calls/{id}/followup/notes`: allowed only when the step is `note_needed` (the agent who owns the call or
    staff). Same checks as the form (text required; not solved → responsible + expected + callback in the future,
    ≤ 14 days). Notes cannot be edited (append-only; a mistake is fixed by the next note or by a supervisor note).
    409 in any other step.
@@ -78,17 +83,17 @@ different KPI numbers for each path. The same work fixes the agent page problems
    - existing: forms on time %, came back (kept)
 
 ## Acceptance criteria
-- [ ] Unit tests for each step and every move between steps (form solved / not solved, callback on time / late /
+- [x] Unit tests for each step and every move between steps (form solved / not solved, callback on time / late /
       missed, note solved / not solved → round 3), the round ≥ 2 callback anchor, and the note deadline at its edges.
-- [ ] API tests: note only in `note_needed` (409 otherwise); an agent cannot add a note to another agent's call (404);
+- [x] API tests: note only in `note_needed` (409 otherwise); an agent cannot add a note to another agent's call (404);
       a note in the wrong round or a double save → 409/422, never 500; the round-2 callback is not the round-1 call.
-- [ ] The list in "needs action" shows a 30-day-old overdue form (test); counters match the list (test).
-- [ ] KPI tests: the numbers in requirement 7 on a fixed set of calls, including the per-agent split.
-- [ ] Erasing a call's content removes its notes (retention test).
-- [ ] Migration 0011: up → down → up on a scratch DB.
-- [ ] Opening a shared call as the agent marks it seen (test).
-- [ ] Full pytest green (except the known `.env` test), web build in Docker OK.
-- [ ] Agent page checked by hand in the browser (local), with a screenshot of each step.
+- [x] The list in "needs action" shows a 30-day-old overdue form (test); counters match the list (test).
+- [x] KPI tests: the numbers in requirement 7 on a fixed set of calls, including the per-agent split.
+- [x] Erasing a call's content removes its notes (retention test).
+- [x] Migration 0011: up → down → up on a scratch DB.
+- [x] Opening a shared call as the agent marks it seen (test).
+- [x] Full pytest green (except the known `.env` test), web build in Docker OK.
+- [ ] Agent page checked by hand in the browser (local), with a screenshot of each step. (NOT done: after the deploy)
 
 ## Technical approach
 - `callsight/followups.py`: a `step()` function over (call, form, notes, callback calls, now). Round 1 keeps the
