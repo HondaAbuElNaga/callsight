@@ -214,7 +214,8 @@ export interface FollowupForm {
   first_filled_at: string;
   updated_at: string;
 }
-export interface Callback { at: string; due: string; status: CallbackStatus; by_ext: string | null; call_id: number | null; time: string | null }
+export interface Callback { at: string; due: string; status: CallbackStatus; by_ext: string | null; call_id: number | null; time: string | null;
+  answered: boolean | null }   // from the PBX record of the callback call (null = no callback call yet)
 export interface FollowupItem {
   call_id: number; start_time: string; end_time: string; customer_number: string | null; agent_ext: string | null;
   agent_name: string; talk_seconds: number; deadline: string; form_state: FormState; form: FollowupForm | null;

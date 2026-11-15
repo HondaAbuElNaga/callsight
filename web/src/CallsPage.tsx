@@ -16,6 +16,7 @@ interface Props {
   onUsers?: () => void;
   openCallId?: number | null;      // open this call's panel at once (from the follow-ups page)
   onOpened?: () => void;           // called once openCallId was used (so it never reopens later)
+  detailOnly?: boolean;            // agents: no call list, only the opened call (their home is the follow-ups page)
 }
 
 // A function, not a constant: the page may stay open past midnight.
@@ -36,7 +37,7 @@ function wordsOk(text: string): boolean {
 interface Seek { id: number; t: number; n: number }
 
 export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth, onRating, onLive, onFollowups, onUsers,
-  openCallId, onOpened }: Props) {
+  openCallId, onOpened, detailOnly = false }: Props) {
   const [filters, setFilters] = useState<Filters>(emptyFilters); // applied as soon as a field changes
   const [qText, setQText] = useState("");                  // number box: applied after typing stops
   const [wordsText, setWordsText] = useState("");          // transcript words: same, never in the page URL
@@ -136,7 +137,7 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
   return (
     <div className={`page ${playing ? "with-player" : ""}`}>
       <header className="topbar">
-        <h1>سجل المكالمات</h1>
+        <h1>{detailOnly ? "تفاصيل المكالمة" : "سجل المكالمات"}</h1>
         <div className="who">
           {onLive && <button className="link" onClick={onLive}>المكالمات الحالية</button>}
           {onFollowups && <button className="link" onClick={onFollowups}>المتابعات</button>}
@@ -150,6 +151,7 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
         </div>
       </header>
 
+      {!detailOnly && <>
       <form className="filters" onSubmit={(e) => e.preventDefault()}>
         <label>من <input type="date" value={filters.from} max={filters.to || undefined}
           onChange={(e) => e.target.value && set({ from: e.target.value, to: e.target.value > filters.to ? e.target.value : filters.to })} /></label>
@@ -248,9 +250,11 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
           <button disabled={page >= pages} onClick={() => setPage(page + 1)}>التالي</button>
         </div>
       )}
+      </>}
+      {detailOnly && error && <div className="error">{error}</div>}
 
       {detail && (
-        <DetailPanel call={detail} onClose={() => setDetail(null)} onPlay={() => { setSeek(null); setPlaying(detail); }}>
+        <DetailPanel call={detail} onClose={() => { setDetail(null); if (detailOnly) onFollowups?.(); }} onPlay={() => { setSeek(null); setPlaying(detail); }}>
           {!canSearchText && <AgentSummaryPanel key={`s${detail.id}`} callId={detail.id} onExpired={onExpired} />}
           <SharePanel key={`sh${detail.id}`} callId={detail.id} me={me} onExpired={onExpired} />
           <FollowupPanel key={`f${detail.id}`} callId={detail.id} onExpired={onExpired} />

@@ -17,6 +17,7 @@ export function App() {
   const [problems, setProblems] = useState(0);
   const isAdmin = me?.role === "admin";
   const isStaff = me?.role === "admin" || me?.role === "supervisor";
+  const isAgent = me?.role === "agent";   // agents: the follow-ups page is their only page (+ the call they open)
 
   useEffect(() => {
     api.me().then(setMe).catch(() => setMe(null));
@@ -53,6 +54,12 @@ export function App() {
     page = <LivePage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "users" && isAdmin)
     page = <UsersPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
+  else if (isAgent && (view !== "calls" || openCall === null))
+    page = <FollowupsPage me={me} onLogout={logout} onExpired={() => setMe(null)}
+      onOpenCall={(id) => { setOpenCall(id); setView("calls"); }} />;
+  else if (isAgent)
+    page = <CallsPage me={me} onLogout={logout} onExpired={() => setMe(null)} detailOnly
+      openCallId={openCall} onFollowups={() => { setOpenCall(null); setView("followups"); }} />;
   else if (view === "followups")
     page = <FollowupsPage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)}
       onOpenCall={(id) => { setOpenCall(id); setView("calls"); }} />;

@@ -118,7 +118,8 @@ def form_state(call: Call, form: CallFollowup | None, now: datetime) -> str:
 def _callback_lateral(callers):
     """First outbound call by a team extension to the same number after the original call ended that really rang."""
     o = aliased(Call)
-    return (select(o.id.label("cb_id"), o.start_time.label("cb_time"), o.agent_ext.label("cb_ext"))
+    return (select(o.id.label("cb_id"), o.start_time.label("cb_time"), o.agent_ext.label("cb_ext"),
+                   o.status.label("cb_status"))
             .where(o.direction == "outbound", o.id != Call.id, o.start_time > Call.end_time,
                    o.agent_ext.in_(list(callers)), norm_number(Call.customer_number) != "",
                    norm_number(o.customer_number) == norm_number(Call.customer_number),
@@ -142,6 +143,7 @@ class Row:
     cb_time: datetime | None
     cb_ext: str | None
     came_back: bool
+    cb_status: str | None = None      # the PBX status of that callback call (answered / no_answer / busy ...)
 
     def as_dict(self, now: datetime, names: dict[str, str] | None = None) -> dict:
         c, f = self.call, self.form
@@ -156,6 +158,8 @@ class Row:
             "callback": None if cb_state is None else {
                 "at": f.callback_at.isoformat(), "due": (f.callback_at + GRACE).isoformat(), "status": cb_state,
                 "by_ext": self.cb_ext, "call_id": self.cb_id,
+                # from the PBX record of the callback call, never from a button: did the customer answer?
+                "answered": None if self.cb_time is None else self.cb_status == "answered",
                 "time": self.cb_time.isoformat() if self.cb_time else None},
             "came_back": bool(self.came_back and f and f.solved is True),
         }
@@ -174,14 +178,15 @@ def rows(s: Session, exts, start: date, lo: datetime, hi: datetime, call_ids: li
     """Needed calls in [lo, hi) for these owner extensions, with form, first callback and came-back flag.
     callers = every team extension (teams.yaml): only their outbound calls count as a callback (decision 2)."""
     cb = _callback_lateral(callers)
-    stmt = (select(Call, CallFollowup, cb.c.cb_id, cb.c.cb_time, cb.c.cb_ext, _came_back().label("came_back"))
+    stmt = (select(Call, CallFollowup, cb.c.cb_id, cb.c.cb_time, cb.c.cb_ext, _came_back().label("came_back"),
+                   cb.c.cb_status)
             .outerjoin(CallFollowup, CallFollowup.call_id == Call.id)
             .outerjoin(cb, true())
             .where(*needed_conditions(exts, start), Call.start_time >= lo, Call.start_time < hi))
     if call_ids is not None:
         stmt = stmt.where(Call.id.in_(call_ids))
     stmt = stmt.order_by(Call.start_time.desc(), Call.id.desc())
-    return [Row(c, f, a, b, e, bool(cb_)) for c, f, a, b, e, cb_ in s.execute(stmt).all()]
+    return [Row(c, f, a, b, e, bool(cb_), st) for c, f, a, b, e, cb_, st in s.execute(stmt).all()]
 
 
 def one(s: Session, call: Call, exts, start: date | None) -> Row | None:

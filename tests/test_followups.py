@@ -144,6 +144,19 @@ def test_unanswered_attempt_counts_from_10_seconds(s):
     assert _callback_case(s, at(14, 10), status="no_answer", total=10)["status"] == "on_time"
 
 
+def test_callback_answered_comes_from_the_pbx_record(s):
+    assert _callback_case(s, at(14, 10))["answered"] is True
+
+
+def test_callback_not_answered_comes_from_the_pbx_record(s):
+    assert _callback_case(s, at(14, 10), status="no_answer", total=15)["answered"] is False
+
+
+def test_no_callback_call_yet_means_answered_unknown(s):
+    cb = _callback_case(s, None)
+    assert cb["answered"] is None and cb["status"] in ("waiting", "missed")
+
+
 def test_unanswered_attempt_of_9_seconds_does_not_count(s):
     assert _callback_case(s, at(14, 10), status="no_answer", total=9)["status"] == "missed"
 

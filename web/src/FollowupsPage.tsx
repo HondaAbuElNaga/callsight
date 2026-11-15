@@ -4,7 +4,8 @@ import { api, Unauthorized, type Agent, type FollowupList, type Me, type Share }
 import { CALLBACK_LABEL, FORM_LABEL, formatDateTime, riyadhToday } from "./format";
 import { CB_CLASS, FORM_CLASS } from "./WorkPanels";
 
-interface Props { me: Me; onCalls: () => void; onOpenCall: (id: number) => void; onLogout: () => void; onExpired: () => void }
+interface Props { me: Me; onCalls?: () => void;   // agents: no calls page (follow-ups is their only page)
+  onOpenCall: (id: number) => void; onLogout: () => void; onExpired: () => void }
 
 const STATE_OPTIONS: [string, string][] = [
   ["todo", "نماذج لم تُعبّأ"], ["open_callbacks", "معاودات مفتوحة أو فائتة"], ["callbacks", "كل المعاودات"],
@@ -47,7 +48,7 @@ export function FollowupsPage({ me, onCalls, onOpenCall, onLogout, onExpired }: 
       <header className="topbar">
         <h1>المتابعات</h1>
         <div className="who">
-          <button className="link" onClick={onCalls}>سجل المكالمات</button>
+          {onCalls && <button className="link" onClick={onCalls}>سجل المكالمات</button>}
           <span className="muted">{me.username}{me.ext ? ` · تحويلة ${me.ext}` : ""}</span>
           <button className="link" onClick={onLogout}>خروج</button>
         </div>
@@ -100,7 +101,7 @@ export function FollowupsPage({ me, onCalls, onOpenCall, onLogout, onExpired }: 
       ) : (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>الوقت</th><th>رقم العميل</th><th>الموظف</th><th>النموذج</th><th>معاودة الاتصال</th><th>آخر موعد للنموذج</th></tr></thead>
+            <thead><tr><th>الوقت</th><th>رقم العميل</th><th>الموظف</th><th>النموذج</th><th>معاودة الاتصال</th><th>رد العميل؟</th><th>آخر موعد للنموذج</th></tr></thead>
             <tbody>
               {data?.items.map((i) => (
                 <tr key={i.call_id} onClick={() => onOpenCall(i.call_id)}>
@@ -117,10 +118,13 @@ export function FollowupsPage({ me, onCalls, onOpenCall, onLogout, onExpired }: 
                     {formatDateTime(i.callback.at)} <span className={`state ${CB_CLASS[i.callback.status]}`}>{CALLBACK_LABEL[i.callback.status]}</span>
                     {i.callback.by_ext && <span className="muted small"> · {i.callback.by_ext}</span>}
                   </> : "–"}</td>
+                  <td>{i.callback?.answered == null ? <span className="muted">–</span>
+                    : i.callback.answered ? <span className="state ok">ردّ</span>
+                    : <span className="state warn">لم يرد</span>}</td>
                   <td className="nowrap muted small">{formatDateTime(i.deadline)}</td>
                 </tr>
               ))}
-              {data && data.items.length === 0 && <tr><td colSpan={6} className="center muted">لا يوجد شيء لهذا الاختيار</td></tr>}
+              {data && data.items.length === 0 && <tr><td colSpan={7} className="center muted">لا يوجد شيء لهذا الاختيار</td></tr>}
             </tbody>
           </table>
           {data?.truncated && <p className="muted small">تظهر أول 500 فقط: ضيّق الفترة.</p>}
