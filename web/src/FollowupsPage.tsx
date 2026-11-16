@@ -14,7 +14,8 @@ interface Props { me: Me; onCalls?: () => void;   // agents: no calls page (foll
 const STATE_OPTIONS: [string, string][] = [
   ["action", "يحتاج عملاً"], ["forms", "نماذج مطلوبة"], ["notes", "ملاحظات مطلوبة"],
   ["callbacks_today", "معاودات اليوم"], ["missed", "معاودات فائتة"], ["open", "متابعات مفتوحة"], ["solved", "حُلّت"],
-  ["came_back", "عاد العميل بعد الحل"], ["no_followup", "لا تحتاج متابعة"], ["", "الكل"],
+  ["came_back", "عاد العميل بعد الحل"], ["no_followup", "لا تحتاج متابعة"],
+  ["forward_solved_today", "حلّها مشرف الفرع اليوم"], ["", "الكل"],
 ];
 const LOOKBACK_DAYS = 62;   // same as the server's look-back for unfinished work
 const REFRESH_MS = 60_000;
@@ -44,7 +45,8 @@ function whoSolves(i: FollowupItem): string {
 }
 
 function caseState(i: FollowupItem): [string, string] {
-  if (i.step === "solved_first" || i.step === "solved_after") return ["حُلّت", "ok"];
+  if (i.step === "solved_first" || i.step === "solved_after" || i.step === "forward_solved") return ["حُلّت", "ok"];
+  if (i.step === "forward_unconfirmed") return ["حُلّت غير مؤكدة", "warn"];
   if (i.step === "no_followup") return ["لا تحتاج متابعة", "off"];
   if (i.step === "required" || i.step === "overdue") return ["لم يُعبّأ", i.step === "overdue" ? "bad" : "off"];
   return ["مفتوحة", "warn"];
@@ -202,7 +204,8 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
         <div className="counters">   {/* click = show only that kind; click again = back to "needs action" */}
           {([["forms", c.forms, "نماذج مطلوبة", "bad"], ["notes", c.notes, "ملاحظات مطلوبة", "warn"],
              ["callbacks_today", c.callbacks_today, "معاودات اليوم", ""], ["missed", c.missed, "معاودات فائتة", "bad"],
-             ["no_followup", c.no_followup, "لا تحتاج متابعة", ""]] as const)
+             ["no_followup", c.no_followup, "لا تحتاج متابعة", ""],
+             ["forward_solved_today", c.forward_solved_today ?? 0, "حلّها مشرف الفرع اليوم", "ok"]] as const)
             .map(([k, n, label, tone]) => (
               <button key={k} type="button" aria-pressed={state === k}
                 className={`counter ${n ? tone : ""} ${state === k ? "active" : ""}`}

@@ -254,3 +254,132 @@ def send_pending(s: Session, client: CsClient, now: datetime | None = None) -> d
         s.commit()
         log.info("forward: call %s -> ticket %s", f.call_id, number)
     return done
+
+
+# ---------- D2: status back from the ticket ----------
+
+POLL_DAYS = 30                 # a ticket is read back for 30 days after it was made
+POLL_BATCH = 100
+WATCH_DAYS = 30                # supervisors' calls to the customer are kept for 30 days after the forward
+PROOF_MIN_TALK = 60            # answered, MORE than 60 s talk, satisfaction MORE than 7 (user, 2026-11-16)
+PROOF_MIN_SCORE = 7
+
+
+def parse_time(v) -> datetime | None:
+    """The other system's ISO time; a time without a zone is Saudi time (their system runs in Riyadh)."""
+    if not v or not isinstance(v, str):
+        return None
+    try:
+        t = datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=RIYADH)
+
+
+def _event_key(item: dict) -> str:
+    import hashlib
+    raw = "|".join(str(item.get(k) or "") for k in ("kind", "type", "at", "actorName", "targetName", "note"))
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def store_ticket(s: Session, f: CallFollowup, data: dict, now: datetime) -> int:
+    """Save what the ticket says: closedAt, the last solution text, new timeline items. Returns new items."""
+    from .db.models import ForwardEvent
+    t = data.get("ticket") if isinstance(data.get("ticket"), dict) else {}
+    timeline = [x for x in (data.get("timeline") or []) if isinstance(x, dict)]
+    f.forward_closed_at = parse_time(t.get("closedAt"))
+    closes = [x for x in timeline if x.get("type") == "followup_close"]
+    f.forward_solution = (str(closes[-1].get("note") or "")[:1000] or None) if closes else None
+    f.forward_checked_at = now
+    have = set(s.scalars(select(ForwardEvent.ext_key).where(ForwardEvent.call_id == f.call_id)))
+    new = 0
+    for x in timeline:
+        key = _event_key(x)
+        if key in have:
+            continue
+        have.add(key)
+        s.add(ForwardEvent(call_id=f.call_id, ext_key=key, kind=str(x.get("kind") or "")[:20] or "event",
+                           type=str(x.get("type") or "")[:30] or "unknown",
+                           note=(str(x.get("note") or "")[:1000] or None), at=parse_time(x.get("at")),
+                           actor=(str(x.get("actorName") or "")[:200] or None), seen_at=now))
+        new += 1
+    return new
+
+
+def poll_tickets(s: Session, client: CsClient, now: datetime | None = None) -> dict:
+    """Read back every sent ticket of the last 30 days, the least recently read first. CsAuthError stops the run
+    (raised after saving what was done); an unreachable system skips this run."""
+    now = now or datetime.now(timezone.utc)
+    done = {"read": 0, "new_items": 0, "missing": 0}
+    forms = list(s.scalars(select(CallFollowup).join(Call, Call.id == CallFollowup.call_id).where(
+        CallFollowup.forward_status == "sent", CallFollowup.forward_ticket_guid.is_not(None),
+        CallFollowup.forwarded_at >= now - timedelta(days=POLL_DAYS), Call.content_deleted_at.is_(None))
+        .order_by(CallFollowup.forward_checked_at.asc().nulls_first(), CallFollowup.id).limit(POLL_BATCH)))
+    for f in forms:
+        try:
+            data = client.get_ticket(f.forward_ticket_guid)
+        except CsAuthError:
+            s.commit()
+            raise
+        except CsUnavailable:
+            break                                   # try the rest next run
+        except CsError as exc:                      # 404: the ticket is gone there
+            f.forward_checked_at = now
+            f.forward_error = exc.message[:300]
+            done["missing"] += 1
+            s.commit()
+            continue
+        done["new_items"] += store_ticket(s, f, data, now)
+        if f.forward_error:
+            f.forward_error = None
+        done["read"] += 1
+        s.commit()
+    return done
+
+
+# ---------- D2: supervisors' calls to the customer (proof of solving) ----------
+
+def digits9(number: str | None) -> str:
+    return "".join(ch for ch in (number or "") if ch.isdigit())[-9:]
+
+
+def watch_list(s: Session, now: datetime | None = None) -> dict[str, list[tuple[str, datetime]]]:
+    """ext -> [(customer number's last 9 digits, forwarded_at)] for problems with a supervisor (sent in the last 30
+    days). Ingest keeps an outbound call of such an ext to such a number after that time (team "forward")."""
+    now = now or datetime.now(timezone.utc)
+    out: dict[str, list[tuple[str, datetime]]] = {}
+    q = (select(ForwardPerson.ext, Call.customer_number, CallFollowup.forwarded_at)
+         .join(CallFollowup, CallFollowup.forward_person_id == ForwardPerson.id)
+         .join(Call, Call.id == CallFollowup.call_id)
+         .where(CallFollowup.forward_status == "sent", CallFollowup.forwarded_at.is_not(None),
+                CallFollowup.forwarded_at >= now - timedelta(days=WATCH_DAYS), ForwardPerson.ext.is_not(None),
+                Call.content_deleted_at.is_(None)))
+    for ext, number, at_ in s.execute(q):
+        d = digits9(number)
+        if d:
+            out.setdefault(ext, []).append((d, at_))
+    return out
+
+
+def proof(calls: list[Call], scores: dict[int, int | None], has_ext: bool) -> dict:
+    """The LAST supervisor call to the customer after the forward decides (user, Q9): answered, > 60 s, score > 7.
+    -> {ok, reason, calls: [...]}. reason: no_ext / no_call / not_answered / short / waiting_score / low_score."""
+    shown = [{"call_id": c.id, "time": c.start_time.isoformat(), "answered": c.status == "answered",
+              "talk_seconds": c.talk_seconds or 0, "score": scores.get(c.id)} for c in calls]
+    if not has_ext:
+        return {"ok": False, "reason": "no_ext", "calls": shown}
+    if not calls:
+        return {"ok": False, "reason": "no_call", "calls": shown}
+    last = calls[-1]
+    score = scores.get(last.id)
+    if last.status != "answered":
+        reason = "not_answered"
+    elif (last.talk_seconds or 0) <= PROOF_MIN_TALK:
+        reason = "short"
+    elif score is None:
+        reason = "waiting_score"
+    elif score <= PROOF_MIN_SCORE:
+        reason = "low_score"
+    else:
+        reason = None
+    return {"ok": reason is None, "reason": reason, "calls": shown}

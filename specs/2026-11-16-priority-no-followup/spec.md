@@ -332,6 +332,19 @@ system with "مشرف خدمة العملاء" rights (tickets are recorded unde
   - A forwarded form that also set a callback time shows the agent's callback steps first; the supervisor's lateness
     is counted from the times in D4, not from the step.
   - The health page lists `forward_send` / `forward_sync` while the link is on (a refused key shows there).
+- **Part 4 D2 (2026-11-16):**
+  - Tickets are read back every 5 min (`forward_poll`, CLI `forward-poll`) for 30 days after they were made; the
+    timeline goes to `forward_event` (erased with the call's content), closedAt / last solution text to the form.
+    A time without a zone from the other system is taken as Saudi time.
+  - Supervisors' calls: kept by ingest only when outbound from the supervisor's ext to that customer, after the
+    forward, for 30 days (team `forward`). Hidden from every call list / call page (also staff), KPIs, reports and
+    the blind rating set; transcribed and analysed like other calls (needed for the score). Reconcile does not
+    fetch missed ones (ingest only).
+  - Steps: closed there + good last call → `forward_solved` "حلّها مشرف الفرع ✓" (leaves "تحتاج حل", in the
+    "حُلّت" filter); closed + not good → `forward_unconfirmed` "حُلّت (غير مؤكد)" with the reason (open). A good
+    call without the close stays "عند مشرف الفرع" (shown in the panel). Reopened there → back to "عند مشرف الفرع".
+  - Score = the newest done AI analysis (`llm_score`) of that call (user decision 10: this check only).
+  - Agent counter "حلّها مشرف الفرع اليوم" (confirmed, closed today, 62-day look-back).
 - The side column is narrow, so each "تحتاج حل" line is a small stacked card, not one table row. The agent's name and
   the supervisor fields (problem, who solves it, state "مفتوحة") are shown to supervisors/admins only. `no_number`
   lines show the callback time; `note_needed` lines show the note deadline.

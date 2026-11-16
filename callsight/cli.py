@@ -9,6 +9,7 @@
                          system (CS_API_KEY / CS_USER_GUID); prints who is linked
   forward-targets        list the supervisors the customer-service system gives (name, branch, id)
   forward-send           send waiting forwarded problems now (same as the 5-minute job)
+  forward-poll           read back the sent tickets now (closed? solution? questions; same as the 5-minute job)
   stats --date D         calls per direction / status / agent for one day
   create-user NAME --role admin|supervisor|agent [--ext 114] [--generate]
                          new web login; asks for the password, or with --generate prints a random one.
@@ -114,10 +115,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("pbx-unblock")
     gw = sub.add_parser("gpu-work"); gw.add_argument("--queue", action="store_true")
     sub.add_parser("live")
-    for name in ("forward-sync", "forward-targets", "forward-send"):
+    for name in ("forward-sync", "forward-targets", "forward-send", "forward-poll"):
         sub.add_parser(name)
     a = p.parse_args(argv)
-    if a.cmd in ("forward-sync", "forward-targets", "forward-send"):
+    if a.cmd in ("forward-sync", "forward-targets", "forward-send", "forward-poll"):
         return _forward(a.cmd)
     if a.cmd == "pbx-unblock":
         return _pbx_unblock()
@@ -587,6 +588,9 @@ def _forward(cmd: str) -> int:
                 if cmd == "forward-targets":
                     for x in supervisors(client.forward_targets()):
                         print(f"{x['group']:5} {x['branch']} | {x['name']} | {x['guid']}")
+                    return 0
+                if cmd == "forward-poll":
+                    print(forward.poll_tickets(s, client))
                     return 0
                 print(forward.send_pending(s, client))
                 return 0

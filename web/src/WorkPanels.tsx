@@ -6,7 +6,7 @@ import {
   type HistoryEntry, type Me, type NoteIn, type Person, type Share,
 } from "./api";
 import {
-  CALLBACK_LABEL, PRIORITIES, PRIORITY_CLASS, PRIORITY_LABEL, STEP_CLASS, type Priority, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, fromRiyadhInput, ringText, toRiyadhInput,
+  CALLBACK_LABEL, PROOF_REASON, PRIORITIES, PRIORITY_CLASS, PRIORITY_LABEL, STEP_CLASS, type Priority, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, fromRiyadhInput, ringText, toRiyadhInput,
 } from "./format";
 
 export const CB_CLASS: Record<string, string> = { on_time: "ok", waiting: "off", late: "warn", missed: "bad", no_number: "off" };
@@ -107,8 +107,18 @@ export const RESP_LABEL: Record<string, string> = { customer: "العميل", ot
 function ForwardLine({ f }: { f: Forward }) {
   const who = `${f.name ?? "مشرف الفرع"}${f.branch ? ` (${f.branch})` : ""}`;
   if (f.status === "sent")
-    return <p>حُوّلت إلى {who}{f.ticket_number ? ` · تذكرة رقم ${f.ticket_number}` : ""}
-      {f.forwarded_at && <span className="muted small"> · {formatDateTime(f.forwarded_at)}</span>}</p>;
+    return <>
+      <p>حُوّلت إلى {who}{f.ticket_number ? ` · تذكرة رقم ${f.ticket_number}` : ""}
+        {f.forwarded_at && <span className="muted small"> · {formatDateTime(f.forwarded_at)}</span>}</p>
+      {f.closed_at && <p>أغلقها المشرف {formatDateTime(f.closed_at)}{" "}
+        {f.proof?.ok ? <span className="state ok">مؤكد ✓</span>
+          : <span className="state warn">غير مؤكد: {PROOF_REASON[f.proof?.reason ?? ""] ?? "–"}</span>}</p>}
+      {f.solution && <p className="small">الحل: {f.solution}</p>}
+      {f.proof && f.proof.calls.length > 0 && <ul className="small muted">
+        {f.proof.calls.map((c) => <li key={c.call_id}>اتصل المشرف {formatDateTime(c.time)} · {c.answered
+          ? `ردّ العميل · ${c.talk_seconds} ث` : "لم يرد"}{c.score !== null ? ` · الرضا ${c.score}/10` : ""}</li>)}
+      </ul>}
+    </>;
   if (f.status === "failed")
     return <p className="bad-text">لم تُحوَّل إلى {who}: {f.error ?? "رفض النظام الآخر"}. عدّل النموذج واختر من جديد.</p>;
   return <p className="muted">لم يُرسل بعد إلى {who}، نحاول مرة أخرى{f.error ? ` (${f.error})` : ""}.</p>;

@@ -25,7 +25,7 @@
         callback-first order kept as a recorded choice. Round 2 (bugs): 2 more (failed + notes: other answers via a
         note; 429 on the ticket retried), fixed. Verify: 733 passed, 1 known .env failure, 9 skipped; web build OK;
         migration 0016 up/down/up OK.
-- [ ] D2. Tests first, then: ticket polling + forward_event, ingest of supervisors' calls (team `forward`, hidden from
+- [~] D2. Tests first, then: ticket polling + forward_event, ingest of supervisors' calls (team `forward`, hidden from
         team views), solved check (closedAt + last call rules), forward_solved / unconfirmed. → 3-agent review.
 - [ ] D3. Tests first, then: tracker step list, questions/answers both ways, AI summary added once, one-line view.
         → 3-agent review.

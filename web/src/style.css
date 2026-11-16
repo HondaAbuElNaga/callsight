@@ -273,6 +273,7 @@ button.danger { color: #fff; background: var(--bad); border-color: var(--bad); }
 .counter b { font-size: 20px; }
 .counter.warn { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
 .counter.bad { border-color: var(--bad); background: var(--bad-bg); color: var(--bad); }
+.counter.ok { border-color: var(--ok); background: var(--ok-bg); color: var(--ok); }
 tr.row-warn td { background: var(--warn-bg); }
 tr.row-bad td { background: var(--bad-bg); }
 .next-action { margin: 4px 0 8px; }

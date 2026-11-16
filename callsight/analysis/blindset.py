@@ -34,7 +34,8 @@ def _key(salt: str, call_id: int) -> str:
 def pool(session: Session) -> list[tuple[int, str]]:
     done = exists().where(Transcript.call_id == Call.id, Transcript.status == "done")
     rows = session.execute(select(Call.id, Call.agent_ext).where(
-        Call.status == "answered", Call.direction.in_(CUSTOMER_DIRECTIONS), Call.agent_ext.is_not(None), done)
+        Call.status == "answered", Call.direction.in_(CUSTOMER_DIRECTIONS), Call.agent_ext.is_not(None), done,
+        Call.team.is_distinct_from("forward"))      # part 4 D2: branch supervisors' proof calls are not rated
         .order_by(Call.id)).all()
     from .settings import rating_excluded
     skip = rating_excluded()                     # test calls: never in the blind set

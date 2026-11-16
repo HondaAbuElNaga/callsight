@@ -19,7 +19,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from .config import RIYADH
-from .db.models import AppSetting, AppUser, Call, CallFollowup, CallFollowupNote, ForwardPerson, norm_number
+from .db.models import (AppSetting, AppUser, Call, CallAnalysis, CallFollowup, CallFollowupNote, ForwardPerson,
+                        norm_number)
 from .ingest.service import day_bounds
 
 MIN_TALK_SECONDS = 20          # talk must be MORE than this
@@ -41,7 +42,7 @@ CALLBACK_STATES = ("waiting", "on_time", "late", "missed", "no_number")
 # steps of one call (spec 2026-11-15-followup-stages), computed on read, never stored
 STEPS = ("required", "overdue", "no_followup", "solved_first", "waiting_callback", "callback_missed",
          "note_needed", "solved_after", "no_number", "waiting_solution", "solution_overdue",
-         "forwarded", "forward_overdue", "forward_failed")
+         "forwarded", "forward_overdue", "forward_failed", "forward_solved", "forward_unconfirmed")
 # not solved WITHOUT a callback time (callback is optional): waiting until the expected solve time, then overdue
 NO_CB_STEPS = ("waiting_solution", "solution_overdue")
 # forwarded to a branch supervisor (part 4): with them until the expected solve time, then late with them
@@ -49,10 +50,12 @@ FORWARD_STEPS = ("forwarded", "forward_overdue")
 # forward_failed + notes: any answer other than another supervisor is written as a note (review D1)
 NOTE_STEPS = ("note_needed", *NO_CB_STEPS, *FORWARD_STEPS, "forward_failed")   # steps where a note may be added
 # the send failed (refused, or not sure it went through): the agent must pick again in the form (review D1)
+# D2: the supervisor closed the ticket -> forward_solved when the proof call is good, else forward_unconfirmed (open)
 OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number", *NO_CB_STEPS,
-              *FORWARD_STEPS, "forward_failed")   # list view "open"
+              *FORWARD_STEPS, "forward_failed", "forward_unconfirmed")   # list view "open"
 KPI_OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", *NO_CB_STEPS, *FORWARD_STEPS,
-                  "forward_failed")
+                  "forward_failed", "forward_unconfirmed")
+SOLVED_STEPS = ("solved_first", "solved_after", "forward_solved")
 FORWARD_NOTE_MAX = 500
 ACTION_STEPS = ("required", "overdue", "note_needed", "callback_missed", "solution_overdue", "forward_failed")
 # + waiting_callback / waiting_solution due by today
@@ -228,6 +231,16 @@ class Row:
     current_cb: Callback | None = None   # rounds >= 2: callback of the latest open note (looked up in rows())
     early: list[Call] = field(default_factory=list)   # team calls to this customer after the call that did NOT count
     person: ForwardPerson | None = None  # forwarded (part 4): the branch supervisor of the first form
+    fwd_calls: list[Call] = field(default_factory=list)   # D2: that supervisor's calls to the customer since
+    scores: dict[int, int | None] = field(default_factory=dict)   # D2: llm_score of those calls
+
+    def forward_proof(self) -> dict | None:
+        """D2: the proof of solving (only once the ticket was made)."""
+        f = self.form
+        if f is None or f.responsible_kind != "forward" or f.forward_status != "sent":
+            return None
+        from .forward import proof
+        return proof(self.fwd_calls, self.scores, bool(self.person and self.person.ext))
 
     # ----- rounds -----
 
@@ -278,6 +291,9 @@ class Row:
             return "solved_after" if self.notes else "solved_first"
         if f.responsible_kind == "forward" and f.forward_status == "failed":
             return "forward_failed"
+        if f.responsible_kind == "forward" and f.forward_status == "sent" and f.forward_closed_at is not None:
+            # closed by the supervisor: solved only with a good last call to the customer (D2, user Q8 + Q9)
+            return "forward_solved" if self.forward_proof()["ok"] else "forward_unconfirmed"
         # the agent's own callback steps come first (build decision); then the supervisor's time
         if f.responsible_kind == "forward" and last.callback_at is None:     # with the supervisor (part 4)
             due = f.expected_at                  # the time sent to the supervisor, whatever later notes say
@@ -309,7 +325,7 @@ class Row:
             "step": step, "round": rnd,
             "note_deadline": after_deadline(cur.end).isoformat() if step == "note_needed" and cur else None,
             "solve_by": _solve_by(self, step),
-            "forward": forward_dict(f, self.person) if f is not None else None,
+            "forward": forward_dict(f, self.person, self.forward_proof()) if f is not None else None,
             "history": self.history(now, users or {}),
             "callback": None if cb_state is None else {
                 "at": open_.callback_at.isoformat(), "due": (open_.callback_at + GRACE).isoformat(),
@@ -403,14 +419,19 @@ def forward_failed(f: CallFollowup | None) -> bool:
     return f is not None and f.responsible_kind == "forward" and f.forward_status == "failed"
 
 
-def forward_dict(f: CallFollowup, person: ForwardPerson | None) -> dict | None:
-    """Part 4: who the problem went to and whether the ticket was made (never the ticket's guid or the key)."""
+def forward_dict(f: CallFollowup, person: ForwardPerson | None, proof: dict | None = None) -> dict | None:
+    """Part 4: who the problem went to, whether the ticket was made, and (D2) what came back: closed time, solution
+    text, the supervisor's calls and the proof verdict. Never the ticket's guid or the key."""
     if f.responsible_kind != "forward":
         return None
     return {"person_id": f.forward_person_id, "name": person.name if person else None,
             "branch": person.branch if person else None, "ext": person.ext if person else None,
             "note": f.forward_note, "status": f.forward_status, "ticket_number": f.forward_ticket_number,
-            "forwarded_at": f.forwarded_at.isoformat() if f.forwarded_at else None, "error": f.forward_error}
+            "forwarded_at": f.forwarded_at.isoformat() if f.forwarded_at else None, "error": f.forward_error,
+            "closed_at": f.forward_closed_at.isoformat() if f.forward_closed_at else None,
+            "solution": f.forward_solution,
+            "checked_at": f.forward_checked_at.isoformat() if f.forward_checked_at else None,
+            "proof": proof}
 
 
 def priority_fields(code: str | None) -> dict:
@@ -510,7 +531,36 @@ def rows(s: Session, exts, start: date, lo: datetime, hi: datetime, call_ids: li
                 calls[cb1.id] = s.get(Call, cb1.id)
         if r.notes and r.open_entry() is not None:
             r.current_cb = find_callback(s, r.call, _anchor(r), callers)
+    _load_forward_calls(s, [r for r in out if r.form is not None and r.form.forward_status == "sent"
+                            and r.person is not None and r.person.ext and r.form.forwarded_at is not None])
     return out
+
+
+def _load_forward_calls(s: Session, rs: list[Row]) -> None:
+    """D2: each forwarded row's supervisor calls to its customer after the forward (team "forward", kept by ingest),
+    oldest first, and their latest AI satisfaction score (llm_score: used for this check only, user 2026-11-16)."""
+    if not rs:
+        return
+    from .ingest.classify import FORWARD_TEAM
+    nums = {_digits9(r.call.customer_number) for r in rs} - {""}
+    exts = {r.person.ext for r in rs}
+    if not nums:
+        return
+    calls = list(s.scalars(select(Call).where(
+        Call.team == FORWARD_TEAM, Call.direction == "outbound", Call.agent_ext.in_(exts),
+        norm_number(Call.customer_number).in_(nums), Call.start_time > min(r.form.forwarded_at for r in rs))
+        .order_by(Call.start_time, Call.id)))
+    scores: dict[int, int | None] = {}
+    if calls:
+        for cid, score in s.execute(select(CallAnalysis.call_id, CallAnalysis.llm_score).where(
+                CallAnalysis.call_id.in_([c.id for c in calls]), CallAnalysis.status == "done",
+                CallAnalysis.llm_score.is_not(None)).order_by(CallAnalysis.call_id, CallAnalysis.id)):
+            scores[cid] = score                # the newest analysis wins
+    for r in rs:
+        d = _digits9(r.call.customer_number)
+        r.fwd_calls = [c for c in calls if c.agent_ext == r.person.ext and _digits9(c.customer_number) == d
+                       and c.start_time > r.form.forwarded_at]
+        r.scores = {c.id: scores.get(c.id) for c in r.fwd_calls}
 
 
 def one(s: Session, call: Call, exts, start: date | None) -> Row | None:
@@ -523,7 +573,7 @@ def one(s: Session, call: Call, exts, start: date | None) -> Row | None:
 
 # "تحتاج حل" (spec 2026-11-16-priority-no-followup, requirement 11): open problems, whatever من/إلى say
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}          # no priority (old form) comes last
-UNSOLVED_URGENCY = {"forward_failed": 0, "callback_missed": 0, "solution_overdue": 1, "forward_overdue": 1, "note_needed": 2,
+UNSOLVED_URGENCY = {"forward_failed": 0, "callback_missed": 0, "solution_overdue": 1, "forward_unconfirmed": 1, "forward_overdue": 1, "note_needed": 2,
                     "waiting_callback": 3, "waiting_solution": 3, "forwarded": 3, "no_number": 4}
 
 

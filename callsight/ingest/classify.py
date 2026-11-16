@@ -103,6 +103,25 @@ def is_team_call(legs: Iterable[dict], team: TeamConfig) -> bool:
     return False
 
 
+FORWARD_TEAM = "forward"      # a branch supervisor's call kept as proof (part 4 D2): never in team views / KPIs
+
+
+def is_forward_call(legs: Iterable[dict], watch: dict[str, list[tuple[str, datetime]]]) -> bool:
+    """Part 4 D2: an outbound call from a watched supervisor ext to a customer whose problem was forwarded to that
+    supervisor, made after the forward. watch = ext -> [(customer number's last 9 digits, forwarded_at)]."""
+    legs = sorted(legs, key=lambda r: _int(r.get("id")))
+    if not legs or not watch or (legs[0].get("call_type") or "").lower() != "outbound":
+        return False
+    ext = from_ext(legs[0])
+    if ext not in watch:
+        return False
+    ext_legs = [r for r in legs if leg_kind(r) == EXTERNAL]
+    number = to_number(ext_legs[0]) if ext_legs else to_number(legs[0])
+    d = "".join(ch for ch in (number or "") if ch.isdigit())[-9:]
+    start = datetime.fromtimestamp(min(_ts(r) for r in legs), tz=timezone.utc)
+    return bool(d) and any(d == want and start > since for want, since in watch[ext])
+
+
 # who ended an outbound call (spec 2026-11-15-ring-time), from the PBX leg's `reason`
 HANGUP_AGENT, HANGUP_CUSTOMER, HANGUP_BUSY = "agent", "customer", "busy"
 

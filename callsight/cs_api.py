@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -119,6 +120,11 @@ class CsClient:
         num = int(num) if isinstance(num, int) or (isinstance(num, str) and num.isdigit()) else None
         return guid, (num if num is not None and 0 < num < 2**31 else None)
 
+
+    def get_ticket(self, guid: str) -> dict:
+        """GET /tickets/{guid}: {"ticket": {..., closedAt}, "timeline": [...]} (part 4 D2). The guid came from the
+        ticket answer (checked <= 64 chars) and is URL-quoted all the same."""
+        return self._call("GET", f"/tickets/{quote(guid, safe='')}", params={"userGuid": self.cfg.user_guid})
 
 def supervisors(targets: dict) -> list[dict]:
     """Every employee with isBranchSupervisor = true in the forward-targets tree: guid, name, branch, group."""

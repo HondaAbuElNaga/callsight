@@ -43,6 +43,8 @@ celery.conf.update(
         # part 4 (forward to a branch supervisor): nothing happens while CS_API_KEY / CS_USER_GUID are empty
         "forward-send-every-5-min": {"task": FORWARD_TASK, "schedule": 300.0, "options": {"expires": 290}},
         "forward-sync-hourly": {"task": "callsight.jobs.forward_sync", "schedule": crontab(minute=7)},
+        "forward-poll-every-5-min": {"task": "callsight.jobs.forward_poll", "schedule": 300.0,
+                                     "options": {"expires": 290}},
         # DB dump + new recordings/reports copy, before the 02:00 reconcile (which waits while the lock is held)
         "backup-nightly": {"task": "callsight.jobs.backup_nightly", "schedule": crontab(hour=1, minute=30)},
         # PDPL retention: does nothing unless RETENTION_ENABLED=true and days >= 30 (first run = dry run)
@@ -223,6 +225,22 @@ def forward_send() -> dict:
         done = forward.send_pending(s, client)
     if any(done.values()):
         log.info("forward send: %s", done)
+    return done
+
+
+@celery.task
+@tracked("forward_poll")
+def forward_poll() -> dict:
+    """D2: read back the sent tickets (closed? solution? questions)."""
+    from . import forward
+    from .cs_api import CsClient, CsConfig
+    cfg = CsConfig.from_env()
+    if not cfg.enabled:
+        return {"enabled": False}
+    with wiring.session_factory()() as s, CsClient(cfg) as client:
+        done = forward.poll_tickets(s, client)
+    if done["new_items"] or done["missing"]:
+        log.info("forward poll: %s", done)
     return done
 
 

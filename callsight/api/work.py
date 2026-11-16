@@ -22,7 +22,7 @@ from .calls import visible_call, visible_scope
 MAX_LIST_DAYS = 62
 LIST_LIMIT = 500
 STATES = ("", "action", "forms", "notes", "callbacks_today", "missed", "open", "solved", "todo", "callbacks",
-          "open_callbacks", "came_back", "no_followup")
+          "open_callbacks", "came_back", "no_followup", "forward_solved_today")
 ACTION_LOOKBACK_DAYS = 62      # unfinished work before من is counted apart ("older_action"), never forgotten
 # most urgent first in "needs action"
 URGENCY = {"forward_failed": 0, "callback_missed": 0, "solution_overdue": 1, "note_needed": 2, "overdue": 3, "waiting_callback": 4,
@@ -225,6 +225,12 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
                 "missed": sum(i["step"] == "callback_missed" for i in items),
                 "no_followup": sum(i["step"] == "no_followup" for i in items)}
 
+    def solved_today(i: dict, today: date) -> bool:
+        """Part 4 D2 (req 19): the supervisor's solve was confirmed and the ticket closed today."""
+        f = i.get("forward")
+        return (i["step"] == "forward_solved" and bool(f and f.get("closed_at"))
+                and datetime.fromisoformat(f["closed_at"]).astimezone(RIYADH).date() == today)
+
     @app.get("/api/followups")
     def list_followups(
         user: User, s: DB,
@@ -244,7 +250,8 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         st = fu.settings(s)
         out = {"settings": {k: v.isoformat() if v else None for k, v in st.items()}, "items": [],
                "linked": staff(user) or bool(user.ext and user.ext in team_exts()),
-               "counts": {"forms": 0, "notes": 0, "callbacks_today": 0, "missed": 0, "no_followup": 0},
+               "counts": {"forms": 0, "notes": 0, "callbacks_today": 0, "missed": 0, "no_followup": 0,
+                          "forward_solved_today": 0},
                "older_action": 0, "unsolved": []}
         start = st[fu.SETTING_START]
         if start is None:
@@ -274,6 +281,10 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         else:
             items = load(d_from, d_to)
         out["counts"] = counts(items, today)      # counters count every priority (spec requirement 13)
+        # solved by the supervisor today, whatever day the call was (62-day look-back)
+        out["counts"]["forward_solved_today"] = sum(solved_today(i, today) for i in recent)
+        if state == "forward_solved_today":
+            items = [i for i in recent if solved_today(i, today)]
         if priority and state != "no_followup":   # those forms have no priority: the filter would empty them
             items = [i for i in items if i["form"] and i["form"]["priority"] == priority]
         out["older_action"] = sum(1 for i in recent if datetime.fromisoformat(i["start_time"]) < lo
@@ -292,7 +303,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         elif state == "open":
             items = [i for i in items if i["step"] in fu.OPEN_STEPS]
         elif state == "solved":
-            items = [i for i in items if i["step"] in ("solved_first", "solved_after")]
+            items = [i for i in items if i["step"] in fu.SOLVED_STEPS]
         elif state == "todo":
             items = [i for i in items if i["form_state"] in ("missing", "overdue")]
         elif state == "callbacks":

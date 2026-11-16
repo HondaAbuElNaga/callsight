@@ -101,7 +101,8 @@ def queues(redis) -> list[Item]:
 
 
 # part 4: shown only while the customer-service link is on (an off link is not "bad")
-FORWARD_JOBS: dict[str, timedelta] = {"forward_send": timedelta(minutes=20), "forward_sync": timedelta(hours=3)}
+FORWARD_JOBS: dict[str, timedelta] = {"forward_send": timedelta(minutes=20), "forward_sync": timedelta(hours=3),
+                                       "forward_poll": timedelta(minutes=20)}
 
 
 def jobs(session: Session, now: datetime, forward_on: bool | None = None) -> list[Item]:

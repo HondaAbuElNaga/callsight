@@ -247,12 +247,20 @@ export interface Forward {
   person_id: number | null; name: string | null; branch: string | null; ext: string | null; note: string | null;
   status: "pending" | "sent" | "failed" | null; ticket_number: number | null; forwarded_at: string | null;
   error: string | null;
+  closed_at?: string | null; solution?: string | null; checked_at?: string | null;   // D2: read back from the ticket
+  proof?: ForwardProof | null;
+}
+// D2: the supervisor's calls to the customer after the forward; the LAST one decides (answered, > 60 s, score > 7)
+export interface ForwardProof {
+  ok: boolean;
+  reason: "no_ext" | "no_call" | "not_answered" | "short" | "waiting_score" | "low_score" | null;
+  calls: { call_id: number; time: string; answered: boolean; talk_seconds: number; score: number | null }[];
 }
 export interface ForwardOption { id: number; name: string; branch: string; ext: string | null }
 // follow-up stages (spec 2026-11-15-followup-stages)
 export type Step = "required" | "overdue" | "no_followup" | "solved_first" | "waiting_callback" | "callback_missed"
   | "note_needed" | "solved_after" | "no_number" | "waiting_solution" | "solution_overdue"
-  | "forwarded" | "forward_overdue" | "forward_failed";
+  | "forwarded" | "forward_overdue" | "forward_failed" | "forward_solved" | "forward_unconfirmed";
 export interface HistoryEntry {
   round: number; what_happened: string | null; solved: boolean | null; no_followup: boolean;
   priority: "high" | "medium" | "low" | null; priority_ar: string | null;    // round 1 only
@@ -268,7 +276,7 @@ export interface NoteIn {
   responsible_user_id?: number | null; expected_at?: string; callback_at?: string;
 }
 export interface FollowupCounts { forms: number; notes: number; callbacks_today: number; missed: number;
-  no_followup: number }   // calls marked "لا تحتاج متابعة" in من/إلى
+  no_followup: number; forward_solved_today?: number }   // calls marked "لا تحتاج متابعة" in من/إلى
 export interface Person { id: number; username: string; role: string; ext: string | null }
 export type FollowupView =
   | { needed: false; enabled: boolean }

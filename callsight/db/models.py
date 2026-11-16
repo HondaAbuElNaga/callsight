@@ -477,6 +477,27 @@ class CallFollowup(Base):
     forwarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))   # the ticket was made
     forward_error: Mapped[str | None] = mapped_column(String(300))
     forward_tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # D2: read back from the ticket every few minutes (closedAt there; NULL again when they reopen it)
+    forward_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    forward_solution: Mapped[str | None] = mapped_column(String(1000))      # text of the last followup_close
+    forward_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ForwardEvent(Base):
+    """One item of a forwarded ticket's timeline in the customer-service system (part 4 D2): events (created,
+    forwarded, reopened, closed...) and followups (the supervisor's questions / replies). ext_key = hash of the item,
+    so a re-read never adds it twice. Personal data: erased with the call's content."""
+    __tablename__ = "forward_event"
+    __table_args__ = (UniqueConstraint("call_id", "ext_key", name="uq_forward_event_call_key"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    ext_key: Mapped[str] = mapped_column(String(40))
+    kind: Mapped[str] = mapped_column(String(20))        # event / followup
+    type: Mapped[str] = mapped_column(String(30))        # created / forwarded / followup / followup_close / ...
+    note: Mapped[str | None] = mapped_column(String(1000))
+    at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    actor: Mapped[str | None] = mapped_column(String(200))
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))       # when we first read it
 
 
 class ForwardPerson(Base):
