@@ -36,7 +36,7 @@ concurrency:
 jobs:
   task:
     runs-on: [self-hosted, callsight-main]
-    timeout-minutes: 120          # rating-fetch downloads the recordings of several old days
+    timeout-minutes: ${{ startsWith(inputs.task, 'rating-') && 90 || 10 }}   # rating-create downloads 500 recordings
     steps:
       - name: Run the task
         working-directory: /opt/callsight
@@ -61,14 +61,16 @@ jobs:
             live-log) "${C[@]}" --profile live logs --tail 60 live ;;
             sync-agents) "${C[@]}" exec -T worker python -m callsight sync-agents ;;
             rating-fetch|rating-create)
-              [[ "$VALUE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(,[0-9]{4}-[0-9]{2}-[0-9]{2})*(\;[0-9]{1,4})?$ ]]                 || { echo "value must be YYYY-MM-DD,YYYY-MM-DD[;N]"; exit 1; }
+              [[ "$VALUE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(,[0-9]{4}-[0-9]{2}-[0-9]{2}){0,30}(\;[0-9]{1,4})?$ ]] || { echo "value must be YYYY-MM-DD,YYYY-MM-DD[;N] (at most 31 days)"; exit 1; }
               DAYS="${VALUE%%;*}"; N=500; [[ "$VALUE" == *";"* ]] && N="${VALUE##*;}"
               if [ "$TASK" = rating-fetch ]; then
-                for d in ${DAYS//,/ }; do "${C[@]}" exec -T worker python -m callsight reconcile --date "$d" || true; done
+                "${C[@]}" exec -T worker python -m callsight rating-set fetch --days "$DAYS"
               else
                 "${C[@]}" exec -T worker python -m callsight rating-set create --days "$DAYS" --n "$N"
               fi ;;
             rating-status)
               "${C[@]}" exec -T worker python -m callsight rating-set status
+              "${C[@]}" exec -T worker python -m callsight blindset status
+              grep -E '^NLP_ENABLED=' .env || echo "NLP_ENABLED not set (off)"
               "${C[@]}" exec -T worker python -m callsight gpu-work || true ;;
           esac

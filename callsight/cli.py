@@ -38,8 +38,9 @@
   flags --recompute [--call ID]    re-match config/rules.yaml on the transcripts (after editing the word lists)
   blindset create [--n 100 --min-pool 100]   freeze the blind test set once (it never changes afterwards)
   blindset status                  blind set size and rating progress
-  rating-set create --days D1,D2,... [--n 500]   pick the rating set once from these days (spread over days and
-                                   agents) and queue their transcripts; fetch the days first (reconcile --date D)
+  rating-set fetch --days D1,D2,...   store those days' team calls from the PBX (recordings stay on the PBX)
+  rating-set create --days D1,D2,... [--n 500]   pick the rating set once (spread over days and agents), download
+                                   only the picked recordings, queue their transcripts
   rating-set queue                 queue transcripts again for picked calls without one
   rating-set status                per day: picked / transcribed / analysed / rated
   pbx-unblock            allow PBX logins again after a refused login / token limit set pbx:auth_blocked
@@ -111,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     fl.add_argument("--call", type=int)
     bs = sub.add_parser("blindset"); bs.add_argument("action", choices=("create", "status"))
     bs.add_argument("--n", type=int, default=100); bs.add_argument("--min-pool", type=int, default=100)
-    rs = sub.add_parser("rating-set"); rs.add_argument("action", choices=("create", "queue", "status"))
+    rs = sub.add_parser("rating-set"); rs.add_argument("action", choices=("fetch", "create", "queue", "status"))
     rs.add_argument("--days", default=""); rs.add_argument("--n", type=int, default=500)
     sub.add_parser("pbx-unblock")
     gw = sub.add_parser("gpu-work"); gw.add_argument("--queue", action="store_true")
@@ -324,19 +325,15 @@ def _flags(a: argparse.Namespace) -> int:
 
 def _rating_set(a: argparse.Namespace) -> int:
     from . import jobs
-    from .analysis import ratingset
+    from .analysis import blindset, ratingset
     from .asr.queueing import AsrConfig
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)   # URLs contain the access token
     cfg, now = AsrConfig.from_env(), datetime.now(RIYADH)
-    with wiring.session_factory()() as s:
-        try:
-            if a.action == "create":
-                got = ratingset.create(s, ratingset.parse_days(a.days), a.n, cfg, now)
-                print(f"rating set: {got['picked']} calls picked")
-                for d, k in got["per_day"].items():
-                    print(f"  {d}: {k}")
-            if a.action in ("create", "queue"):
-                ids = ratingset.queue_transcripts(s, cfg, now)
-            else:
+    pbx = wiring.pbx() if a.action in ("fetch", "create") else None
+    try:
+        with wiring.session_factory()() as s:
+            if a.action == "status":
                 st = ratingset.status(s)
                 for d in st["days"]:
                     print(f"  {d['day']}: picked {d['picked']}, transcribed {d['transcribed']}, "
@@ -345,9 +342,30 @@ def _rating_set(a: argparse.Namespace) -> int:
                 print(f"total: picked {t['picked']}, transcribed {t['transcribed']}, analysed {t['analysed']}, "
                       f"rated {t['rated']}")
                 return 0
-        except ValueError as exc:
-            print("ERROR:", exc, file=sys.stderr)
-            return 1
+            if a.action == "fetch":
+                per = ratingset.fetch(s, pbx, wiring.teams(), ratingset.parse_days(a.days), cfg)
+                for d, k in per.items():
+                    print(f"  {d}: {k} team calls stored (recordings left on the PBX until picked)")
+                return 0
+            if a.action == "create":
+                if blindset.is_frozen(s):
+                    print("WARNING: the blind set was frozen before, from other calls; it never changes, so those "
+                          "blind calls are rated in addition to this set", file=sys.stderr)
+                got = ratingset.create(s, ratingset.parse_days(a.days), a.n, cfg, now, pbx=pbx,
+                                       audio_dir=wiring.settings().audio_dir)
+                print(f"rating set: {got['picked']} calls picked (recordings downloaded)")
+                for d, k in got["per_day"].items():
+                    print(f"  {d}: {k}")
+            ids = ratingset.queue_transcripts(s, cfg, now)
+    except ValueError as exc:
+        print("ERROR:", exc, file=sys.stderr)
+        return 1
+    except PbxError as exc:
+        print("PBX ERROR:", exc, file=sys.stderr)
+        return 1
+    finally:
+        if pbx is not None:
+            pbx.close()
     try:
         for cid in ids:
             jobs.send_transcribe(cid, cfg.model)

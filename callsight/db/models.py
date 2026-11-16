@@ -58,7 +58,7 @@ class Call(Base):
     hangup_by: Mapped[str | None] = mapped_column(String(10))   # outbound: agent / customer / busy (ring-time spec)
     recording_file: Mapped[str | None] = mapped_column(String(300))
     recording_path: Mapped[str | None] = mapped_column(String(400))   # relative to AUDIO_DIR
-    recording_status: Mapped[str] = mapped_column(String(10), default="none")  # none/pending/ok/error/missing/deleted
+    recording_status: Mapped[str] = mapped_column(String(10), default="none")  # none/pending/ok/error/missing/deleted/held
     recording_attempts: Mapped[int] = mapped_column(Integer, default=0)
     # agent-supervisor spec: an admin erased this call's personal content (recording, texts, forms); row kept for KPIs
     content_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

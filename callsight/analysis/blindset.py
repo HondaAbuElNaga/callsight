@@ -90,6 +90,14 @@ def ensure(session: Session, n: int = DEFAULT_N, min_pool: int = DEFAULT_MIN_POO
     """Beat job: freeze automatically once the pool is big enough. Returns rows created (0 = nothing done)."""
     if is_frozen(session):
         return 0
+    from .ratingset import ids as rating_ids
+    picks = rating_ids(session)
+    if picks:                                    # a rating set: wait until all its transcripts are finished, so
+        busy = session.scalar(select(exists().where(  # the 100 blind come from the whole set (2026-11-16 review)
+            Transcript.call_id.in_(picks), Transcript.status.in_(("queued", "running")))))
+        if busy:
+            return 0
+        min_pool = n
     try:
         return freeze(session, n=n, min_pool=min_pool)
     except ValueError:

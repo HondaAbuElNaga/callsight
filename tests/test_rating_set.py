@@ -2,14 +2,17 @@
 from datetime import date, datetime, timedelta
 
 import pytest
-from sqlalchemy import select, text
+from pathlib import Path
+
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import sessionmaker
 
 from callsight.analysis import blindset, ratingset
 from callsight.analysis.views import rating_queue
 from callsight.asr.queueing import AsrConfig
 from callsight.config import RIYADH
-from callsight.db.models import Call, RatingPick, Transcript
+from callsight.db.models import BlindSet, Call, RatingPick, Transcript
+from callsight.ingest import service
 from test_call_analysis import engine, make_call  # noqa: F401  (engine is a fixture)
 
 CFG = AsrConfig(start_date=date(2026, 11, 15))
@@ -22,18 +25,19 @@ _n = [0]
 def s(engine):  # noqa: F811
     with engine.begin() as c:
         names = ", ".join(t for t in ("rating_pick", "blind_set", "satisfaction_label", "call_analysis",
-                                      "transcript_segment", "transcript", "call"))
+                                      "transcript_segment", "transcript", "call_leg", "call"))
         c.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
     with sessionmaker(engine)() as ses:
         yield ses
 
 
-def old_call(s, day: date, agent: str, talk=60, rec="r.wav", status="answered") -> Call:
+def old_call(s, day: date, agent: str, talk=60, rec="r.wav", status="answered", held=False) -> Call:
     _n[0] += 1
     st = datetime(day.year, day.month, day.day, 9, tzinfo=RIYADH) + timedelta(minutes=_n[0] % 600)
     c = Call(uid=f"rs{_n[0]}", direction="inbound", entry="queue", start_time=st, end_time=st + timedelta(minutes=2),
              talk_seconds=talk, total_seconds=talk + 10, status=status, agent_ext=agent,
-             recording_status="ok" if rec else "none", recording_path=rec)
+             recording_status=("held" if held else "ok") if rec else "none",
+             recording_path=None if held else rec, recording_file=f"f{_n[0]}.wav" if rec else None)
     s.add(c)
     s.commit()
     return c
@@ -73,7 +77,7 @@ def test_same_days_same_pick(s):
 
 
 def test_nothing_to_pick_and_bad_days(s):
-    with pytest.raises(ValueError, match="fetch the days first"):
+    with pytest.raises(ValueError, match="run rating-set fetch first"):
         ratingset.create(s, [D1], 10, CFG, NOW)
     with pytest.raises(ValueError):
         ratingset.parse_days("")
@@ -98,3 +102,39 @@ def test_shares_even_with_small_days():
     assert ratingset.shares({D1: 100, D2: 2, D3: 100}, 10) == {D1: 4, D2: 2, D3: 4}
     assert ratingset.shares({D1: 3, D2: 2}, 10) == {D1: 3, D2: 2}
     assert ratingset.shares({D1: 0, D2: 5}, 3) == {D1: 0, D2: 3}
+
+
+def test_create_downloads_only_picks_and_replaces_a_failed_one(s, tmp_path):
+    from test_service import FakePbx
+    calls = [old_call(s, D1, "101", held=True) for _ in range(6)]
+    order = [cid for cid, _ in ratingset.day_order([(c.id, "101") for c in calls], ratingset.SALT)]
+    bad = s.get(Call, order[0]).recording_file
+    pbx = FakePbx([], bad_files={bad})
+    got = ratingset.create(s, [D1], 3, CFG, NOW, pbx=pbx, audio_dir=tmp_path)
+    assert got["picked"] == 3 and pbx.downloads == 4                   # 3 picks + the one that failed
+    assert set(ratingset.ids(s)) == set(order[1:4])
+    assert s.get(Call, order[0]).recording_status == "error"
+    assert {s.get(Call, c).recording_status for c in order[4:]} == {"held"}   # never downloaded
+    assert len(ratingset.queue_transcripts(s, CFG, NOW)) == 3
+
+
+def test_fetch_stores_days_and_holds_old_recordings(s):
+    from test_service import ALL_ROWS, TEAM, FakePbx
+    days = sorted({datetime.fromtimestamp(int(r["timestamp"]), RIYADH).date() for r in ALL_ROWS})
+    per = ratingset.fetch(s, FakePbx(ALL_ROWS), TEAM, days, AsrConfig(start_date=date(2030, 1, 1)))
+    assert sum(per.values()) == s.scalar(select(func.count()).select_from(Call)) > 0
+    sts = set(s.scalars(select(Call.recording_status)))
+    assert "pending" not in sts and "held" in sts
+    assert service.fetch_recordings(s, FakePbx(ALL_ROWS), Path("."), limit=50) == (0, 0)   # 2-minute job skips
+
+
+def test_blind_set_waits_for_the_whole_set(s):
+    olds = [old_call(s, D1, "101") for _ in range(4)]
+    ratingset.create(s, [D1], 4, CFG, NOW)
+    for i, c in enumerate(olds):
+        s.add(Transcript(call_id=c.id, model="whisper-large-v3", status="done" if i else "queued", text="x"))
+    s.commit()
+    assert blindset.ensure(s, n=2) == 0                                 # one still waits for its transcript
+    s.execute(text("UPDATE transcript SET status = 'done'"))
+    s.commit()
+    assert blindset.ensure(s, n=2) == 2 and set(s.scalars(select(BlindSet.call_id))) <= {c.id for c in olds}
