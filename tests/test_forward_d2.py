@@ -9,7 +9,7 @@ from callsight import followups as fu
 from callsight import forward
 from callsight.config import RIYADH
 from callsight.cs_api import CsAuthError, CsError, CsUnavailable
-from callsight.db.models import Call, CallAnalysis, CallFollowup, ForwardEvent, ForwardPerson
+from callsight.db.models import Call, CallAnalysis, CallFollowup, ForwardEvent, ForwardPerson, Transcript
 from callsight.ingest.classify import FORWARD_TEAM, TeamConfig, is_forward_call
 from callsight.ingest.service import ingest_rows
 from test_agent_supervisor_api import env, login, switch_on  # noqa: F401
@@ -110,6 +110,7 @@ def test_poll_stores_close_solution_and_new_items_once(fs):
     forward.poll_tickets(s, cs, now=at(18))
     s.refresh(f)
     assert f.forward_closed_at is None                                    # reopened there
+    assert f.forward_solution is None                                     # no old solution text (review D2)
 
 
 def test_poll_only_sent_recent_and_not_erased(fs):
@@ -133,6 +134,43 @@ def test_poll_errors(fs):
     assert forward.poll_tickets(s, FakePoll(fail=CsUnavailable("x")), now=at(12))["read"] == 0
     with pytest.raises(CsAuthError):
         forward.poll_tickets(s, FakePoll(fail=CsAuthError(401, "x")), now=at(12))
+
+
+class BrokenFirst(FakePoll):
+    def get_ticket(self, guid):
+        self.asked.append(guid)
+        if guid == "T-1":
+            raise CsUnavailable("bad answer", status=500)
+        return TICKET_OPEN
+
+
+def test_poll_one_broken_ticket_does_not_stop_the_others(fs):
+    s, path = fs
+    c, f = sent_form(s, path)
+    c2 = mk(s, "b", at(10, 5), number="0507654321")
+    f2 = CallFollowup(call_id=c2.id, owner_ext="119", what_happened="y", solved=False, priority="low",
+                      responsible_kind="forward", forward_person_id=f.forward_person_id, forward_status="sent",
+                      forward_ticket_guid="T-2", forwarded_at=at(11), filled_by=f.filled_by, first_filled_at=at(11),
+                      updated_by=f.filled_by, updated_at=at(11))
+    s.add(f2)
+    s.commit()
+    cs = BrokenFirst()
+    for _ in range(2):
+        forward.poll_tickets(s, cs, now=at(12))
+    assert cs.asked.count("T-2") == 2                                     # never starved by T-1
+    s.refresh(f2)
+    assert f2.forward_checked_at is not None
+    assert forward.poll_tickets(s, FakePoll(fail=CsUnavailable("net")), now=at(12))["read"] == 0   # network: stop
+
+
+def test_watch_only_while_open_there(fs):
+    s, path = fs
+    c, f = sent_form(s, path)
+    assert forward.watch_list(s, now=at(12)) == {"101": [("501234567", f.forwarded_at)]}
+    f.forward_closed_at = at(13)
+    s.commit()
+    assert forward.watch_list(s, now=at(20))["101"]                        # 1 day after the close: still kept
+    assert forward.watch_list(s, now=at(13) + timedelta(days=1, hours=1)) == {}
 
 
 # ---------- the supervisors' calls (ingest) ----------
@@ -214,6 +252,28 @@ def test_steps_and_unsolved(fs):
     assert rows(s, at(15))["a"]["step"] == "forwarded"
 
 
+def test_unconfirmed_takes_a_note_and_is_not_kpi_open_and_newest_analysis_decides(fs):
+    s, path = fs
+    c, f = sent_form(s, path)
+    good = sup_call(s, "good", at(13), score=9)
+    s.add(CallAnalysis(call_id=good.id, model="m2", prompt_version="p", status="done", llm_score=None))
+    f.forward_closed_at = at(14)
+    s.commit()
+    d = rows(s, at(15))["a"]
+    assert d["step"] == "forward_unconfirmed" and d["forward"]["proof"]["reason"] == "waiting_score"
+    assert "forward_unconfirmed" in fu.NOTE_STEPS                          # the agent can still act
+    assert "forward_unconfirmed" not in fu.KPI_OPEN_STEPS                  # KPI does not move with the AI score
+
+
+def test_linked_calls_for_erasing(fs):
+    s, path = fs
+    c, f = sent_form(s, path)
+    keep = sup_call(s, "s1", at(13))
+    sup_call(s, "s0", at(10, 30))                                          # before the forward
+    sup_call(s, "s2", at(13), number="0509999999")                        # another customer
+    assert [x.id for x in forward.linked_calls(s, c)] == [keep.id]
+
+
 def test_supervisor_without_extension_is_never_confirmed(fs):
     s, path = fs
     c, f = sent_form(s, path)
@@ -249,9 +309,22 @@ def test_api_hides_supervisor_calls_and_counts_solved_today(fwd_env):
     lst = client.get("/api/calls", params={"from": day, "to": day}).json()
     assert sup_id not in {i["id"] for i in lst["items"]}
     assert client.get(f"/api/calls/{sup_id}").status_code == 404
+    assert client.get(f"/api/calls/{sup_id}/analysis").status_code == 404     # staff-only routes too (review D2)
+    assert client.get(f"/api/rating/calls/{sup_id}").status_code == 404
+    assert client.put(f"/api/rating/calls/{sup_id}", json={"score": 5}).status_code == 404
+    with Session() as s:
+        s.add(Transcript(call_id=sup_id, status="done", model="m", text="x"))
+        s.commit()
+    q = client.get("/api/rating/queue").json()
+    assert sup_id not in {i["call_id"] for i in q["items"]}
     login(client, "ali")
     d = client.get("/api/followups", params={"state": "forward_solved_today"}).json()
     assert d["counts"]["forward_solved_today"] == 1 and [i["call_id"] for i in d["items"]] == [ids["own"]]
     assert d["items"][0]["step"] == "forward_solved" and d["unsolved"] == []
     solved = client.get("/api/followups", params={"state": "solved"}).json()
     assert [i["call_id"] for i in solved["items"]] == [ids["own"]]
+    login(client, "root")                                                  # erasing the call erases his calls too
+    r = client.post(f"/api/calls/{ids['own']}/delete-content", json={"reason": "طلب العميل", "confirm": ids["own"]})
+    assert r.status_code == 200 and "supervisor_calls:1" in r.json()["deleted"]
+    with Session() as s:
+        assert s.get(Call, sup_id).content_deleted_at is not None

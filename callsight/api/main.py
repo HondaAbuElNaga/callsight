@@ -438,8 +438,9 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         return topics, prompt_version(topics)
 
     def staff_call(s: Session, call_id: int) -> Call:
+        from ..ingest.classify import FORWARD_TEAM
         c = s.get(Call, call_id)
-        if c is None:
+        if c is None or c.team == FORWARD_TEAM:       # supervisors' proof calls are hidden, also from staff (D2)
             raise HTTPException(404, "no such call")
         return c
 

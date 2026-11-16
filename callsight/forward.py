@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
-from sqlalchemy import select
+from sqlalchemy import or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from .config import RIYADH, ROOT
@@ -288,8 +289,10 @@ def store_ticket(s: Session, f: CallFollowup, data: dict, now: datetime) -> int:
     t = data.get("ticket") if isinstance(data.get("ticket"), dict) else {}
     timeline = [x for x in (data.get("timeline") or []) if isinstance(x, dict)]
     f.forward_closed_at = parse_time(t.get("closedAt"))
-    closes = [x for x in timeline if x.get("type") == "followup_close"]
-    f.forward_solution = (str(closes[-1].get("note") or "")[:1000] or None) if closes else None
+    closes = sorted((x for x in timeline if x.get("type") == "followup_close"),
+                    key=lambda x: parse_time(x.get("at")) or datetime.min.replace(tzinfo=timezone.utc))
+    f.forward_solution = ((str(closes[-1].get("note") or "")[:1000] or None)
+                          if closes and f.forward_closed_at is not None else None)   # reopened: no old solution
     f.forward_checked_at = now
     have = set(s.scalars(select(ForwardEvent.ext_key).where(ForwardEvent.call_id == f.call_id)))
     new = 0
@@ -298,11 +301,13 @@ def store_ticket(s: Session, f: CallFollowup, data: dict, now: datetime) -> int:
         if key in have:
             continue
         have.add(key)
-        s.add(ForwardEvent(call_id=f.call_id, ext_key=key, kind=str(x.get("kind") or "")[:20] or "event",
-                           type=str(x.get("type") or "")[:30] or "unknown",
-                           note=(str(x.get("note") or "")[:1000] or None), at=parse_time(x.get("at")),
-                           actor=(str(x.get("actorName") or "")[:200] or None), seen_at=now))
-        new += 1
+        res = s.execute(pg_insert(ForwardEvent).values(
+            call_id=f.call_id, ext_key=key, kind=str(x.get("kind") or "")[:20] or "event",
+            type=str(x.get("type") or "")[:30] or "unknown", note=(str(x.get("note") or "")[:1000] or None),
+            at=parse_time(x.get("at")), actor=(str(x.get("actorName") or "")[:200] or None), seen_at=now)
+            .on_conflict_do_nothing(index_elements=["call_id", "ext_key"])   # another poll run got it first
+            .returning(ForwardEvent.id))
+        new += res.scalar() is not None
     return new
 
 
@@ -321,8 +326,13 @@ def poll_tickets(s: Session, client: CsClient, now: datetime | None = None) -> d
         except CsAuthError:
             s.commit()
             raise
-        except CsUnavailable:
-            break                                   # try the rest next run
+        except CsUnavailable as exc:
+            if exc.status is None or exc.status in (408, 429):
+                break                               # network / busy: try the rest next run
+            f.forward_checked_at = now              # 5xx / not JSON for this ticket: go on with the others
+            f.forward_error = str(exc)[:300]
+            s.commit()
+            continue
         except CsError as exc:                      # 404: the ticket is gone there
             f.forward_checked_at = now
             f.forward_error = exc.message[:300]
@@ -353,12 +363,29 @@ def watch_list(s: Session, now: datetime | None = None) -> dict[str, list[tuple[
          .join(Call, Call.id == CallFollowup.call_id)
          .where(CallFollowup.forward_status == "sent", CallFollowup.forwarded_at.is_not(None),
                 CallFollowup.forwarded_at >= now - timedelta(days=WATCH_DAYS), ForwardPerson.ext.is_not(None),
+                or_(CallFollowup.forward_closed_at.is_(None),
+                    CallFollowup.forward_closed_at >= now - timedelta(days=1)),   # open there (user's "ok")
                 Call.content_deleted_at.is_(None)))
     for ext, number, at_ in s.execute(q):
         d = digits9(number)
         if d:
             out.setdefault(ext, []).append((d, at_))
     return out
+
+
+def linked_calls(s: Session, call: Call) -> list[Call]:
+    """The supervisor's kept calls (team "forward") that belong to this forwarded call: same ext, same customer,
+    after the forward. Erased together with the call's content (PDPL: no list shows them, review D2)."""
+    from .ingest.classify import FORWARD_TEAM
+    row = s.execute(select(CallFollowup.forwarded_at, ForwardPerson.ext)
+                    .join(ForwardPerson, ForwardPerson.id == CallFollowup.forward_person_id)
+                    .where(CallFollowup.call_id == call.id, CallFollowup.forwarded_at.is_not(None))).first()
+    d = digits9(call.customer_number)
+    if row is None or not row.ext or not d:
+        return []
+    return [c for c in s.scalars(select(Call).where(
+        Call.team == FORWARD_TEAM, Call.agent_ext == row.ext, Call.start_time > row.forwarded_at,
+        Call.content_deleted_at.is_(None))) if digits9(c.customer_number) == d]
 
 
 def proof(calls: list[Call], scores: dict[int, int | None], has_ext: bool) -> dict:

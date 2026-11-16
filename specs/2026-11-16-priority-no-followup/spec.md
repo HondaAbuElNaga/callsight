@@ -345,6 +345,13 @@ system with "مشرف خدمة العملاء" rights (tickets are recorded unde
     call without the close stays "عند مشرف الفرع" (shown in the panel). Reopened there → back to "عند مشرف الفرع".
   - Score = the newest done AI analysis (`llm_score`) of that call (user decision 10: this check only).
   - Agent counter "حلّها مشرف الفرع اليوم" (confirmed, closed today, 62-day look-back).
+  - Review fixes: supervisors' calls are also hidden from the rating queue and the staff-only analysis/rating
+    routes (404); they are kept only while the ticket is open there (+1 day after the close, user's "ok" was for
+    open problems); erasing a call's content also erases that supervisor's calls to the customer; a closed but
+    unconfirmed problem still takes notes; the KPI "open" count leaves out every ticket closed there (so it never
+    moves with the AI score); the newest done analysis decides even with no score (→ waiting); the solution text is
+    cleared when the ticket is reopened; one ticket that keeps failing (5xx) no longer stops the others; two poll runs
+    at once never store an item twice.
 - The side column is narrow, so each "تحتاج حل" line is a small stacked card, not one table row. The agent's name and
   the supervisor fields (problem, who solves it, state "مفتوحة") are shown to supervisors/admins only. `no_number`
   lines show the callback time; `note_needed` lines show the note deadline.

@@ -48,13 +48,14 @@ NO_CB_STEPS = ("waiting_solution", "solution_overdue")
 # forwarded to a branch supervisor (part 4): with them until the expected solve time, then late with them
 FORWARD_STEPS = ("forwarded", "forward_overdue")
 # forward_failed + notes: any answer other than another supervisor is written as a note (review D1)
-NOTE_STEPS = ("note_needed", *NO_CB_STEPS, *FORWARD_STEPS, "forward_failed")   # steps where a note may be added
+NOTE_STEPS = ("note_needed", *NO_CB_STEPS, *FORWARD_STEPS, "forward_failed", "forward_unconfirmed")   # steps where a note may be added
 # the send failed (refused, or not sure it went through): the agent must pick again in the form (review D1)
 # D2: the supervisor closed the ticket -> forward_solved when the proof call is good, else forward_unconfirmed (open)
 OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number", *NO_CB_STEPS,
               *FORWARD_STEPS, "forward_failed", "forward_unconfirmed")   # list view "open"
+# KPI: a ticket closed there is not "open", confirmed or not (llm_score is for the solved check only, decision 10)
 KPI_OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", *NO_CB_STEPS, *FORWARD_STEPS,
-                  "forward_failed", "forward_unconfirmed")
+                  "forward_failed")
 SOLVED_STEPS = ("solved_first", "solved_after", "forward_solved")
 FORWARD_NOTE_MAX = 500
 ACTION_STEPS = ("required", "overdue", "note_needed", "callback_missed", "solution_overdue", "forward_failed")
@@ -553,8 +554,8 @@ def _load_forward_calls(s: Session, rs: list[Row]) -> None:
     scores: dict[int, int | None] = {}
     if calls:
         for cid, score in s.execute(select(CallAnalysis.call_id, CallAnalysis.llm_score).where(
-                CallAnalysis.call_id.in_([c.id for c in calls]), CallAnalysis.status == "done",
-                CallAnalysis.llm_score.is_not(None)).order_by(CallAnalysis.call_id, CallAnalysis.id)):
+                CallAnalysis.call_id.in_([c.id for c in calls]), CallAnalysis.status == "done")
+                .order_by(CallAnalysis.call_id, CallAnalysis.id)):
             scores[cid] = score                # the newest analysis wins
     for r in rs:
         d = _digits9(r.call.customer_number)
