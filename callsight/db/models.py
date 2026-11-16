@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import (DDL, BigInteger, Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer,
-                        SmallInteger, String, Text, UniqueConstraint, event, func)
+                        SmallInteger, String, Text, UniqueConstraint, event, func, text as sa_text)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -512,6 +512,30 @@ class ForwardEvent(Base):
     seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))       # when we first read it
     # the hop (person) that held the ticket when it was first read (forward chain story page)
     hop_id: Mapped[int | None] = mapped_column(ForeignKey("forward_hop.id", ondelete="SET NULL"))
+
+
+class ForwardMessage(Base):
+    """What WE write on a forwarded ticket (part 4 D3), sent by the worker: the agent's answer to the employee's
+    question (kind answer), the agent's update note (note), the call's AI summary (summary, once per call), and
+    "seen, no answer needed" (seen: never sent, only closes the questions shown). status: pending -> sent /
+    waiting (the ticket is closed there: sent after it is reopened) / failed (error shown) / done (seen).
+    Append-only; personal data: erased with the call's content."""
+    __tablename__ = "forward_message"
+    __table_args__ = (CheckConstraint("kind IN ('answer', 'note', 'summary', 'seen')", name="ck_forward_message_kind"),
+                      CheckConstraint("status IN ('pending', 'waiting', 'sent', 'failed', 'done')",
+                                      name="ck_forward_message_status"),
+                      Index("uq_forward_message_summary", "call_id", unique=True,
+                            postgresql_where=sa_text("kind = 'summary'")))
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))
+    text: Mapped[str | None] = mapped_column(String(600))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))     # None = the system (summary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(10), index=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(String(300))
+    tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class ForwardPerson(Base):

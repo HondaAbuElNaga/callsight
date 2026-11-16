@@ -330,3 +330,21 @@ tr.clickable:hover td { background: var(--bg); }
 .story-steps > li p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .story-steps ul { margin: 2px 0; padding-inline-start: 18px; }
 
+
+/* part 4 D3: the forwarded problem's tracker ("like a delivery tracker") + the answer box */
+.tracker { list-style: none; padding: 0; margin: 8px 0; }
+.tracker li { display: flex; gap: 10px; position: relative; padding: 0 0 10px; }
+.tracker li:not(:last-child)::before { content: ""; position: absolute; inset-inline-start: 11px; top: 24px;
+  bottom: 0; border-inline-start: 2px solid var(--line); }
+.tracker .tk-dot { flex: 0 0 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 13px; font-weight: 700; background: var(--neutral-bg); color: var(--muted); }
+.tracker .tk-done .tk-dot { background: var(--ok-bg); color: var(--ok); }
+.tracker .tk-current .tk-dot { background: var(--accent); color: var(--accent-ink); }
+.tracker .tk-late .tk-dot, .tracker .tk-bad .tk-dot { background: var(--bad-bg); color: var(--bad); }
+.tracker .tk-late b, .tracker .tk-bad b { color: var(--bad); }
+.tracker .tk-future { color: var(--muted); }
+.tracker .tk-current b { color: var(--accent); }
+.tracker li p { margin: 2px 0; overflow-wrap: anywhere; }
+.tracker .tk-question .tk-dot { background: var(--warn-bg); color: var(--warn); }
+.answer-box .question { margin: 4px 0; padding: 6px 8px; background: var(--warn-bg); border-radius: var(--radius);
+  overflow-wrap: anywhere; }

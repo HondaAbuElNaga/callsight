@@ -223,6 +223,7 @@ def forward_send() -> dict:
         return {"enabled": False}
     with wiring.session_factory()() as s, CsClient(cfg) as client:
         done = forward.send_pending(s, client)
+        done.update(forward.send_messages(s, client))    # D3: answers, notes, the AI summary on the ticket
     if any(done.values()):
         log.info("forward send: %s", done)
     return done

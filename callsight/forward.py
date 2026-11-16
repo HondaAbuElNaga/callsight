@@ -691,3 +691,134 @@ def proof(calls: list[Call], scores: dict[int, int | None], has_ext: bool) -> di
     else:
         reason = None
     return {"ok": reason is None, "reason": reason, "calls": shown}
+
+
+# ---------- D3: questions on the ticket, what we write on it (answers, notes, the AI summary) ----------
+
+# Every text we write starts with one of these, so a re-read never takes our own text for a question.
+MSG_PREFIX = {"answer": "رد موظف خدمة العملاء", "note": "تحديث من موظف خدمة العملاء",
+              "summary": "ملخص المكالمة (آلي)"}
+OUR_PREFIXES = (*MSG_PREFIX.values(), "لم تُحل خلال 24 ساعة", "حُلّت عند", "نسخة للإدارة", "مشكلة محوّلة من")
+ANSWER_MAX = 500
+MSG_WINDOW = timedelta(days=3)       # a message that cannot be written in 3 days (ticket never reopened) -> failed
+MSG_BATCH = 100
+SUMMARY_BATCH = 100
+ERR_ENDED = "انتهت المتابعة: لا توجد تذكرة مفتوحة"
+ERR_MSG_EXPIRED = "تعذّر الإرسال خلال 3 أيام"
+
+
+def our_actors(events) -> set[str]:
+    """The PBX account's name there = whoever created our tickets (the `created` item)."""
+    return {e.actor for e in events if e.type == "created" and e.actor}
+
+
+def ours(e, us: set[str]) -> bool:
+    note = (e.note or "").strip()
+    return bool(e.actor and e.actor in us) or note.startswith(OUR_PREFIXES)
+
+
+def is_question(e, us: set[str]) -> bool:
+    """A message written on the ticket by the person holding it (not us, not his closing text)."""
+    return e.kind == "followup" and e.type != "followup_close" and bool((e.note or "").strip()) and not ours(e, us)
+
+
+def open_questions(events, messages, us: set[str] | None = None) -> list:
+    """Questions read after the agent's last answer / "seen" (one answer covers every question shown before it)."""
+    us = our_actors(events) if us is None else us
+    last = max((m.created_at for m in messages if m.kind in ("answer", "seen")), default=None)
+    return [e for e in events if is_question(e, us) and (last is None or e.seen_at > last)]
+
+
+def message_text(m, author: str | None) -> str:
+    head = MSG_PREFIX[m.kind] + (f" «{author}»" if author and m.kind != "summary" else "")
+    return _cut(f"{head}: {(m.text or '').strip()}", NOTES_MAX)
+
+
+def queue_summaries(s: Session, now: datetime) -> int:
+    """The call's AI summary goes on the ticket once (Q6), when it is ready and the problem is still open there."""
+    from .db.models import ForwardMessage
+    ids = list(s.scalars(select(CallFollowup.call_id).join(Call, Call.id == CallFollowup.call_id).where(
+        CallFollowup.responsible_kind == "forward", CallFollowup.forward_status == "sent",
+        Call.content_deleted_at.is_(None),
+        select(ForwardHop.id).where(ForwardHop.call_id == CallFollowup.call_id, ForwardHop.result == "open").exists(),
+        ~select(ForwardMessage.id).where(ForwardMessage.call_id == CallFollowup.call_id,
+                                         ForwardMessage.kind == "summary").exists(),
+        select(CallAnalysis.id).where(CallAnalysis.call_id == CallFollowup.call_id, CallAnalysis.status == "done",
+                                      CallAnalysis.summary.is_not(None)).exists())
+        .order_by(CallFollowup.call_id).limit(SUMMARY_BATCH)))
+    made = 0
+    for cid in ids:
+        text_ = s.scalar(select(CallAnalysis.summary).where(
+            CallAnalysis.call_id == cid, CallAnalysis.status == "done", CallAnalysis.summary.is_not(None))
+            .order_by(CallAnalysis.id.desc()).limit(1))
+        text_ = (text_ or "").strip()
+        if not text_:
+            continue
+        res = s.execute(pg_insert(ForwardMessage).values(
+            call_id=cid, kind="summary", text=text_[:600], created_by=None, created_at=now, status="pending")
+            .on_conflict_do_nothing().returning(ForwardMessage.id))      # one summary per call (unique index)
+        made += res.scalar() is not None
+    s.commit()
+    return made
+
+
+def send_messages(s: Session, client: CsClient, now: datetime | None = None) -> dict:
+    """Write every pending / waiting message on the problem's open ticket(s) (several managers: each copy), oldest
+    first, row-locked (SKIP LOCKED). A closed ticket -> waiting (written after the chain reopens it). Not possible
+    in 3 days, or nothing open any more -> failed with the reason (shown to the agent). CsAuthError stops the run."""
+    from .db.models import AppUser, ForwardMessage
+    now = now or datetime.now(timezone.utc)
+    done = {"summaries": queue_summaries(s, now), "msg_sent": 0, "msg_waiting": 0, "msg_failed": 0}
+    names = dict(s.execute(select(Agent.ext, Agent.name)).all())
+    seen: list[int] = []
+    while len(seen) < MSG_BATCH:
+        stmt = select(ForwardMessage).where(ForwardMessage.status.in_(("pending", "waiting")))
+        if seen:
+            stmt = stmt.where(ForwardMessage.id.not_in(seen))
+        m = s.scalars(stmt.order_by(ForwardMessage.id).limit(1).with_for_update(skip_locked=True)).first()
+        if m is None:
+            break
+        seen.append(m.id)
+        call = s.get(Call, m.call_id)
+        hops = list(s.scalars(select(ForwardHop).where(ForwardHop.call_id == m.call_id).order_by(ForwardHop.id)))
+        expired = now - m.created_at > MSG_WINDOW
+        if call is None or call.content_deleted_at is not None or any(h.result == "solved" for h in hops) or (
+                hops and not any(h.result in ("open", "pending") for h in hops)):
+            m.status, m.error = "failed", ERR_ENDED
+            done["msg_failed"] += 1
+            s.commit()
+            continue
+        ready = list(dict.fromkeys(h.ticket_guid for h in hops
+                                   if h.result == "open" and h.ticket_guid and h.closed_at is None))
+        if not ready:                               # ticket not made yet / closed there: wait (reopen comes)
+            m.status = "failed" if expired else ("waiting" if hops else "pending")
+            m.error = ERR_MSG_EXPIRED if expired else None
+            done["msg_failed" if expired else "msg_waiting"] += 1
+            s.commit()
+            continue
+        author = None
+        if m.created_by is not None:
+            u = s.get(AppUser, m.created_by)
+            author = (names.get(u.ext or "") or u.username) if u else None
+        try:
+            for g in ready:
+                client.followup(g, message_text(m, author), close=False)
+        except CsAuthError:
+            m.error, m.tries = ERR_AUTH, m.tries + 1
+            s.commit()
+            raise
+        except CsError as exc:                      # refused there (e.g. the ticket is gone): the agent sees why
+            m.status, m.error, m.tries = "failed", exc.message[:300], m.tries + 1
+            done["msg_failed"] += 1
+            s.commit()
+            continue
+        except CsUnavailable:                       # written twice at worst (harmless): tried again next run
+            m.tries += 1
+            m.status, m.error = ("failed", ERR_MSG_EXPIRED) if expired else (m.status, ERR_UNAVAILABLE)
+            done["msg_failed" if expired else "msg_waiting"] += 1
+            s.commit()
+            continue
+        m.status, m.sent_at, m.error, m.tries = "sent", now, None, m.tries + 1
+        done["msg_sent"] += 1
+        s.commit()
+    return done

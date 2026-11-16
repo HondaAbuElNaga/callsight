@@ -22,7 +22,7 @@ from .calls import visible_call, visible_scope
 MAX_LIST_DAYS = 62
 LIST_LIMIT = 500
 STATES = ("", "action", "forms", "notes", "callbacks_today", "missed", "open", "solved", "todo", "callbacks",
-          "open_callbacks", "came_back", "no_followup", "forward_solved_today")
+          "open_callbacks", "came_back", "no_followup", "forward_solved_today", "questions")
 ACTION_LOOKBACK_DAYS = 62      # unfinished work before من is counted apart ("older_action"), never forgotten
 # most urgent first in "needs action"
 URGENCY = {"forward_failed": 0, "callback_missed": 0, "solution_overdue": 1, "note_needed": 2, "overdue": 3, "waiting_callback": 4,
@@ -53,6 +53,13 @@ class NoteIn(BaseModel):
     responsible_user_id: StrictInt | None = None
     expected_at: datetime | None = None
     callback_at: datetime | None = None
+
+
+class ForwardMsgIn(BaseModel):
+    """D3: the agent answers the question on the forwarded ticket (answer), or marks it seen with no answer."""
+    model_config = ConfigDict(extra="forbid")
+    kind: str = Field(pattern=r"^(answer|seen)$")
+    text: str | None = Field(default=None, max_length=500)
 
 
 class MyNoteIn(BaseModel):
@@ -178,6 +185,41 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             raise HTTPException(422, str(exc)) from None
         return form_payload(s, c, user, now)
 
+    @app.post("/api/calls/{call_id}/forward/messages")
+    def forward_message(call_id: int, body: ForwardMsgIn, user: User, s: DB) -> dict:
+        """D3 (req 18): the call's agent answers the person holding the forwarded problem; the worker writes it on
+        the ticket. "seen" closes the questions shown without writing anything there. Supervisors only watch."""
+        from ..db.models import ForwardMessage
+        c = owned_call(s, call_id, user)
+        if staff(user):
+            raise HTTPException(403, "the call's agent answers the question")
+        if c.agent_ext != user.ext:
+            raise HTTPException(404, "no such call")
+        now = _now()
+        row = fu.one(s, c, team_exts(), fu.get_setting(s, fu.SETTING_START))
+        if row is None or row.form is None or row.form.forward_status != "sent" or not row.chain_open():
+            raise HTTPException(409, "لا توجد تذكرة مفتوحة لهذه المشكلة (أعد تحميل الصفحة)")
+        if body.kind == "seen":
+            if not row.questions():
+                raise HTTPException(409, "لا توجد أسئلة تنتظر ردك (أعد تحميل الصفحة)")
+            m = ForwardMessage(call_id=c.id, kind="seen", text=None, created_by=user.id, created_at=now,
+                               status="done")
+        else:
+            text_ = (body.text or "").strip()
+            if not text_:
+                raise HTTPException(422, "اكتب الرد")
+            m = ForwardMessage(call_id=c.id, kind="answer", text=text_, created_by=user.id, created_at=now,
+                               status="pending")
+        s.add(m)
+        s.add(AdminLog(user_id=user.id, action=f"forward_{body.kind}", target=f"call:{c.id}", at=now))   # no text
+        s.commit()
+        if m.status == "pending" and cfg.forward_send is not None:
+            try:
+                cfg.forward_send()          # write it now; the 5-minute job does it anyway if this fails
+            except Exception:  # noqa: BLE001
+                pass
+        return form_payload(s, c, user, now)
+
     @app.put("/api/calls/{call_id}/my-note")
     def put_my_note(call_id: int, body: MyNoteIn, user: User, s: DB) -> dict:
         """The user's own reminder on a call they can see; empty text deletes it. Nobody else ever reads it."""
@@ -204,8 +246,12 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
 
     # ---------- follow-ups list ----------
 
+    def asked(i: dict) -> bool:
+        """D3: the person holding the forwarded problem asked something; the agent must answer."""
+        return bool((i.get("forward") or {}).get("questions"))
+
     def action_due(i: dict, today: date) -> bool:
-        if i["step"] in fu.ACTION_STEPS:
+        if i["step"] in fu.ACTION_STEPS or asked(i):
             return True
         cb = i["callback"]
         if i["step"] == "waiting_solution" and i.get("solve_by"):
@@ -252,7 +298,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         out = {"settings": {k: v.isoformat() if v else None for k, v in st.items()}, "items": [],
                "linked": staff(user) or bool(user.ext and user.ext in team_exts()),
                "counts": {"forms": 0, "notes": 0, "callbacks_today": 0, "missed": 0, "no_followup": 0,
-                          "forward_solved_today": 0},
+                          "forward_solved_today": 0, "questions": 0},
                "older_action": 0, "unsolved": []}
         start = st[fu.SETTING_START]
         if start is None:
@@ -290,9 +336,18 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             items = [i for i in items if i["form"] and i["form"]["priority"] == priority]
         out["older_action"] = sum(1 for i in recent if datetime.fromisoformat(i["start_time"]) < lo
                                   and action_due(i, today))
+        # "تحتاج حل" (requirement 11): every open problem of these agents, never limited by من/إلى or the state
+        # filter; only "who" (agent / الموظف filter) and the priority filter apply
+        got, out["unsolved_truncated"] = fu.unsolved(s, exts, start, now, callers=team_exts(), priority=priority,
+                                                      limit=LIST_LIMIT)
+        unsolved = [r.as_dict(now, names, users) for r in got]
+        # D3: questions waiting for an answer, whatever day the call was ("أسئلة تنتظر ردك")
+        out["counts"]["questions"] = sum(asked(i) for i in unsolved)
+        if state == "questions":
+            items = [i for i in unsolved if asked(i)]
         if state == "action":
             items = sorted((i for i in items if action_due(i, today)),
-                           key=lambda i: (URGENCY.get(i["step"], 9), i["start_time"]))
+                           key=lambda i: (-1 if asked(i) else URGENCY.get(i["step"], 9), i["start_time"]))
         elif state == "forms":
             items = [i for i in items if i["step"] in ("required", "overdue")]
         elif state == "notes":
@@ -317,11 +372,6 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             items = [i for i in items if i["step"] == "no_followup"]
         out["truncated"] = len(items) > LIST_LIMIT
         items = items[:LIST_LIMIT]
-        # "تحتاج حل" (requirement 11): every open problem of these agents, never limited by من/إلى or the state
-        # filter; only "who" (agent / الموظف filter) and the priority filter apply
-        got, out["unsolved_truncated"] = fu.unsolved(s, exts, start, now, callers=team_exts(), priority=priority,
-                                                      limit=LIST_LIMIT)
-        unsolved = [r.as_dict(now, names, users) for r in got]
         shown = {i["call_id"] for i in items} | {i["call_id"] for i in unsolved}
         mine = dict(s.execute(select(CallPrivateNote.call_id, CallPrivateNote.text).where(
             CallPrivateNote.user_id == user.id, CallPrivateNote.call_id.in_(shown))).all()) if shown else {}

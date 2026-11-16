@@ -251,6 +251,20 @@ export interface Forward {
   proof?: ForwardProof | null;
   // the forward chain: employee (1) -> his branch supervisor (2) -> the managers (3), 24 h each
   hops?: ForwardHopView[]; level?: 1 | 2 | 3 | null; holders?: string[]; due_at?: string | null;
+  // D3: questions from the person holding it (wait for the agent), what we wrote on the ticket, the tracker
+  questions?: { id: number; from: string | null; text: string | null; at: string | null }[];
+  messages?: ForwardMessageView[];
+  tracker?: TrackerItem[];
+}
+export interface ForwardMessageView {
+  id: number; kind: "answer" | "note" | "summary" | "seen"; text: string | null;
+  status: "pending" | "waiting" | "sent" | "failed" | "done"; error: string | null; at: string | null;
+  sent_at: string | null;
+}
+export interface TrackerItem {
+  kind: "step" | "call" | "question" | "answer" | "note" | "summary" | "seen"; label: string; at: string | null;
+  state: "done" | "current" | "late" | "bad" | "future"; detail: string | null;
+  status?: ForwardMessageView["status"]; error?: string | null; solution?: string | null;
 }
 export interface ForwardHopView {
   level: 1 | 2 | 3; name: string | null; branch: string | null; ticket_number: number | null;
@@ -284,7 +298,7 @@ export interface NoteIn {
   responsible_user_id?: number | null; expected_at?: string; callback_at?: string;
 }
 export interface FollowupCounts { forms: number; notes: number; callbacks_today: number; missed: number;
-  no_followup: number; forward_solved_today?: number }   // calls marked "لا تحتاج متابعة" in من/إلى
+  no_followup: number; forward_solved_today?: number; questions?: number }   // calls marked "لا تحتاج متابعة" in من/إلى
 export interface Person { id: number; username: string; role: string; ext: string | null }
 export type FollowupView =
   | { needed: false; enabled: boolean }
@@ -425,6 +439,9 @@ export const api = {
   saveFollowup: (id: number, body: FollowupIn) => send<FollowupView>("PUT", `/api/calls/${id}/followup`, body),
   myNote: (id: number, text: string) => send<{ call_id: number; text: string | null }>("PUT", `/api/calls/${id}/my-note`, { text }),
   addNote: (id: number, body: NoteIn) => send<FollowupView>("POST", `/api/calls/${id}/followup/notes`, body),
+  // D3: answer the question on the forwarded ticket, or mark it seen (no answer needed)
+  forwardMessage: (id: number, body: { kind: "answer" | "seen"; text?: string }) =>
+    send<FollowupView>("POST", `/api/calls/${id}/forward/messages`, body),
   followups: (p: { from?: string; to?: string; agent?: string; state?: string; priority?: string }) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(p)) if (v) q.set(k, v);

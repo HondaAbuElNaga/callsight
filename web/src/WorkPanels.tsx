@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   api, Refused, Unauthorized,
   type AgentSummary, type CallShares, type Forward, type ForwardOption, type FollowupIn, type FollowupView,
-  type HistoryEntry, type Me, type NoteIn, type Person, type Share,
+  type HistoryEntry, type Me, type NoteIn, type Person, type Share, type TrackerItem,
 } from "./api";
 import {
   CALLBACK_LABEL, HOP_LEVEL, HOP_RESULT, PROOF_REASON, PRIORITIES, PRIORITY_CLASS, PRIORITY_LABEL, STEP_CLASS, type Priority, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, fromRiyadhInput, ringText, toRiyadhInput,
@@ -123,6 +123,12 @@ export const RESP_LABEL: Record<string, string> = { customer: "العميل", ot
 function ForwardLine({ f }: { f: Forward }) {
   const who = `${f.name ?? "المسؤول"}${f.branch ? ` (${f.branch})` : ""}`;
   const sup = f.hops?.filter((h) => h.level === 2 && h.result !== "pending").pop();
+  if (f.status === "sent" && f.tracker?.length)
+    return <>
+      <p>حُوّلت إلى {who}{f.ticket_number ? ` · تذكرة رقم ${f.ticket_number}` : ""}</p>
+      <Tracker items={f.tracker} />
+      {f.due_at && <p className="small">مهلة من يحملها الآن حتى {formatDateTime(f.due_at)}</p>}
+    </>;
   if (f.status === "sent")
     return <>
       <p>حُوّلت إلى {who}{f.ticket_number ? ` · تذكرة رقم ${f.ticket_number}` : ""}
@@ -147,6 +153,55 @@ function ForwardLine({ f }: { f: Forward }) {
   if (f.status === "failed")
     return <p className="bad-text">لم تُحوَّل إلى {who}: {f.error ?? "رفض النظام الآخر"}. عدّل النموذج واختر من جديد.</p>;
   return <p className="muted">لم يُرسل بعد إلى {who}، نحاول مرة أخرى{f.error ? ` (${f.error})` : ""}.</p>;
+}
+
+const TK_ICON: Record<TrackerItem["state"], string> = { done: "✓", current: "●", late: "!", bad: "✗", future: "○" };
+const MSG_STATUS: Record<string, string> = { pending: "بانتظار الإرسال", waiting: "بانتظار إعادة فتح التذكرة",
+  failed: "لم يُرسل" };
+
+/** Part 4 D3 (req 17): the forwarded problem step by step, like a delivery tracker. Questions and what we wrote
+ *  on the ticket sit at their time; the current step is highlighted, red with "متأخر" after the 24 h. */
+function Tracker({ items }: { items: TrackerItem[] }) {
+  return (
+    <ol className="tracker">
+      {items.map((t, i) => (
+        <li key={i} className={`tk-${t.state} tk-${t.kind}`} aria-current={t.state === "current" || t.state === "late" ? "step" : undefined}>
+          <span className="tk-dot" aria-hidden="true">{t.kind === "question" ? "؟" : TK_ICON[t.state]}</span>
+          <div>
+            <b>{t.label}</b>{t.at && <span className="muted small"> · {formatDateTime(t.at)}</span>}
+            {t.status && MSG_STATUS[t.status] && <span className={`small ${t.status === "failed" ? "bad-text" : "muted"}`}>
+              {" · "}{MSG_STATUS[t.status]}{t.error ? ` (${t.error})` : ""}</span>}
+            {t.detail && <p className="small">{t.detail}</p>}
+            {t.solution && <p className="small">الحل: {t.solution}</p>}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** Part 4 D3 (req 18): the agent answers the person holding the forwarded problem (written on the ticket), or
+ *  marks the question seen when no answer is needed. */
+function AnswerBox({ f, busy, onSend }: { f: Forward; busy: boolean;
+  onSend: (kind: "answer" | "seen", text?: string) => Promise<boolean> }) {
+  const [text, setText] = useState("");
+  const qs = f.questions ?? [];
+  if (qs.length === 0) return null;
+  return (
+    <fieldset disabled={busy} className="form answer-box">
+      <legend>سؤال ينتظر ردك</legend>
+      {qs.map((q) => <p key={q.id} className="question"><b>{q.from ?? "المسؤول"}</b>
+        {q.at && <span className="muted small"> · {formatDateTime(q.at)}</span>}<br />{q.text}</p>)}
+      <label>ردّك (يُكتب في التذكرة عند {f.holders?.length ? f.holders.join("، ") : f.name ?? "المسؤول"})
+        <textarea value={text} maxLength={500} rows={3} onChange={(e) => setText(e.target.value)} /></label>
+      <span className="muted small">{text.length}/500</span>
+      <div className="row">
+        <button type="button" className="primary" disabled={!text.trim()}
+          onClick={async () => { if (await onSend("answer", text.trim())) setText(""); }}>إرسال الرد</button>
+        <button type="button" onClick={() => onSend("seen")}>اطّلعت، لا يحتاج رداً</button>
+      </div>
+    </fieldset>
+  );
 }
 
 function History({ items }: { items: HistoryEntry[] }) {
@@ -228,6 +283,15 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
     if (r.error) { setError(r.error); return; }
     run(() => api.addNote(callId, { ...(r.body as Omit<NoteIn, "round">), round: view.round + 1 }), "تم حفظ الملاحظة.");
   };
+  const sendAnswer = async (kind: "answer" | "seen", text?: string): Promise<boolean> => {
+    if (busy) return false;
+    setError(""); setSaved(""); setBusy(true);
+    try {
+      load(await api.forwardMessage(callId, kind === "answer" ? { kind, text } : { kind }));
+      setSaved(kind === "answer" ? "حُفظ الرد، ويُكتب في التذكرة خلال دقائق." : "تم.");
+      return true;
+    } catch (e) { fail(e); return false; } finally { setBusy(false); }
+  };
   const ro = !view.can_edit || busy;
   const noteStep = !staff && NOTE_STEPS.includes(view.step);
   // round 1 without a callback: the form stays editable (deadline rules on the server) next to the update box
@@ -253,6 +317,9 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
       )}
       {view.came_back && <p className="tag">اتصل العميل مرة أخرى خلال 72 ساعة بعد الحل</p>}
       {view.forward && <ForwardLine f={view.forward} />}
+      {view.forward && !staff && <AnswerBox f={view.forward} busy={busy} onSend={sendAnswer} />}
+      {view.forward && staff && (view.forward.questions?.length ?? 0) > 0 &&
+        <p className="bad-text">سؤال من «{view.forward.questions![0].from ?? "المسؤول"}» ينتظر رد الموظف.</p>}
 
       {noteStep && (
         <fieldset disabled={busy} className="form note-box">
