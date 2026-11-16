@@ -16,6 +16,16 @@
         developer's answers + user approval. Then: write
         requirement 12 in full (endpoints, auth, solved callback), user approves, tests first, build. Parts 1–3 can go
         live before part 4.
+- [ ] D0. User approves "Part 4 full design" in spec.md; user sends CS_API_KEY + CS_USER_GUID (privately, to the server).
+- [ ] D1. Tests first, then: forward_person table + sync, migration 0016, form kind "مشرف فرع" + drop-down + note,
+        send job with retry, steps forwarded / forward_overdue, no solve by agent. → 3-agent review.
+- [ ] D2. Tests first, then: ticket polling + forward_event, ingest of supervisors' calls (team `forward`, hidden from
+        team views), solved check (closedAt + last call rules), forward_solved / unconfirmed. → 3-agent review.
+- [ ] D3. Tests first, then: tracker step list, questions/answers both ways, AI summary added once, one-line view.
+        → 3-agent review.
+- [ ] D4. Tests first, then: re-send (reopen), escalation + supervisor close with cause, forward people KPI + mistakes.
+        → 3-agent review.
+- [ ] D5. On the server: put the key, sync people, one real test ticket, then live on the user's "ok push".
 - [x] 9. Verify: migration up/down/up, full pytest, web build; tick acceptance criteria with real output.
 - [x] 10. Review: 3 subagents (bugs, security, accuracy) per part. → A: 2 low (2-day limit re-checked on an
         unchanged old time; untested path) fixed. B: 1 low (priority filter emptied the no-follow-up view) fixed.
