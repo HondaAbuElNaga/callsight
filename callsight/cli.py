@@ -7,9 +7,9 @@
   sync-agents            refresh agents/queues from the PBX
   forward-sync           branch supervisors: config/forward_people.yaml -> DB, linked to the customer-service
                          system (CS_API_KEY / CS_USER_GUID); prints who is linked
-  forward-targets        list the supervisors the customer-service system gives (name, branch, id)
+  forward-targets        list the employees the customer-service system gives (supervisor?, branch, name, id)
   forward-send           send waiting forwarded problems now (same as the 5-minute job)
-  forward-poll           read back the sent tickets now (closed? solution? questions; same as the 5-minute job)
+  forward-poll           read back the open tickets and move the chain now (same as the 5-minute job)
   stats --date D         calls per direction / status / agent for one day
   create-user NAME --role admin|supervisor|agent [--ext 114] [--generate]
                          new web login; asks for the password, or with --generate prints a random one.
@@ -567,7 +567,7 @@ def _pbx_unblock(redis=None) -> int:
 def _forward(cmd: str) -> int:
     """Part 4 (spec 2026-11-16-priority-no-followup): the link to the customer-service system."""
     from . import forward
-    from .cs_api import CsClient, CsConfig, CsError, CsUnavailable, supervisors
+    from .cs_api import CsClient, CsConfig, CsError, CsUnavailable, employees
     cfg = CsConfig.from_env()
     if not cfg.enabled and cmd != "forward-sync":
         print("CS_API_KEY / CS_USER_GUID are empty in .env: the link is off")
@@ -586,11 +586,12 @@ def _forward(cmd: str) -> int:
                 return 0 if not any(x.startswith("NOT LINKED") for x in lines) else 1
             with CsClient(cfg) as client:
                 if cmd == "forward-targets":
-                    for x in supervisors(client.forward_targets()):
-                        print(f"{x['group']:5} {x['branch']} | {x['name']} | {x['guid']}")
+                    for x in employees(client.forward_targets()):
+                        sup = "مشرف" if x["is_supervisor"] else "    "
+                        print(f"{x['group']:5} {sup} {x['branch']} | {x['name']} | {x['guid']}")
                     return 0
                 if cmd == "forward-poll":
-                    print(forward.poll_tickets(s, client))
+                    print(forward.poll_tickets(s, client), forward.advance(s, client))
                     return 0
                 print(forward.send_pending(s, client))
                 return 0

@@ -6,7 +6,7 @@ import {
   type HistoryEntry, type Me, type NoteIn, type Person, type Share,
 } from "./api";
 import {
-  CALLBACK_LABEL, PROOF_REASON, PRIORITIES, PRIORITY_CLASS, PRIORITY_LABEL, STEP_CLASS, type Priority, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, fromRiyadhInput, ringText, toRiyadhInput,
+  CALLBACK_LABEL, HOP_LEVEL, HOP_RESULT, PROOF_REASON, PRIORITIES, PRIORITY_CLASS, PRIORITY_LABEL, STEP_CLASS, type Priority, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, fromRiyadhInput, ringText, toRiyadhInput,
 } from "./format";
 
 export const CB_CLASS: Record<string, string> = { on_time: "ok", waiting: "off", late: "warn", missed: "bad", no_number: "off" };
@@ -62,13 +62,19 @@ function ProblemFields({ p, set, options, label, afterText, high, forwardOptions
     forwardedTo?: Forward | null }) {   // a note on a forwarded problem: only the supervisor closes it
   const max = high ? toRiyadhInput(new Date(Date.now() + MAX_SOLVE_HIGH_MS).toISOString()) : maxIn();
   const toSupervisor = p.resp.startsWith("forward:");
+  const [fq, setFq] = useState("");          // search in the ~474 employees of the other system
+  const q = fq.trim();
+  const shown = forwardOptions.filter((o) => !q || o.name.includes(q) || o.branch.includes(q)
+    || p.resp === `forward:${o.id}`);
+  const branches = [...new Set(shown.map((o) => o.branch))];
   return (
     <>
       <label>{label}
         <textarea value={p.what} maxLength={500} rows={3} onChange={(e) => set({ ...p, what: e.target.value })} />
       </label>
       {afterText}
-      {forwardedTo ? <p className="muted small">المشكلة عند مشرف الفرع {forwardedTo.name ?? ""}: هو من يغلقها.</p> : (
+      {forwardedTo ? <p className="muted small">المشكلة محوّلة إلى {(forwardedTo.holders?.length ? forwardedTo.holders
+        : [forwardedTo.name ?? ""]).join("، ")}: هو من يغلقها.</p> : (
         <div className="row">
           هل حُلّت المشكلة؟
           <label><input type="radio" checked={p.solved === "yes"} onChange={() => set({ ...p, solved: "yes" })} /> نعم</label>
@@ -77,18 +83,23 @@ function ProblemFields({ p, set, options, label, afterText, high, forwardOptions
       )}
       {p.solved === "no" && (
         <>
+          {!forwardedTo && forwardOptions.length > 0 && <label>بحث عن موظف للتحويل (الاسم أو الفرع)
+            <input value={fq} maxLength={50} onChange={(e) => setFq(e.target.value)} />
+          </label>}
           {!forwardedTo && <label>من يجب أن يحلّها؟
             <select value={p.resp} onChange={(e) => set({ ...p, resp: e.target.value })}>
               <option value="">اختر…</option>
               {options.map((o) => <option key={o.id} value={`user:${o.id}`}>{o.username}{o.ext ? ` · ${o.ext}` : ""}</option>)}
               <option value="customer">العميل</option>
               <option value="other_department">قسم آخر</option>
-              {forwardOptions.length > 0 && <optgroup label="مشرف فرع (يُحوَّل إلى نظام خدمة العملاء)">
-                {forwardOptions.map((o) => <option key={o.id} value={`forward:${o.id}`}>{o.branch} · {o.name}</option>)}
-              </optgroup>}
+              {branches.map((b) => <optgroup key={b} label={`تحويل · ${b}`}>
+                {shown.filter((o) => o.branch === b).map((o) => <option key={o.id} value={`forward:${o.id}`}>
+                  {o.name}{o.supervisor ? " (مشرف الفرع)" : ""}{o.manager ? " (الإدارة)" : ""}</option>)}
+              </optgroup>)}
             </select>
           </label>}
-          {toSupervisor && <label>ملاحظة لمشرف الفرع (اختياري)
+          {toSupervisor && <p className="muted small">عنده 24 ساعة، ثم تنتقل تلقائيًا لمشرف فرعه، ثم للإدارة.</p>}
+          {toSupervisor && <label>ملاحظة للمسؤول (اختياري)
             <textarea value={p.fnote} maxLength={500} rows={2} onChange={(e) => set({ ...p, fnote: e.target.value })} />
           </label>}
           <label>وقت الحل المتوقع ({high ? "خلال يوم واحد: أولوية عالية" : "خلال يومين على الأكثر"}) <input type="datetime-local" value={p.expected} min={nowIn()} max={max} onChange={(e) => set({ ...p, expected: e.target.value })} /></label>
@@ -101,18 +112,27 @@ function ProblemFields({ p, set, options, label, afterText, high, forwardOptions
 
 const NOTE_STEPS: string[] = ["note_needed", "waiting_solution", "solution_overdue", "forwarded", "forward_overdue",
   "forward_failed"];
-export const RESP_LABEL: Record<string, string> = { customer: "العميل", other_department: "قسم آخر", forward: "مشرف فرع" };
+export const RESP_LABEL: Record<string, string> = { customer: "العميل", other_department: "قسم آخر", forward: "تحويل" };
 
 /** Part 4: where the forwarded problem is (ticket made / still trying / refused by the other system). */
 function ForwardLine({ f }: { f: Forward }) {
-  const who = `${f.name ?? "مشرف الفرع"}${f.branch ? ` (${f.branch})` : ""}`;
+  const who = `${f.name ?? "المسؤول"}${f.branch ? ` (${f.branch})` : ""}`;
+  const sup = f.hops?.filter((h) => h.level === 2 && h.result !== "pending").pop();
   if (f.status === "sent")
     return <>
       <p>حُوّلت إلى {who}{f.ticket_number ? ` · تذكرة رقم ${f.ticket_number}` : ""}
         {f.forwarded_at && <span className="muted small"> · {formatDateTime(f.forwarded_at)}</span>}</p>
-      {f.closed_at && <p>أغلقها المشرف {formatDateTime(f.closed_at)}{" "}
-        {f.proof?.ok ? <span className="state ok">مؤكد ✓</span>
-          : <span className="state warn">غير مؤكد: {PROOF_REASON[f.proof?.reason ?? ""] ?? "–"}</span>}</p>}
+      {f.hops && f.hops.length > 0 && <ol className="small">
+        {f.hops.map((h, i) => <li key={i}>{HOP_LEVEL[h.level]}: {h.name ?? "–"}
+          {h.sent_at && <span className="muted"> · من {formatDateTime(h.sent_at)}</span>}
+          {" · "}<span className={h.result === "solved" ? "state ok" : h.result === "passed_on" || h.result === "failed"
+            ? "state bad" : "state off"}>{HOP_RESULT[h.result] ?? h.result}</span>
+          {h.error && <span className="muted"> ({h.error})</span>}</li>)}
+      </ol>}
+      {f.due_at && <p className="small">المهلة حتى {formatDateTime(f.due_at)}</p>}
+      {sup?.closed_at && f.proof && <p>أغلقها مشرف الفرع {formatDateTime(sup.closed_at)}{" "}
+        {f.proof.ok ? <span className="state ok">مؤكد ✓</span>
+          : <span className="state warn">غير مؤكد: {PROOF_REASON[f.proof.reason ?? ""] ?? "–"}</span>}</p>}
       {f.solution && <p className="small">الحل: {f.solution}</p>}
       {f.proof && f.proof.calls.length > 0 && <ul className="small muted">
         {f.proof.calls.map((c) => <li key={c.call_id}>اتصل المشرف {formatDateTime(c.time)} · {c.answered
@@ -138,7 +158,7 @@ function History({ items }: { items: HistoryEntry[] }) {
             <p className="small">
               {h.solved ? <span className="state ok">حُلّت</span> : <span className="state warn">لم تُحل</span>}
               {h.solved === false && <> · المسؤول: {h.responsible ?? RESP_LABEL[h.responsible_kind ?? ""] ?? "–"}
-                {h.responsible_kind === "forward" && h.responsible ? " (مشرف فرع)" : ""}</>}
+                {h.responsible_kind === "forward" && h.responsible ? " (تحويل)" : ""}</>}
               {h.solved === false && h.expected_at && <> · الحل المتوقع: {formatDateTime(h.expected_at)}</>}
               {h.callback_at && <> · معاودة الاتصال: {formatDateTime(h.callback_at)}</>}
               {h.callback_status && <> <span className={`state ${CB_CLASS[h.callback_status]}`}>{CALLBACK_LABEL[h.callback_status]}</span></>}

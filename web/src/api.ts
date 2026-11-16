@@ -249,6 +249,13 @@ export interface Forward {
   error: string | null;
   closed_at?: string | null; solution?: string | null; checked_at?: string | null;   // D2: read back from the ticket
   proof?: ForwardProof | null;
+  // the forward chain: employee (1) -> his branch supervisor (2) -> the managers (3), 24 h each
+  hops?: ForwardHopView[]; level?: 1 | 2 | 3 | null; holders?: string[]; due_at?: string | null;
+}
+export interface ForwardHopView {
+  level: 1 | 2 | 3; name: string | null; branch: string | null; ticket_number: number | null;
+  result: "pending" | "open" | "solved" | "passed_on" | "closed_by_other" | "failed";
+  sent_at: string | null; closed_at: string | null; ended_at: string | null; error: string | null;
 }
 // D2: the supervisor's calls to the customer after the forward; the LAST one decides (answered, > 60 s, score > 7)
 export interface ForwardProof {
@@ -256,7 +263,8 @@ export interface ForwardProof {
   reason: "no_ext" | "no_call" | "not_answered" | "short" | "waiting_score" | "low_score" | null;
   calls: { call_id: number; time: string; answered: boolean; talk_seconds: number; score: number | null }[];
 }
-export interface ForwardOption { id: number; name: string; branch: string; ext: string | null }
+export interface ForwardOption { id: number; name: string; branch: string; ext: string | null;
+  supervisor?: boolean; manager?: boolean }
 // follow-up stages (spec 2026-11-15-followup-stages)
 export type Step = "required" | "overdue" | "no_followup" | "solved_first" | "waiting_callback" | "callback_missed"
   | "note_needed" | "solved_after" | "no_number" | "waiting_solution" | "solution_overdue"

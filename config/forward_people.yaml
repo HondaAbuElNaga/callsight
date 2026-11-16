@@ -10,3 +10,10 @@ people:
   - {branch: "المدينة المنورة",         name: "شريف",                ext: "501", guid: null}
   - {branch: "خميس مشيط الظرفة",       name: "عبدالعظيم",           ext: "601", guid: null}
   - {branch: "الرياض ظهرة لبن",        name: "عماد حلمي",           ext: "901", guid: null}
+
+# The forward chain's last level (user 2026-11-16): the 4 managers. ALL of them get a problem that neither the
+# employee nor his branch supervisor solved in 24 h each (the first on the same ticket, the others a copy ticket).
+# name = as written in the customer-service system (matched by name words; add branch or guid if two people match).
+# Their calls are not checked: their close counts as solved.
+managers: []
+#  - {name: "..."}

@@ -9,7 +9,7 @@ from callsight import followups as fu
 from callsight import forward
 from callsight.config import RIYADH
 from callsight.cs_api import CsAuthError, CsError, CsUnavailable
-from callsight.db.models import Call, CallAnalysis, CallFollowup, ForwardEvent, ForwardPerson, Transcript
+from callsight.db.models import Call, CallAnalysis, CallFollowup, ForwardEvent, ForwardHop, ForwardPerson, Transcript
 from callsight.ingest.classify import FORWARD_TEAM, TeamConfig, is_forward_call
 from callsight.ingest.service import ingest_rows
 from test_agent_supervisor_api import env, login, switch_on  # noqa: F401
@@ -22,7 +22,7 @@ TEAM = TeamConfig(ext_team={"104": "customer_service", "119": "customer_service"
 
 @pytest.fixture
 def fs(s, tmp_path):  # noqa: F811
-    s.execute(text("TRUNCATE forward_person, forward_event RESTART IDENTITY CASCADE"))
+    s.execute(text("TRUNCATE forward_person, forward_event, forward_hop RESTART IDENTITY CASCADE"))
     s.flush()
     p = tmp_path / "people.yaml"
     p.write_text(YAML, encoding="utf-8")
@@ -42,8 +42,24 @@ def sent_form(s, path, *, forwarded=None, number="0501234567"):
                      expected_at=fwd + timedelta(hours=5), filled_by=u.id, first_filled_at=fwd, updated_by=u.id,
                      updated_at=fwd)
     s.add(f)
+    s.flush()
+    s.add(ForwardHop(call_id=c.id, level=2, person_id=f.forward_person_id, ticket_guid="T-1", ticket_number=1631,
+                     sent_at=fwd, result="open"))                      # a branch supervisor: level 2 of the chain
     s.commit()
     return c, f
+
+
+def hop(s, f) -> ForwardHop:
+    return s.scalars(select(ForwardHop).where(ForwardHop.call_id == f.call_id).order_by(ForwardHop.id.desc())).first()
+
+
+def close(s, f, t, *, now=None):
+    """The ticket was closed there at t; then the 5-minute job's chain step runs."""
+    h = hop(s, f)
+    h.closed_at = t
+    f.forward_closed_at = t
+    s.commit()
+    forward.advance(s, FakePoll(), now=now or t + timedelta(minutes=5))
 
 
 def sup_call(s, uid, start, *, status="answered", talk=90, ext="101", number="0501234567", score=None):
@@ -117,7 +133,7 @@ def test_poll_only_sent_recent_and_not_erased(fs):
     s, path = fs
     c, f = sent_form(s, path)
     cs = FakePoll()
-    forward.poll_tickets(s, cs, now=f.forwarded_at + timedelta(days=31))
+    forward.poll_tickets(s, cs, now=f.forwarded_at + timedelta(days=91))   # 90-day safety cut
     assert cs.asked == []
     c.content_deleted_at = at(12)
     s.commit()
@@ -129,8 +145,7 @@ def test_poll_errors(fs):
     s, path = fs
     c, f = sent_form(s, path)
     forward.poll_tickets(s, FakePoll(fail=CsError(404, "التذكرة غير موجودة")), now=at(12))
-    s.refresh(f)
-    assert f.forward_error == "التذكرة غير موجودة" and f.forward_status == "sent"
+    assert hop(s, f).error == "التذكرة غير موجودة" and f.forward_status == "sent"
     assert forward.poll_tickets(s, FakePoll(fail=CsUnavailable("x")), now=at(12))["read"] == 0
     with pytest.raises(CsAuthError):
         forward.poll_tickets(s, FakePoll(fail=CsAuthError(401, "x")), now=at(12))
@@ -153,13 +168,14 @@ def test_poll_one_broken_ticket_does_not_stop_the_others(fs):
                       forward_ticket_guid="T-2", forwarded_at=at(11), filled_by=f.filled_by, first_filled_at=at(11),
                       updated_by=f.filled_by, updated_at=at(11))
     s.add(f2)
+    s.add(ForwardHop(call_id=c2.id, level=2, person_id=f.forward_person_id, ticket_guid="T-2", sent_at=at(11),
+                     result="open"))
     s.commit()
     cs = BrokenFirst()
     for _ in range(2):
         forward.poll_tickets(s, cs, now=at(12))
     assert cs.asked.count("T-2") == 2                                     # never starved by T-1
-    s.refresh(f2)
-    assert f2.forward_checked_at is not None
+    assert hop(s, f2).checked_at is not None
     assert forward.poll_tickets(s, FakePoll(fail=CsUnavailable("net")), now=at(12))["read"] == 0   # network: stop
 
 
@@ -167,7 +183,8 @@ def test_watch_only_while_open_there(fs):
     s, path = fs
     c, f = sent_form(s, path)
     assert forward.watch_list(s, now=at(12)) == {"101": [("501234567", f.forwarded_at)]}
-    f.forward_closed_at = at(13)
+    h = hop(s, f)
+    h.result, h.ended_at = "solved", at(13)
     s.commit()
     assert forward.watch_list(s, now=at(20))["101"]                        # 1 day after the close: still kept
     assert forward.watch_list(s, now=at(13) + timedelta(days=1, hours=1)) == {}
@@ -223,10 +240,9 @@ def test_ingest_keeps_a_watched_supervisor_call_as_team_forward(fs):
 def test_proof_rules(fs, calls, ok, reason):
     s, path = fs
     c, f = sent_form(s, path)
-    f.forward_closed_at = at(15)
-    s.commit()
     for n, (st, talk, score) in enumerate(calls):
         sup_call(s, f"p{n}", at(12, n * 10), status=st, talk=talk, score=score)
+    close(s, f, at(15))
     d = rows(s, at(16))["a"]
     assert d["forward"]["proof"]["ok"] is ok and d["forward"]["proof"]["reason"] == reason
     assert d["step"] == ("forward_solved" if ok else "forward_unconfirmed")
@@ -242,14 +258,14 @@ def test_steps_and_unsolved(fs):
     sup_call(s, "good", at(13), score=9)
     assert rows(s, at(13, 30))["a"]["forward"]["proof"]["ok"] is True
     assert rows(s, at(13, 30))["a"]["step"] == "forwarded"         # a good call alone does not close it
-    f.forward_closed_at = at(14)
+    h = hop(s, f)
+    h.closed_at = at(14)
     s.commit()
+    assert rows(s, at(14, 1))["a"]["step"] == "forwarded"          # closed + good call, before the chain step ran
+    close(s, f, at(14))
     assert rows(s, at(15))["a"]["step"] == "forward_solved"
     got, _ = fu.unsolved(s, ["119"], DAY, at(15), callers=["119"])
     assert got == []                                               # solved: leaves "تحتاج حل"
-    f.forward_closed_at = None                                     # reopened there
-    s.commit()
-    assert rows(s, at(15))["a"]["step"] == "forwarded"
 
 
 def test_unconfirmed_takes_a_note_and_is_not_kpi_open_and_newest_analysis_decides(fs):
@@ -257,8 +273,8 @@ def test_unconfirmed_takes_a_note_and_is_not_kpi_open_and_newest_analysis_decide
     c, f = sent_form(s, path)
     good = sup_call(s, "good", at(13), score=9)
     s.add(CallAnalysis(call_id=good.id, model="m2", prompt_version="p", status="done", llm_score=None))
-    f.forward_closed_at = at(14)
     s.commit()
+    close(s, f, at(14))
     d = rows(s, at(15))["a"]
     assert d["step"] == "forward_unconfirmed" and d["forward"]["proof"]["reason"] == "waiting_score"
     assert "forward_unconfirmed" in fu.NOTE_STEPS                          # the agent can still act
@@ -274,15 +290,14 @@ def test_linked_calls_for_erasing(fs):
     assert [x.id for x in forward.linked_calls(s, c)] == [keep.id]
 
 
-def test_supervisor_without_extension_is_never_confirmed(fs):
+def test_supervisor_without_extension_close_is_accepted(fs):
     s, path = fs
     c, f = sent_form(s, path)
     p = s.get(ForwardPerson, f.forward_person_id)
-    p.ext = None
-    f.forward_closed_at = at(14)
+    p.ext = None                                    # his calls cannot be tracked: his close counts (chain rule)
     s.commit()
-    d = rows(s, at(15))["a"]
-    assert d["step"] == "forward_unconfirmed" and d["forward"]["proof"]["reason"] == "no_ext"
+    close(s, f, at(14))
+    assert rows(s, at(15))["a"]["step"] == "forward_solved"
 
 
 # ---------- API ----------
@@ -302,6 +317,8 @@ def test_api_hides_supervisor_calls_and_counts_solved_today(fwd_env):
                            forward_closed_at=now - timedelta(minutes=1), expected_at=now + timedelta(hours=2),
                            filled_by=u, first_filled_at=now - timedelta(minutes=20), updated_by=u,
                            updated_at=now - timedelta(minutes=20)))
+        s.add(ForwardHop(call_id=own.id, level=2, person_id=pid, ticket_guid="T", sent_at=now - timedelta(minutes=20),
+                         closed_at=now - timedelta(minutes=1), result="solved", ended_at=now))
         s.commit()
         sup_id = sup.id
     login(client, "root")

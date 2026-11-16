@@ -239,7 +239,8 @@ def forward_poll() -> dict:
         return {"enabled": False}
     with wiring.session_factory()() as s, CsClient(cfg) as client:
         done = forward.poll_tickets(s, client)
-    if done["new_items"] or done["missing"]:
+        done.update(forward.advance(s, client))      # the chain: solved? 24 h over? -> next person
+    if done["new_items"] or done["missing"] or done["solved"] or done["passed_on"] or done["errors"]:
         log.info("forward poll: %s", done)
     return done
 

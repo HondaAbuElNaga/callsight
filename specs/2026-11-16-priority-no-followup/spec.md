@@ -386,6 +386,25 @@ the call check (proof) is for the **branch supervisors only**; an employee's or 
   the supervisor fields (problem, who solves it, state "مفتوحة") are shown to supervisors/admins only. `no_number`
   lines show the callback time; `note_needed` lines show the note deadline.
 
+- **Part 4 forward chain (DC, built 2026-11-16):**
+  - Table `forward_hop` (migration 0018): one row per person who held the problem (level, person, ticket, sent,
+    closed there, solution, result). The send job opens the first hop at the chosen person's level (an employee 1, a
+    branch supervisor 2, a manager 3). The 5-minute `forward_poll` job reads each open hop's ticket, then moves the
+    chain (`forward.advance`, one problem at a time under a row lock).
+  - A branch supervisor whose PBX ext is NOT in `config/forward_people.yaml` cannot be checked: his close counts
+    (same rule as employees and managers). A supervisor's close that waits only for OUR score is not passed on.
+  - A close is counted only when it happened after that person got the ticket (5 min margin), so an old close never
+    solves the next level. Passing on: reopen (when it was closed) + forward; an error keeps the hop and is retried
+    every 5 min (shown on the line); a refused key stops the run (health page).
+  - Level 3: the first manager gets the same ticket, each other manager a copy ticket (made on the next run, same
+    rules as the first send: no blind re-send after an unclear answer). The first close wins; every other manager's
+    ticket is closed there with "حُلّت عند «name»". No managers linked → the line says so and waits.
+  - Branch of an employee = the other system's branch name (the yaml's short branch is only for matching). Several
+    supervisors in one branch → the one with a known ext first.
+  - All employees are stored and choosable (search box + branch groups in the form). Tickets are read back while
+    open, up to 90 days. "تحتاج حل" leaves out a problem whose chain is solved already in SQL.
+  - Managers: `managers:` in the yaml, empty until the user sends the 4 names.
+
 ## Acceptance criteria
 - [x] Tests: form without priority → 422; bad code → 422; each code saves and comes back with the right `priority_ar`;
       `no_followup` with a priority sent → stored NULL; note with `priority` → 422; supervisor edit can change it.

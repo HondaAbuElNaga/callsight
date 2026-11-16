@@ -86,8 +86,8 @@ export const STEP_LABEL: Record<string, string> = {
   waiting_callback: "بانتظار معاودة الاتصال", callback_missed: "معاودة فائتة", note_needed: "تم الاتصال – أضف ملاحظة",
   solved_after: "حُلّت بعد المتابعة", no_number: "بلا رقم للمعاودة",
   waiting_solution: "بانتظار الحل", solution_overdue: "فات موعد الحل",
-  forwarded: "عند مشرف الفرع", forward_overdue: "تأخر عند مشرف الفرع", forward_failed: "لم تُحوَّل – اختر من جديد",
-  forward_solved: "حلّها مشرف الفرع ✓", forward_unconfirmed: "حُلّت (غير مؤكد)",
+  forwarded: "محوّلة – بانتظار الحل", forward_overdue: "محوّلة – انتهت الـ24 ساعة", forward_failed: "لم تُحوَّل – اختر من جديد",
+  forward_solved: "حُلّت بالتحويل ✓", forward_unconfirmed: "أغلقها مشرف الفرع (غير مؤكد)",
 };
 // D2: why a supervisor's "solved" is not confirmed (the last call to the customer decides)
 export const PROOF_REASON: Record<string, string> = {
@@ -104,10 +104,11 @@ export const STEP_NEXT: Record<string, string> = {
   required: "عبّئ نموذج المتابعة", overdue: "عبّئ نموذج المتابعة (تأخر)", note_needed: "اكتب ما حدث في مكالمة المعاودة",
   waiting_callback: "اتصل بالعميل في الموعد", callback_missed: "اتصل بالعميل الآن (فات الموعد)",
   waiting_solution: "تابع الحل واكتب تحديثًا عند الحل (خلال يومين)", solution_overdue: "فات موعد الحل: اكتب تحديثًا الآن",
-  forwarded: "مشرف الفرع يحلّها ويغلقها؛ اكتب تحديثًا إن اتصل العميل",
-  forward_overdue: "تأخر مشرف الفرع: اكتب تحديثًا إن اتصل العميل",
-  forward_failed: "لم تصل المشكلة لمشرف الفرع: عدّل النموذج واختر من جديد",
-  forward_unconfirmed: "أغلقها مشرف الفرع دون مكالمة جيدة للعميل: تابع معه",
+  forwarded: "المسؤول في نظام خدمة العملاء يحلّها ويغلقها؛ اكتب تحديثًا إن اتصل العميل",
+  forward_overdue: "انتهت مهلة الـ24 ساعة: تنتقل تلقائيًا للمستوى التالي",
+  forward_failed: "لم تصل المشكلة: عدّل النموذج واختر من جديد",
+  forward_unconfirmed: "أغلقها مشرف الفرع دون مكالمة جيدة للعميل: تنتقل للإدارة بعد الـ24 ساعة إن لم يتصل",
+
 };
 // priority of the first form (spec 2026-11-16-priority-no-followup): same codes as callsight/followups.py
 export type Priority = "high" | "medium" | "low";
@@ -116,3 +117,10 @@ export const PRIORITY_CLASS: Record<Priority, string> = { high: "bad", medium: "
 export const PRIORITIES: Priority[] = ["high", "medium", "low"];
 export const ROLE_LABEL: Record<string, string> = { admin: "مدير النظام", supervisor: "مشرف", agent: "موظف" };
 export const pct = (v: number | null | undefined) => (v === null || v === undefined ? "–" : `${(v * 100).toFixed(0)}%`);
+
+// the forward chain (spec "Part 4 change")
+export const HOP_LEVEL: Record<number, string> = { 1: "الموظف", 2: "مشرف الفرع", 3: "الإدارة" };
+export const HOP_RESULT: Record<string, string> = {
+  pending: "تُنشأ نسخة التذكرة", open: "عنده الآن", solved: "حلّها ✓", passed_on: "لم تُحل خلال 24 ساعة – انتقلت",
+  closed_by_other: "حلّها غيره", failed: "تعذّر الإرسال",
+};

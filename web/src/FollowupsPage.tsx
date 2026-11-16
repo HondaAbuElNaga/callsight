@@ -15,7 +15,7 @@ const STATE_OPTIONS: [string, string][] = [
   ["action", "يحتاج عملاً"], ["forms", "نماذج مطلوبة"], ["notes", "ملاحظات مطلوبة"],
   ["callbacks_today", "معاودات اليوم"], ["missed", "معاودات فائتة"], ["open", "متابعات مفتوحة"], ["solved", "حُلّت"],
   ["came_back", "عاد العميل بعد الحل"], ["no_followup", "لا تحتاج متابعة"],
-  ["forward_solved_today", "حلّها مشرف الفرع اليوم"], ["", "الكل"],
+  ["forward_solved_today", "حُلّت بالتحويل اليوم"], ["", "الكل"],
 ];
 const LOOKBACK_DAYS = 62;   // same as the server's look-back for unfinished work
 const REFRESH_MS = 60_000;
@@ -205,7 +205,7 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
           {([["forms", c.forms, "نماذج مطلوبة", "bad"], ["notes", c.notes, "ملاحظات مطلوبة", "warn"],
              ["callbacks_today", c.callbacks_today, "معاودات اليوم", ""], ["missed", c.missed, "معاودات فائتة", "bad"],
              ["no_followup", c.no_followup, "لا تحتاج متابعة", ""],
-             ["forward_solved_today", c.forward_solved_today ?? 0, "حلّها مشرف الفرع اليوم", "ok"]] as const)
+             ["forward_solved_today", c.forward_solved_today ?? 0, "حُلّت بالتحويل اليوم", "ok"]] as const)
             .map(([k, n, label, tone]) => (
               <button key={k} type="button" aria-pressed={state === k}
                 className={`counter ${n ? tone : ""} ${state === k ? "active" : ""}`}

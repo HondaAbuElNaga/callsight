@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import (DDL, BigInteger, Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer,
-                        String, Text, UniqueConstraint, event, func)
+                        SmallInteger, String, Text, UniqueConstraint, event, func)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -505,7 +505,6 @@ class ForwardPerson(Base):
     id in the customer-service system (from the yaml, or matched by name on sync); ext = PBX extension (proof calls).
     active = still in the yaml and, after a sync, still a supervisor in that system. Not personal data of a call."""
     __tablename__ = "forward_person"
-    __table_args__ = (UniqueConstraint("branch", "name", name="uq_forward_person_branch_name"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     branch: Mapped[str] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(100))
@@ -514,6 +513,36 @@ class ForwardPerson(Base):
     full_name: Mapped[str | None] = mapped_column(String(200))     # as the other system writes it (after a sync)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # the forward chain: every employee of the other system is stored (any can be chosen); level 2 = his branch's
+    # supervisor (isBranchSupervisor there), level 3 = the managers listed in the yaml (`managers:`)
+    is_supervisor: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    is_manager: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+class ForwardHop(Base):
+    """One person who held a forwarded problem (spec "Part 4 change: the forward chain"): level 1 the chosen
+    employee, 2 his branch supervisor, 3 a manager (all 4 managers get it: the first on the same ticket, the others a
+    copy ticket each). result: pending (copy ticket not made yet) / open / solved / passed_on (24 h ran out) /
+    closed_by_other (another manager solved it) / failed. Levels 1 and 2 share the first ticket. The solution text
+    is personal data: erased with the call's content."""
+    __tablename__ = "forward_hop"
+    __table_args__ = (CheckConstraint("level IN (1, 2, 3)", name="ck_forward_hop_level"),
+                      CheckConstraint("result IN ('pending', 'open', 'solved', 'passed_on', 'closed_by_other', "
+                                      "'failed')", name="ck_forward_hop_result"))
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    level: Mapped[int] = mapped_column(SmallInteger)
+    person_id: Mapped[int] = mapped_column(ForeignKey("forward_person.id"))
+    ticket_guid: Mapped[str | None] = mapped_column(String(64))
+    ticket_number: Mapped[int | None] = mapped_column(Integer)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))     # when this person got it
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))   # closedAt there (None = open)
+    solution: Mapped[str | None] = mapped_column(String(1000))
+    result: Mapped[str] = mapped_column(String(20), index=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))    # solved / passed on / closed
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(String(300))
+    tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class CallFollowupNote(Base):

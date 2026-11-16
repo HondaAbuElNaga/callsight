@@ -126,6 +126,40 @@ class CsClient:
         ticket answer (checked <= 64 chars) and is URL-quoted all the same."""
         return self._call("GET", f"/tickets/{quote(guid, safe='')}", params={"userGuid": self.cfg.user_guid})
 
+    # ----- the forward chain: move / reopen / close a ticket -----
+
+    def forward_ticket(self, guid: str, to_user_guid: str, note: str) -> dict:
+        """POST /tickets/{guid}/forward: the same ticket goes to another employee."""
+        return self._call("POST", f"/tickets/{quote(guid, safe='')}/forward",
+                          json={"userGuid": self.cfg.user_guid, "toUserGuid": to_user_guid, "note": note[:590]})
+
+    def reopen(self, guid: str, note: str) -> dict:
+        return self._call("POST", f"/tickets/{quote(guid, safe='')}/reopen",
+                          json={"userGuid": self.cfg.user_guid, "note": note[:590]})
+
+    def followup(self, guid: str, note: str, close: bool = False) -> dict:
+        """POST /tickets/{guid}/followup: a message on the ticket; close=True closes it there."""
+        return self._call("POST", f"/tickets/{quote(guid, safe='')}/followup",
+                          json={"userGuid": self.cfg.user_guid, "note": note[:590], "close": close})
+
+
+def employees(targets: dict) -> list[dict]:
+    """Every employee in the forward-targets tree: guid, name, branch, group, is_supervisor (the forward chain lets
+    the agent choose any of them)."""
+    out, seen = [], set()
+    for g in targets.get("groups") or []:
+        for b in (g or {}).get("branches") or []:
+            for e in (b or {}).get("employees") or []:
+                guid = str((e or {}).get("guid") or "")
+                if not guid or len(guid) > 64 or guid in seen:
+                    continue
+                seen.add(guid)
+                out.append({"guid": guid, "name": str(e.get("name") or "")[:200],
+                            "branch": str(b.get("name") or "")[:100], "group": str(g.get("key") or ""),
+                            "is_supervisor": bool(e.get("isBranchSupervisor"))})
+    return out
+
+
 def supervisors(targets: dict) -> list[dict]:
     """Every employee with isBranchSupervisor = true in the forward-targets tree: guid, name, branch, group."""
     out = []

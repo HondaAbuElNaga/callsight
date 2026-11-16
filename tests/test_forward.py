@@ -10,7 +10,7 @@ from sqlalchemy import select, text
 from callsight import followups as fu
 from callsight import forward
 from callsight.api.main import ApiConfig, create_app
-from callsight.cs_api import CsAuthError, CsClient, CsConfig, CsError, CsUnavailable, supervisors
+from callsight.cs_api import CsAuthError, CsClient, CsConfig, CsError, CsUnavailable, employees, supervisors
 from callsight.db.models import Call, CallFollowup, ForwardPerson
 from test_agent_supervisor_api import env, login, switch_on  # noqa: F401
 from test_api import SECRET, TEAM, engine  # noqa: F401
@@ -141,21 +141,35 @@ def test_sync_links_people_and_options(fs):
     s, path = fs
     lines = forward.sync_people(s, None, path)                 # link off: yaml only, nobody choosable yet
     assert lines == [] and forward.options(s) == [{"id": 3, "name": "شريف", "branch": "المدينة المنورة",
-                                                   "ext": "501"}]       # its guid is in the yaml
+                                                   "ext": "501", "supervisor": True, "manager": False}]
     lines = forward.sync_people(s, FakeTargets(), path)
-    assert sum(x.startswith("ok") for x in lines) == 3
+    assert lines[0].startswith("employees: 4 (3 branch supervisors") and sum(x.startswith("ok") for x in lines) == 3
     people = {p.name: p for p in s.scalars(select(ForwardPerson))}
     assert people["صالح الغامدي"].guid == "G-SALEH" and people["صالح الغامدي"].full_name == "صالح محمد الغامدي"
+    assert people["صالح الغامدي"].branch == "رجال الزهور"            # the other system's branch (chain matches on it)
     assert people["السيد عبدالمنعم"].guid == "G-SAYED" and people["شريف"].guid == "G-FIXED"
-    assert len(forward.options(s)) == 3
-    # no longer a supervisor there -> inactive; removed from the yaml -> inactive
+    staff = people["صالح أحمد الغامدي"]                              # every employee can be chosen (forward chain)
+    assert staff.guid == "G-STAFF" and not staff.is_supervisor and staff.ext is None
+    assert len(forward.options(s)) == 4 and len(list(s.scalars(select(ForwardPerson)))) == 4   # rows reused
+    # gone there -> inactive; removed from the yaml -> still an employee, no ext any more
     gone = {"groups": [{"key": "men", "branches": [{"name": "رجال الزهور", "employees": [
-        {"guid": "G-SALEH", "name": "صالح محمد الغامدي", "isBranchSupervisor": True}]}]}]}
+        {"guid": "G-SALEH", "name": "صالح محمد الغامدي", "isBranchSupervisor": True}]},
+        {"name": "رجال المدينة", "employees": [{"guid": "G-FIXED", "name": "شريف حسن", "isBranchSupervisor": True}]}]}]}
     path.write_text(YAML.replace('  - {branch: "المدينة المنورة", name: "شريف", ext: "501", guid: "G-FIXED"}\n', ""),
                     encoding="utf-8")
     lines = forward.sync_people(s, FakeTargets(gone), path)
     assert any(x.startswith("NOT LINKED حفر") for x in lines) and any(x.startswith("removed") for x in lines)
-    assert [o["name"] for o in forward.options(s)] == ["صالح الغامدي"]
+    opts = {o["name"]: o for o in forward.options(s)}
+    assert set(opts) == {"صالح الغامدي", "شريف حسن"} and opts["شريف حسن"]["ext"] is None
+
+
+def test_sync_managers(fs):
+    s, path = fs
+    path.write_text(path.read_text(encoding="utf-8") + 'managers:\n  - {name: "صالح أحمد"}\n', encoding="utf-8")
+    lines = forward.sync_people(s, FakeTargets(), path)
+    assert "1 managers linked" in lines[0]
+    m = s.scalars(select(ForwardPerson).where(ForwardPerson.guid == "G-STAFF")).one()
+    assert m.is_manager and m.name == "صالح أحمد" and forward.level_of(m) == 3
 
 
 def test_sync_two_lines_on_one_person_link_neither(fs):
@@ -166,7 +180,7 @@ def test_sync_two_lines_on_one_person_link_neither(fs):
         {"guid": "G-SALEH", "name": "صالح الغامدي", "isBranchSupervisor": True}]}]}]}
     lines = forward.sync_people(s, FakeTargets(one), path)
     assert any("same person" in x for x in lines)
-    assert forward.options(s) == []
+    assert [(o["name"], o["ext"]) for o in forward.options(s)] == [("صالح الغامدي", None)]   # plain, no ext
 
 
 # ---------- form rules + steps ----------
@@ -401,7 +415,8 @@ def test_api_forward_flow(fwd_env):
     url = f"/api/calls/{ids['own']}/followup"
     got = client.get(url).json()
     assert got["forward_enabled"] is True
-    assert {o["name"] for o in got["forward_options"]} == {"السيد عبدالمنعم", "صالح الغامدي", "شريف"}
+    assert {o["name"] for o in got["forward_options"]} == {"السيد عبدالمنعم", "صالح الغامدي", "شريف",
+                                                          "صالح أحمد الغامدي"}
     pid = next(o["id"] for o in got["forward_options"] if o["name"] == "صالح الغامدي")
     t = datetime.now(timezone.utc) + timedelta(hours=3)
     body = {"what_happened": "لم تصل الشهادة", "solved": False, "priority": "medium", "responsible_kind": "forward",
