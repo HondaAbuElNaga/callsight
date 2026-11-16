@@ -57,7 +57,7 @@ function Problem({ i }: { i: FollowupItem }) {
 }
 
 function nextTime(i: FollowupItem): string {
-  if (i.step === "waiting_callback" || i.step === "callback_missed") return i.callback ? `المعاودة: ${formatDateTime(i.callback.at)}` : "";
+  if (i.step === "waiting_callback" || i.step === "callback_missed" || i.step === "no_number") return i.callback ? `المعاودة: ${formatDateTime(i.callback.at)}` : "";
   if (i.solve_by) return `الحل: ${formatDateTime(i.solve_by)}`;
   if (i.step === "note_needed" && i.note_deadline) return `الملاحظة قبل: ${formatDateTime(i.note_deadline)}`;
   return "";
@@ -82,7 +82,8 @@ function Unsolved({ items, truncated, staff, onOpen }:
                 {staff && <span>{i.agent_ext} <span className="muted">{i.agent_name}</span></span>}
                 <span className="muted">{formatDateTime(i.start_time)}</span>
               </div>
-              {staff && <div className="line small"><Problem i={i} /><span className="muted">· يحلّها: {whoSolves(i)}</span></div>}
+              {staff && <div className="line small"><span className="state warn">مفتوحة</span><Problem i={i} />
+                <span className="muted">· يحلّها: {whoSolves(i)}</span></div>}
               {nextTime(i) && <div className="small muted">{nextTime(i)}</div>}
             </li>
           ))}

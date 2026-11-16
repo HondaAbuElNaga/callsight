@@ -1,7 +1,7 @@
 # Spec: Priority on the follow-up form + "لا تحتاج متابعة" made visible
 
 **Roadmap item:** Phase 7 follow-on (idea: user, 2026-11-16).
-**Status:** approved (user, 2026-11-16) — parts 1–3 buildable now; part 4 (requirements 12, 16–21) waits for the other system's API
+**Status:** parts 1–3 **done** (2026-11-16, branch `spec/2026-11-16-priority-no-followup`, not pushed yet) — part 4 (requirements 12, 16–21) waits for the other system's API
 
 ## Goal
 1. Every problem the agent records gets a **priority** (عالية / متوسطة / منخفضة), so the supervisor sees what is urgent and,
@@ -200,19 +200,32 @@
       person: its own column in the forward people table, shown in red, listed first in the mistakes list.
     - Open questions 12–14 (when the agent may re-send, what the supervisor can do).
 
+## Build decisions (3-agent reviews per part, 2026-11-16)
+- An **unchanged** expected solve time is not re-checked against the 2-day limit when a form is saved again (forms from
+  before the 2-day rule may hold a later time); the 1-day limit of عالية is checked every time.
+- The priority filter does not apply to the "لا تحتاج متابعة" view (those forms have no priority, the list would be
+  empty under a non-zero counter).
+- "تحتاج حل" is bounded in SQL: at most 2 × 500 open problems are loaded (by priority, oldest first), sorted by urgency,
+  first 500 shown ("+" in the heading when cut). The priority filter runs in SQL.
+- The side column is narrow, so each "تحتاج حل" line is a small stacked card, not one table row. The agent's name and
+  the supervisor fields (problem, who solves it, state "مفتوحة") are shown to supervisors/admins only. `no_number`
+  lines show the callback time; `note_needed` lines show the note deadline.
+
 ## Acceptance criteria
-- [ ] Tests: form without priority → 422; bad code → 422; each code saves and comes back with the right `priority_ar`;
+- [x] Tests: form without priority → 422; bad code → 422; each code saves and comes back with the right `priority_ar`;
       `no_followup` with a priority sent → stored NULL; note with `priority` → 422; supervisor edit can change it.
-- [ ] Tests: `/api/followups?state=no_followup` returns only those calls; `counts.no_followup` matches; agent sees only
+- [x] Tests: `/api/followups?state=no_followup` returns only those calls; `counts.no_followup` matches; agent sees only
       their own.
-- [ ] Tests: KPI `no_followup` and `no_followup_rate` per agent and total (e.g. 1 no-follow-up + 3 problem forms → 25 %);
+- [x] Tests: KPI `no_followup` and `no_followup_rate` per agent and total (e.g. 1 no-follow-up + 3 problem forms → 25 %);
       zero forms → rate null; existing KPI numbers unchanged on the old test data.
-- [ ] Tests: an unsolved call from 30 days ago is in `unsolved` for `from=to=today` and for any other dates; a call
+- [x] Tests: an unsolved call from 30 days ago is in `unsolved` for `from=to=today` and for any other dates; a call
       solved by a note leaves it; `no_followup` and first-call-solved calls are never in it; agent sees only their own,
       supervisor with `agent=` sees only that agent; order = priority, then urgency, then oldest.
-- [ ] PDF follow-up stages table has the two new columns (test on the HTML).
-- [ ] Migration 0015 up → down → up OK; old forms have NULL priority.
-- [ ] Full pytest green (except the known `.env` test); web build OK.
+- [x] PDF follow-up stages table has the two new columns (test on the HTML).
+- [x] Migration 0015 up → down → up OK; old forms have NULL priority. → scratch DB, 1 old form: NULL after upgrade;
+      check constraint refuses `urgent`.
+- [x] Full pytest green (except the known `.env` test); web build OK. → 705 passed, 1 failed
+      (`test_llm_config_from_env`, local `.env`), 9 skipped; `tsc -b && vite build` OK.
 
 ## Technical approach
 - Backend: `models.py` (+column), migration `0015_followup_priority.py`, `followups.py` (PRIORITIES, validate, form_dict,

@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import and_, exists, func, or_, select, true
+from sqlalchemy import and_, case, exists, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -481,23 +481,32 @@ UNSOLVED_URGENCY = {"callback_missed": 0, "solution_overdue": 1, "note_needed": 
                     "waiting_solution": 3, "no_number": 4}
 
 
-def unsolved(s: Session, exts, start: date, now: datetime, *, callers) -> list[Row]:
+def unsolved(s: Session, exts, start: date, now: datetime, *, callers, priority: str | None = None,
+             limit: int = 500) -> tuple[list[Row], bool]:
     """Every needed call since followup_start (no date limit) whose latest entry (form, or the last note) says not
     solved, for these owner extensions. A small SQL pre-filter finds the ids, then rows() builds them, so the steps
-    are exactly the main list's. Order: priority, then the most urgent step, then the oldest call."""
+    are exactly the main list's. Order: priority, then the most urgent step, then the oldest call.
+    Bounded (review 2026-11-16): SQL keeps at most 2 x limit ids (by priority, oldest first), so a long history never
+    makes the page slow; returns (the first `limit` rows, truncated)."""
     if not exts:
-        return []
+        return [], False
     last_note = (select(CallFollowupNote.solved).where(CallFollowupNote.call_id == CallFollowup.call_id)
                  .order_by(CallFollowupNote.round.desc()).limit(1).correlate(CallFollowup).scalar_subquery())
-    ids = list(s.scalars(select(Call.id).join(CallFollowup, CallFollowup.call_id == Call.id)
-                         .where(*needed_conditions(exts, start), CallFollowup.no_followup.is_(False),
-                                func.coalesce(last_note, CallFollowup.solved).is_(False))))
+    rank = case(*[(CallFollowup.priority == k, v) for k, v in PRIORITY_ORDER.items()], else_=len(PRIORITY_ORDER))
+    stmt = (select(Call.id).join(CallFollowup, CallFollowup.call_id == Call.id)
+            .where(*needed_conditions(exts, start), CallFollowup.no_followup.is_(False),
+                   func.coalesce(last_note, CallFollowup.solved).is_(False))
+            .order_by(rank, Call.start_time, Call.id).limit(2 * limit + 1))
+    if priority:
+        stmt = stmt.where(CallFollowup.priority == priority)
+    ids = list(s.scalars(stmt))
     if not ids:
-        return []
-    got = [r for r in rows(s, exts, start, day_bounds(start)[0], now + timedelta(days=1), ids, callers=callers)
-           if r.step(now) in OPEN_STEPS]
-    return sorted(got, key=lambda r: (PRIORITY_ORDER.get(r.form.priority or "", 3),
-                                      UNSOLVED_URGENCY.get(r.step(now), 9), r.call.start_time, r.call.id))
+        return [], False
+    got = [r for r in rows(s, exts, start, day_bounds(start)[0], now + timedelta(days=1), ids[:2 * limit],
+                           callers=callers) if r.step(now) in OPEN_STEPS]
+    got.sort(key=lambda r: (PRIORITY_ORDER.get(r.form.priority or "", 3),
+                            UNSOLVED_URGENCY.get(r.step(now), 9), r.call.start_time, r.call.id))
+    return got[:limit], len(got) > limit or len(ids) > 2 * limit
 
 
 def responsible_options(s: Session) -> list[dict]:

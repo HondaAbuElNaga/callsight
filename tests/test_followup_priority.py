@@ -222,14 +222,14 @@ def test_unsolved_ignores_dates_and_leaves_when_solved(s):  # noqa: F811
     noted_form.callback_at = noted_form.expected_at = at(17)
     mk(s, "cb", at(17, 5), direction="outbound", agent="104", number="0501000008")
     s.commit()
-    got = [r.call.uid for r in fu.unsolved(s, ["119"], DAY, later, callers=["104", "116", "119"])]
+    got = [r.call.uid for r in fu.unsolved(s, ["119"], DAY, later, callers=["104", "116", "119"])[0]]
     assert got == ["high_late", "high_wait", "noted", "old_low", "none"]
     _note(s, noted, u, at(18), solved=True)                                      # a note marks it solved: gone
     s.commit()
-    got = [r.call.uid for r in fu.unsolved(s, ["119"], DAY, later, callers=["104", "116", "119"])]
+    got = [r.call.uid for r in fu.unsolved(s, ["119"], DAY, later, callers=["104", "116", "119"])[0]]
     assert got == ["high_late", "high_wait", "old_low", "none"]
-    assert [r.call.uid for r in fu.unsolved(s, ["104"], DAY, later, callers=["104", "116", "119"])] == ["theirs"]
-    assert fu.unsolved(s, [], DAY, later, callers=["119"]) == []
+    assert [r.call.uid for r in fu.unsolved(s, ["104"], DAY, later, callers=["104", "116", "119"])[0]] == ["theirs"]
+    assert fu.unsolved(s, [], DAY, later, callers=["119"]) == ([], False)
 
 
 def test_unsolved_in_the_api_whatever_the_dates(env):  # noqa: F811
@@ -270,3 +270,20 @@ def test_unsolved_in_the_api_whatever_the_dates(env):  # noqa: F811
     assert client.put(f"/api/calls/{ids['own']}/followup", json={"what_happened": "تم", "solved": True,
                                                                   "priority": "high"}).status_code == 200
     assert [i["call_id"] for i in client.get("/api/followups").json()["unsolved"]] == [old_id]
+
+
+def test_unsolved_is_bounded_and_filters_priority_in_sql(s):  # noqa: F811   (review 2026-11-16)
+    start_on(s)
+    u = user(s)
+    for n, prio in enumerate(("low", "high", "medium", "high")):
+        f = form(s, mk(s, f"p{n}", at(9 + n), number=f"050100010{n}"), u, filled=at(9 + n, 5))
+        f.priority = prio
+    s.commit()
+    later = at(12, day=DAY + timedelta(days=3))
+    got, cut = fu.unsolved(s, ["119"], DAY, later, callers=["119"], limit=2)
+    # the two high ones, same step: the older (10:00) before the newer (12:00) = the "oldest first" tie-break
+    assert [r.call.uid for r in got] == ["p1", "p3"] and cut is True
+    got, cut = fu.unsolved(s, ["119"], DAY, later, callers=["119"], priority="medium")
+    assert [r.call.uid for r in got] == ["p2"] and cut is False
+    got, cut = fu.unsolved(s, ["119"], DAY, later, callers=["119"], limit=4)
+    assert [r.call.uid for r in got] == ["p1", "p3", "p2", "p0"] and cut is False

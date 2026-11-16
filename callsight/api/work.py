@@ -288,11 +288,9 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         items = items[:LIST_LIMIT]
         # "تحتاج حل" (requirement 11): every open problem of these agents, never limited by من/إلى or the state
         # filter; only "who" (agent / الموظف filter) and the priority filter apply
-        unsolved = [r.as_dict(now, names, users) for r in fu.unsolved(s, exts, start, now, callers=team_exts())]
-        if priority:
-            unsolved = [i for i in unsolved if i["form"]["priority"] == priority]
-        out["unsolved_truncated"] = len(unsolved) > LIST_LIMIT
-        unsolved = unsolved[:LIST_LIMIT]
+        got, out["unsolved_truncated"] = fu.unsolved(s, exts, start, now, callers=team_exts(), priority=priority,
+                                                      limit=LIST_LIMIT)
+        unsolved = [r.as_dict(now, names, users) for r in got]
         shown = {i["call_id"] for i in items} | {i["call_id"] for i in unsolved}
         mine = dict(s.execute(select(CallPrivateNote.call_id, CallPrivateNote.text).where(
             CallPrivateNote.user_id == user.id, CallPrivateNote.call_id.in_(shown))).all()) if shown else {}
