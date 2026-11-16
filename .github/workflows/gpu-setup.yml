@@ -19,6 +19,7 @@ on:
           - status
           - start-date
           - finish
+          - main-status
           - gpu-cmd
       value:
         description: "start-date: YYYY-MM-DD  |  gpu-cmd: one command run on the GPU server"
@@ -115,6 +116,15 @@ jobs:
 
             finish)
               "${G[@]}" 'sudo rm -f /etc/callsight/stay-on && sudo systemctl start --no-block callsight-gpu && echo "started: works, then powers off"' ;;
+
+            main-status)          # from the main server only: works while the GPU server sleeps
+              cd "$M"
+              MC=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml)
+              "${MC[@]}" exec -T worker python -m callsight transcribe status
+              "${MC[@]}" exec -T worker python -m callsight gpu-work
+              "${MC[@]}" exec -T postgres psql -U callsight -d callsight -At -c \
+                "select 'finished per hour (UTC)', date_trunc('hour', finished_at), count(*) from transcript
+                 where finished_at > now() - interval '12 hours' group by 2 order by 2" ;;
 
             gpu-cmd)
               [ -n "$VALUE" ] || { echo "value: the command to run" >&2; exit 1; }
