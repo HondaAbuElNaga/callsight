@@ -1,0 +1,12 @@
+# Branch supervisors who can receive a forwarded problem (spec 2026-11-16-priority-no-followup, part 4, req 16).
+# For now the forward list shows ONLY these people (user, 2026-11-16). More are added when the user sends them.
+# guid = the person's id in the customer-service system (forward-targets); filled when the API key arrives,
+# matched by branch + name. ext = PBX extension: their calls to the customer are the proof of solving.
+people:
+  - {branch: "فرع الزهور",            name: "صالح الغامدي",        ext: "101", guid: null}
+  - {branch: "حفر الباطن مصيف",        name: "اسماعيل ابو المعاطي",  ext: "301", guid: null}
+  - {branch: "حفر الباطن حي الواحه",    name: "السيد عبدالمنعم",      ext: "401", guid: null}
+  - {branch: "الرياض الحمرا",          name: "عمر جنينة",           ext: "201", guid: null}
+  - {branch: "المدينة المنورة",         name: "شريف",                ext: "501", guid: null}
+  - {branch: "خميس مشيط الظرفة",       name: "عبدالعظيم",           ext: "601", guid: null}
+  - {branch: "الرياض ظهرة لبن",        name: "عماد حلمي",           ext: "901", guid: null}

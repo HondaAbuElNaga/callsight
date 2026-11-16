@@ -249,6 +249,18 @@ system with "مشرف خدمة العملاء" rights (tickets are recorded unde
   by supervisor guid (user gives them).
 - Needed from the user before the first real call: the API key and the PBX account's userGuid (into the server `.env`).
 
+### User decisions on API version 2 (2026-11-16)
+- **"Received" step stays in the tracker, always shown** (user: "always appear; if solved see in place, if still see in
+  place"). The API has no "opened" time, so the step is ticked at the supervisor's **first action** on the ticket (first
+  `followup` item written by them, or the close), with that time; until then it stays in its place as the waiting step.
+- **Forward list = only the 7 supervisors in `config/forward_people.yaml`** for now (branch, name, extension 101, 201,
+  301, 401, 501, 601, 901); more when the user sends them. Their `guid` is matched by branch + name when the API key
+  arrives.
+- **To decide in the full design (found by Claude):** today only calls that touch team extensions (104, 116, 119, 114)
+  are saved, so a supervisor's call from 101 to the customer is **not stored** → no proof of solving. Part 4 must also
+  keep calls from these 7 extensions to customers who have an open forwarded problem (and their recordings, for the
+  satisfaction score > 7). That means branch supervisors' calls get recorded, transcribed and scored here.
+
 ## Build decisions (3-agent reviews per part, 2026-11-16)
 - An **unchanged** expected solve time is not re-checked against the 2-day limit when a form is saved again (forms from
   before the 2-day rule may hold a later time); the 1-day limit of عالية is checked every time.
