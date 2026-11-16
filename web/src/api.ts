@@ -475,7 +475,7 @@ export interface ForwardLineItem {
 }
 export interface ForwardPersonStats {
   person_id: number; name: string | null; branch: string | null; received: number; solved: number;
-  not_solved_24h: number; closed_no_good_call: number; closed_by_other: number; open: number; failed: number;
+  not_solved_24h: number; closed_no_good_call: number; closed_by_other: number; open: number;
   avg_seconds_to_solve: number | null;
 }
 export interface ForwardInsights {
@@ -494,6 +494,7 @@ export interface ForwardStoryHop {
   sent_at: string | null; closed_at: string | null; ended_at: string | null; solution: string | null;
   error: string | null;
   items: { kind: string; type: string; note: string | null; at: string | null; actor: string | null }[];
+  items_cut: boolean;
   calls: ForwardProof["calls"] | null; proof: ForwardProof | null;
 }
 export interface ForwardStory {
@@ -501,4 +502,5 @@ export interface ForwardStory {
   agent: { ext: string | null; name: string; what_happened: string | null; note: string | null;
     forwarded_at: string | null; ticket_number: number | null; call_time: string | null };
   hops: ForwardStoryHop[];
+  other_items?: ForwardStoryHop["items"];     // read before the chain, outside every person's time
 }

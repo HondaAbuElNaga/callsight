@@ -561,7 +561,8 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
                          audit_analysis=lambda s, user, call_id: audit_transcript(s, user, call_id, "analysis"))
     admin_routes.register(app, DB=DB, Admin=Admin, cfg=cfg)
     from . import forwards as forward_routes
-    forward_routes.register(app, DB=DB, Manager=Manager)     # the forwards page (staff only)
+    forward_routes.register(app, DB=DB, Manager=Manager,      # the forwards page (staff only)
+                            audit_analysis=lambda s, user, call_id: audit_transcript(s, user, call_id, "analysis"))
 
     @app.get("/api/{rest:path}")
     def api_404(rest: str) -> None:

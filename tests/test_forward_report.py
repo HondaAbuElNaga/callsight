@@ -95,7 +95,7 @@ def test_employee_solves_in_time(cs):  # noqa: F811
     ins = fr.listing(s, day(), day())["insights"]
     assert ins["totals"]["solved_1"] == 1
     e = ins["employees"][0]
-    assert (e["solved"], e["avg_seconds_to_solve"]) == (1, 5 * 3600)       # got it 11:00, solved at the 16:00 run
+    assert (e["solved"], e["avg_seconds_to_solve"]) == (1, 4 * 3600)       # got it 11:00, closed it 15:00
     assert ins["branches"][0]["solved_in_branch"] == 1
     assert fr.story(s, c.id)["hops"][0]["solution"] == "تم الحل"
 
@@ -115,3 +115,28 @@ def test_api_staff_sees_the_page(fwd_env):  # noqa: F811
     assert client.get("/api/forwards", params={"state": "x"}).status_code == 422
     assert client.get("/api/forwards", params={"from": "2026-01-01", "to": "2027-06-01"}).status_code == 422
     assert client.get("/api/forwards/123456").status_code == 404
+
+
+def test_failed_pass_on_after_reopen_keeps_hop_clean(cs):  # noqa: F811
+    """Review fix: his close goes back on his hop only once the forward worked; a failed forward leaves the hop
+    as the ticket really is (reopened), never a stale close that a later run could take as a solve."""
+    from callsight.cs_api import CsUnavailable
+    from callsight.db.models import ForwardHop
+    from sqlalchemy import select
+    s, _, p = cs
+    fake = Talk()
+    c, f = form_to(s, p["G-STAFF"])
+    t2 = at(11) + timedelta(hours=24, minutes=5)
+    tick(s, fake, t2)                                                      # -> branch supervisor
+    fake.closed["T-1"] = (t2 + timedelta(hours=2)).isoformat()             # closes, no call
+    tick(s, fake, t2 + timedelta(hours=3))
+    t3 = t2 + timedelta(hours=24, minutes=5)
+    fake.fail = CsUnavailable("down")
+    tick(s, fake, t3)
+    sup = s.scalars(select(ForwardHop).where(ForwardHop.call_id == c.id, ForwardHop.level == 2)).one()
+    assert sup.result == "open" and sup.closed_at is None and sup.error
+    fake.fail = None
+    fake.closed["T-1"] = (t2 + timedelta(hours=2)).isoformat()             # (the fake reopen cleared it)
+    tick(s, fake, t3 + timedelta(minutes=5))
+    s.refresh(sup)
+    assert sup.result == "passed_on"

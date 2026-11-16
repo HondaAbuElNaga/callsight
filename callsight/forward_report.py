@@ -13,11 +13,12 @@ from sqlalchemy.orm import Session
 
 from .config import RIYADH
 from .db.models import Agent, Call, CallFollowup, ForwardEvent, ForwardHop, ForwardPerson
-from .forward import CLOSE_GRACE, WATCH_MAX, _sup_calls, closed, digits9, proof
+from .forward import WATCH_MAX, _sup_calls, closed, digits9, proof
 
 LIST_LIMIT = 500
 MAX_DAYS = 366
 STATES = ("open", "solved", "unsolved")
+GROUP_LABEL = {"men": "رجال", "women": "نساء"}
 EVENT_MAX = 200          # timeline items shown per hop
 
 
@@ -48,10 +49,23 @@ def _load(s: Session, start: date, end: date):
     return rows, hops, people
 
 
+def bkey(p: ForwardPerson | None) -> str | None:
+    """A branch with its group: men's and women's branches can share a name."""
+    if p is None or not p.branch:
+        return None
+    g = GROUP_LABEL.get(p.grp or "", p.grp)
+    return f"{p.branch} · {g}" if g and g not in p.branch else p.branch
+
+
+def done_at(h: ForwardHop) -> datetime | None:
+    """When he solved it: his close on the ticket (not when our run noticed it, e.g. after the score came)."""
+    return h.closed_at if closed(h) and h.closed_at else h.ended_at
+
+
 def _state(hs: list[ForwardHop]) -> str:
     if any(h.result == "solved" for h in hs):
         return "solved"
-    if any(h.result in ("open", "pending") for h in hs):
+    if not hs or any(h.result in ("open", "pending") for h in hs):
         return "open"
     return "unsolved"
 
@@ -62,17 +76,18 @@ def _line(f: CallFollowup, c: Call, hs: list[ForwardHop], people: dict, names: d
     first = people.get(hs[0].person_id) if hs else None
     open_ = [h for h in hs if h.result in ("open", "pending")]
     top = max((h.level for h in open_), default=0)
-    took = (s_hop.ended_at - f.forwarded_at).total_seconds() if s_hop and s_hop.ended_at and f.forwarded_at else None
+    end = done_at(s_hop) if s_hop else None
+    took = (end - f.forwarded_at).total_seconds() if end and f.forwarded_at else None
     return {
         "call_id": c.id, "customer_number": c.customer_number, "agent_ext": c.agent_ext,
         "agent_name": names.get(c.agent_ext or "", ""), "priority": f.priority, "ticket_number": f.forward_ticket_number,
         "forwarded_at": _iso(f.forwarded_at), "state": _state(hs),
         "level": max((h.level for h in hs), default=None),
-        "first": {"name": first.name if first else None, "branch": first.branch if first else None},
+        "first": {"name": first.name if first else None, "branch": bkey(first)},
         "holders": [people[h.person_id].name for h in open_ if h.level == top and h.person_id in people],
         "solved_by": ({"name": people[s_hop.person_id].name if s_hop.person_id in people else None,
                        "level": s_hop.level} if s_hop else None),
-        "solved_at": _iso(s_hop.ended_at) if s_hop else None, "seconds_to_solve": took,
+        "solved_at": _iso(end), "seconds_to_solve": took,
     }
 
 
@@ -87,15 +102,16 @@ def listing(s: Session, start: date, end: date, *, state: str | None = None, lev
             continue
         if level and max((h.level for h in hs), default=0) != level:
             continue
-        if branch and not any(people.get(h.person_id) and people[h.person_id].branch == branch for h in hs):
+        if branch and not (hs and bkey(people.get(hs[0].person_id)) == branch):   # the branch it was sent to
             continue
         if person_id and not any(h.person_id == person_id for h in hs):
             continue
         items.append(_line(f, c, hs, people, names))
     return {"items": items[:LIST_LIMIT], "truncated": len(items) > LIST_LIMIT,
             "insights": insights(rows, hops, people),
-            "filters": {"branches": sorted({p.branch for p in people.values() if p.branch}),
-                        "people": sorted(({"id": p.id, "name": p.name, "branch": p.branch} for p in people.values()),
+            "filters": {"branches": sorted({bkey(p) for p in people.values() if bkey(p)}),
+                        "people": sorted(({"id": p.id, "name": p.name, "branch": bkey(p) or ""}
+                                          for p in people.values()),
                                          key=lambda x: (x["branch"], x["name"]))}}
 
 
@@ -116,38 +132,36 @@ def insights(rows, hops: dict[int, list[ForwardHop]], people: dict) -> dict:
         if st == "solved":
             h = [x for x in hs if x.result == "solved"][-1]
             tot[f"solved_{h.level}"] += 1
-            if h.ended_at and f.forwarded_at:
-                took.append((h.ended_at - f.forwarded_at).total_seconds())
+            if done_at(h) and f.forwarded_at:
+                took.append(max(0.0, (done_at(h) - f.forwarded_at).total_seconds()))
         else:
             tot[st] += 1
         if hs and hs[0].person_id in people:
-            b = branch[people[hs[0].person_id].branch or "-"]
+            b = branch[bkey(people[hs[0].person_id]) or "-"]
             b["received"] += 1
             b["solved_in_branch"] += any(x.result == "solved" and x.level <= 2 for x in hs)
             b["went_to_managers"] += any(x.level == 3 for x in hs)
         for h in hs:
-            if h.result == "pending":
+            if h.sent_at is None or h.result in ("pending", "failed"):     # never reached him
                 continue
             p = people.get(h.person_id)
             d = per.setdefault((h.level, h.person_id), {
-                "person_id": h.person_id, "name": p.name if p else None, "branch": p.branch if p else None,
+                "person_id": h.person_id, "name": p.name if p else None, "branch": bkey(p),
                 "received": 0, "solved": 0, "not_solved_24h": 0, "closed_no_good_call": 0, "closed_by_other": 0,
-                "open": 0, "failed": 0, "_t": []})
+                "open": 0, "_t": []})
             d["received"] += 1
             if h.result == "solved":
                 d["solved"] += 1
-                if h.ended_at and h.sent_at:
-                    d["_t"].append((h.ended_at - h.sent_at).total_seconds())
+                if done_at(h) and h.sent_at:
+                    d["_t"].append(max(0.0, (done_at(h) - h.sent_at).total_seconds()))
             elif h.result == "passed_on":
                 d["not_solved_24h"] += 1
-                if h.level == 2 and closed(h):
-                    d["closed_no_good_call"] += 1      # he closed it, the call check said no
+            if h.level == 2 and h.result in ("passed_on", "open") and closed(h):
+                d["closed_no_good_call"] += 1          # he closed it, the call check said no (or not yet)
             elif h.result == "closed_by_other":
                 d["closed_by_other"] += 1
             elif h.result == "open":
                 d["open"] += 1
-            elif h.result == "failed":
-                d["failed"] += 1
     tables = {1: [], 2: [], 3: []}
     for (lvl, _), d in per.items():
         d["avg_seconds_to_solve"] = _avg(d.pop("_t"))
@@ -165,22 +179,26 @@ def story(s: Session, call_id: int) -> dict | None:
     f = s.scalar(select(CallFollowup).where(CallFollowup.call_id == call_id,
                                             CallFollowup.responsible_kind == "forward"))
     c = s.get(Call, call_id)
-    if f is None or c is None or c.content_deleted_at is not None or f.forward_status is None:
+    if f is None or c is None or c.content_deleted_at is not None or f.forward_status != "sent":
         return None
     hs = list(s.scalars(select(ForwardHop).where(ForwardHop.call_id == call_id).order_by(ForwardHop.id)))
     pids = {h.person_id for h in hs} | ({f.forward_person_id} if f.forward_person_id else set())
     people = {p.id: p for p in s.scalars(select(ForwardPerson).where(ForwardPerson.id.in_(pids)))} if pids else {}
     events = list(s.scalars(select(ForwardEvent).where(ForwardEvent.call_id == call_id)
-                            .order_by(ForwardEvent.at.asc().nulls_last(), ForwardEvent.id)))
+                            .order_by(ForwardEvent.at.asc().nulls_last(), ForwardEvent.id)
+                            .limit(EVENT_MAX * (len(hs) + 1))))
     by_hop: dict[int, list[ForwardEvent]] = defaultdict(list)
+    other: list[ForwardEvent] = []
     for e in events:
         hid = e.hop_id
         if hid is None:                      # read before the chain: the hop whose time holds it
             got = [h for h in hs if h.sent_at and e.at and e.at >= h.sent_at and (h.ended_at is None
                                                                                     or e.at <= h.ended_at)]
-            hid = got[-1].id if got else (hs[0].id if hs else None)
+            hid = got[-1].id if got else None
         if hid is not None:
             by_hop[hid].append(e)
+        else:
+            other.append(e)                  # never credited to someone who may not have written it
     names = dict(s.execute(select(Agent.ext, Agent.name)).all())
     d9 = digits9(c.customer_number)
     pairs = [(people[h.person_id].ext, d9, h.sent_at) for h in hs
@@ -189,23 +207,27 @@ def story(s: Session, call_id: int) -> dict | None:
     out_hops = []
     for h in hs:
         p = people.get(h.person_id)
-        item = {"level": h.level, "name": p.name if p else None, "branch": p.branch if p else None,
+        mine_items = by_hop.get(h.id, [])
+        item = {"level": h.level, "name": p.name if p else None, "branch": bkey(p),
                 "ticket_number": h.ticket_number, "result": h.result, "sent_at": _iso(h.sent_at),
                 "closed_at": _iso(h.closed_at if closed(h) else None), "ended_at": _iso(h.ended_at),
                 "solution": h.solution, "error": h.error,
                 "items": [{"kind": e.kind, "type": e.type, "note": e.note, "at": _iso(e.at), "actor": e.actor}
-                          for e in by_hop.get(h.id, [])[:EVENT_MAX]],
+                          for e in mine_items[:EVENT_MAX]], "items_cut": len(mine_items) > EVENT_MAX,
                 "calls": None, "proof": None}
         if h.level == 2 and p is not None and p.ext and h.sent_at:
-            end = min(h.sent_at + WATCH_MAX, (h.ended_at or datetime.now(timezone.utc)) + CLOSE_GRACE)
+            # the verdict the chain made: calls up to when it acted (open: up to now, within the watch time)
+            end = h.ended_at or min(h.sent_at + WATCH_MAX, datetime.now(timezone.utc))
             mine = [x for x in calls if x.agent_ext == p.ext and h.sent_at < x.start_time <= end]
             item["proof"] = proof(mine, {x.id: scores.get(x.id) for x in mine}, True)
             item["calls"] = item["proof"]["calls"]
         out_hops.append(item)
     agent = names.get(c.agent_ext or "", "")
     return {"call_id": c.id, "customer_number": c.customer_number, "priority": f.priority,
-            "state": _state(hs) if hs else "open",
+            "state": _state(hs),
             "agent": {"ext": c.agent_ext, "name": agent, "what_happened": f.what_happened, "note": f.forward_note,
                       "forwarded_at": _iso(f.forwarded_at), "ticket_number": f.forward_ticket_number,
                       "call_time": _iso(c.start_time)},
-            "hops": out_hops}
+            "hops": out_hops,
+            "other_items": [{"kind": e.kind, "type": e.type, "note": e.note, "at": _iso(e.at), "actor": e.actor}
+                            for e in other[:EVENT_MAX]]}

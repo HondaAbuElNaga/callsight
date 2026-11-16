@@ -363,6 +363,16 @@ solved, the times".
   (received, solved inside the branch, went to the managers).
 - Data: `forward_event.hop_id` = the person holding the ticket when the item was first read; a supervisor's own close
   stays on his record when the ticket is reopened for the managers. Read-only page (changes nothing there).
+- Review (3 agents, 2026-11-16), fixed: story reads audited like the analysis view; branch = branch + group
+  (men/women share names); solve time = the person's own close on the ticket (not when our run noticed it); copies
+  that never reached a manager are not counted; "closed without a good call" also counts a supervisor still holding
+  it; story verdict uses the calls up to when the chain acted; branch filter = the branch it was sent to; the
+  supervisor's close is put back only after the forward worked; labels: "موظف المكالمة" (the agent) vs
+  "موظف الفرع"; "توقفت (تعذّر الإرسال)" instead of "لم تُحل"; time of moving shown; late answers never replace newer
+  ones. Accepted: the numbers do not follow the state/branch/person filters (said on the page); supervisor hops
+  passed on before this build have no close kept; a failed forward right after a reopen loses that close; a close
+  passed on because the score never came counts as "without a good call"; `forward_event.hop_id` sits in 0018
+  (0018 has not run on any server: re-run it on a local dev DB).
 
 ## Build decisions (3-agent reviews per part, 2026-11-16)
 - An **unchanged** expected solve time is not re-checked against the 2-day limit when a form is saved again (forms from

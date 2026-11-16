@@ -32,8 +32,8 @@
   supervisor → 4 managers (copy tickets, first close wins), per-hop polling/proof/watch. Waits for the user's approval
   and the 4 managers' names.
   Review 2026-11-16: 3 agents, 29 findings (no high); fixed or recorded in spec Build decisions DC. 770 passed.
-- [~] DP. Forwards page (spec "Part 4: forwards page"): archive list + filters, story of one problem, numbers per
-  employee / branch supervisor / manager / branch. Built 2026-11-16, review running.
+- [x] DP. Forwards page (spec "Part 4: forwards page"): archive list + filters, story of one problem, numbers per
+  employee / branch supervisor / manager / branch. Built + 3-agent review fixed 2026-11-16.
 - [ ] D3. Tests first, then: tracker step list, questions/answers both ways, AI summary added once, one-line view.
         → 3-agent review.
 - [ ] D4. Tests first, then: forward people KPI + late hops (re-send / escalation replaced by the chain, DC).

@@ -1,6 +1,6 @@
 // The forwards page (staff only; spec 2026-11-16-priority-no-followup, "Part 4: forwards page"): every forwarded
 // problem kept after it closes, the full story of one problem, and the numbers for the chosen dates.
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api, Unauthorized,
   type ForwardLineItem, type ForwardPersonStats, type ForwardsList, type ForwardStory, type Me,
@@ -11,7 +11,7 @@ import { PriorityTag } from "./WorkPanels";
 interface Props { me: Me; onCalls: () => void; onLogout: () => void; onExpired: () => void }
 
 const STATE_LABEL: Record<string, [string, string]> = {
-  open: ["مفتوحة", "off"], solved: ["حُلّت", "ok"], unsolved: ["لم تُحل", "bad"],
+  open: ["مفتوحة", "off"], solved: ["حُلّت", "ok"], unsolved: ["توقفت (تعذّر الإرسال)", "bad"],
 };
 const ITEM_TYPE: Record<string, string> = {
   created: "أُنشئت التذكرة", forwarded: "حُوّلت", priority: "تغيّرت الأولوية", reopened: "أُعيد فتحها",
@@ -41,14 +41,18 @@ export function ForwardsPage({ me, onCalls, onLogout, onExpired }: Props) {
   const [open, setOpen] = useState<number | null>(null);
   const set = (p: Partial<typeof f>) => setF((x) => ({ ...x, ...p }));
 
-  const load = useCallback(() => {
+  const expired = useRef(onExpired);
+  expired.current = onExpired;
+  useEffect(() => {
+    let live = true;                       // a late answer for old filters never replaces a newer one
     setError("");
-    api.forwards(f).then(setData).catch((e) => {
-      if (e instanceof Unauthorized) onExpired();
+    api.forwards(f).then((d) => { if (live) setData(d); }).catch((e) => {
+      if (!live) return;
+      if (e instanceof Unauthorized) expired.current();
       else setError("تعذّر التحميل: تحقق من التواريخ (سنة على الأكثر)");
     });
-  }, [f, onExpired]);
-  useEffect(load, [load]);
+    return () => { live = false; };
+  }, [f]);
 
   const t = data?.insights.totals;
   return (
@@ -68,12 +72,12 @@ export function ForwardsPage({ me, onCalls, onLogout, onExpired }: Props) {
         <label>الحالة
           <select id="fw-state" value={f.state} onChange={(e) => set({ state: e.target.value })}>
             <option value="">الكل</option><option value="open">مفتوحة</option>
-            <option value="solved">حُلّت</option><option value="unsolved">لم تُحل</option>
+            <option value="solved">حُلّت</option><option value="unsolved">توقفت (تعذّر الإرسال)</option>
           </select>
         </label>
         <label>وصلت إلى
           <select id="fw-level" value={f.level} onChange={(e) => set({ level: e.target.value })}>
-            <option value="">الكل</option><option value="1">الموظف فقط</option>
+            <option value="">الكل</option><option value="1">موظف الفرع فقط</option>
             <option value="2">مشرف الفرع</option><option value="3">الإدارة</option>
           </select>
         </label>
@@ -94,16 +98,17 @@ export function ForwardsPage({ me, onCalls, onLogout, onExpired }: Props) {
 
       {t && <section className="tiles">
         <Tile label="حُوّلت" v={t.forwarded} />
-        <Tile label="حلّها الموظف" v={t.solved_1} tone="ok" />
+        <Tile label="حلّها موظف الفرع" v={t.solved_1} tone="ok" />
         <Tile label="حلّها مشرف الفرع" v={t.solved_2} tone="ok" />
         <Tile label="حلّتها الإدارة" v={t.solved_3} tone="ok" />
         <Tile label="مفتوحة الآن" v={t.open} />
-        <Tile label="لم تُحل" v={t.unsolved} tone={t.unsolved ? "bad" : undefined} />
+        <Tile label="توقفت (تعذّر الإرسال)" v={t.unsolved} tone={t.unsolved ? "bad" : undefined} />
         <Tile label="متوسط وقت الحل" v={took(t.avg_seconds_to_solve)} />
       </section>}
+      {t && <p className="muted small">الأرقام لكل الفترة المختارة (لا تتأثر بفلاتر الحالة والفرع والشخص). الوقت حتى إغلاق من حلّها.</p>}
 
       {data && <>
-        <People title="الموظفون" rows={data.insights.employees} kind="employee" />
+        <People title="موظفو الفروع" rows={data.insights.employees} kind="employee" />
         <People title="مشرفو الفروع" rows={data.insights.supervisors} kind="supervisor" />
         <People title="الإدارة" rows={data.insights.managers} kind="manager" />
         {data.insights.branches.length > 0 && <section className="panel">
@@ -120,7 +125,7 @@ export function ForwardsPage({ me, onCalls, onLogout, onExpired }: Props) {
           <h2>كل المشكلات المحوّلة{data.truncated ? " (أول 500)" : ""}</h2>
           {data.items.length === 0 ? <p className="muted">لا توجد تحويلات في هذه الفترة.</p> :
             <div className="table-wrap"><table>
-              <thead><tr><th>الوقت</th><th>العميل</th><th>الموظف</th><th>الأولوية</th><th>حُوّلت إلى</th>
+              <thead><tr><th>الوقت</th><th>العميل</th><th>موظف المكالمة</th><th>الأولوية</th><th>حُوّلت إلى</th>
                 <th>وصلت إلى</th><th>الحالة</th><th>حلّها</th><th>المدة</th></tr></thead>
               <tbody>{data.items.map((i) => <Line key={i.call_id} i={i} onOpen={() => setOpen(i.call_id)} />)}</tbody>
             </table></div>}
@@ -145,7 +150,8 @@ function People({ title, rows, kind }: { title: string; rows: ForwardPersonStats
       <h2>{title}</h2>
       <div className="table-wrap"><table>
         <thead><tr><th>الاسم</th><th>الفرع</th><th>استلم</th><th>حلّ</th>
-          {kind !== "manager" && <th>لم يحلّها خلال 24 ساعة</th>}
+          {kind === "employee" && <th>لم يحلّها خلال 24 ساعة</th>}
+          {kind === "supervisor" && <th>لم يحلّها خلال 24 ساعة – انتقلت للإدارة</th>}
           {kind === "supervisor" && <th title="أغلقها دون مكالمة جيدة للعميل (رد، أكثر من 60 ث، رضا أكثر من 7)">أغلقها دون مكالمة جيدة</th>}
           {kind === "manager" && <th>حلّها غيره</th>}
           <th>عنده الآن</th><th>متوسط وقت الحل</th></tr></thead>
@@ -183,19 +189,29 @@ function Line({ i, onOpen }: { i: ForwardLineItem; onOpen: () => void }) {
 function Story({ id, onClose, onExpired }: { id: number; onClose: () => void; onExpired: () => void }) {
   const [st, setSt] = useState<ForwardStory | null>(null);
   const [error, setError] = useState("");
+  const expired = useRef(onExpired);
+  expired.current = onExpired;
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
+    let live = true;
     setSt(null);
-    api.forwardStory(id).then(setSt).catch((e) => {
-      if (e instanceof Unauthorized) onExpired(); else setError("تعذّر تحميل القصة");
+    setError("");
+    api.forwardStory(id).then((d) => { if (live) setSt(d); }).catch((e) => {
+      if (!live) return;
+      if (e instanceof Unauthorized) expired.current(); else setError("تعذّر تحميل القصة");
     });
-  }, [id, onExpired]);
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") close.current(); };
+    window.addEventListener("keydown", esc);
+    return () => { live = false; window.removeEventListener("keydown", esc); };
+  }, [id]);
   return (
     <aside className="side-panel story">
       <div className="line"><h2>قصة المشكلة · مكالمة {id}</h2><button className="link" onClick={onClose}>إغلاق</button></div>
       {error && <p className="bad-text">{error}</p>}
       {st && <ol className="story-steps">
         <li>
-          <b>الموظف {st.agent.ext} {st.agent.name} حوّلها</b>
+          <b>موظف المكالمة {st.agent.ext} {st.agent.name} حوّلها</b>
           <span className="muted small"> · {st.agent.forwarded_at ? formatDateTime(st.agent.forwarded_at) : "–"}
             {st.agent.ticket_number ? ` · تذكرة رقم ${st.agent.ticket_number}` : ""}</span>
           <div className="row"><PriorityTag p={st.priority as Priority | null} /> <span className="muted small">العميل {st.customer_number}</span></div>
@@ -211,6 +227,7 @@ function Story({ id, onClose, onExpired }: { id: number; onClose: () => void; on
               {h.items.map((x, k) => <li key={k}>{x.at ? formatDateTime(x.at) : ""} · {ITEM_TYPE[x.type] ?? x.type}
                 {x.actor ? ` (${x.actor})` : ""}{x.note ? `: ${x.note}` : ""}</li>)}
             </ul> : <p className="small muted">لم يكتب شيئًا على التذكرة.</p>}
+            {h.items_cut && <p className="small muted">(أول 200 فقط)</p>}
             {h.calls && <div className="small">
               <b>مكالماته للعميل:</b>{h.calls.length === 0 ? " لا توجد" : <ul>
                 {h.calls.map((c) => <li key={c.call_id}>{formatDateTime(c.time)} · {c.answered
@@ -222,9 +239,15 @@ function Story({ id, onClose, onExpired }: { id: number; onClose: () => void; on
             {h.closed_at && <p className="small">أغلقها {formatDateTime(h.closed_at)}{h.solution ? ` · الحل: ${h.solution}` : ""}</p>}
             <span className={`state ${h.result === "solved" ? "ok" : h.result === "passed_on" || h.result === "failed" ? "bad" : "off"}`}>
               {HOP_RESULT[h.result] ?? h.result}</span>
+            {h.result === "passed_on" && h.ended_at && <span className="muted small"> · انتقلت {formatDateTime(h.ended_at)}</span>}
             {h.error && <span className="muted small"> ({h.error})</span>}
           </li>
         ))}
+        {st.other_items && st.other_items.length > 0 && <li>
+          <b>رسائل أخرى على التذكرة</b>
+          <ul className="small">{st.other_items.map((x, k) => <li key={k}>{x.at ? formatDateTime(x.at) : ""} · {ITEM_TYPE[x.type] ?? x.type}
+            {x.actor ? ` (${x.actor})` : ""}{x.note ? `: ${x.note}` : ""}</li>)}</ul>
+        </li>}
       </ol>}
     </aside>
   );

@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Query
 from ..config import RIYADH
 
 
-def register(app: FastAPI, *, DB, Manager) -> None:
+def register(app: FastAPI, *, DB, Manager, audit_analysis) -> None:
 
     @app.get("/api/forwards")
     def forwards(user: Manager, s: DB,
@@ -27,7 +27,7 @@ def register(app: FastAPI, *, DB, Manager) -> None:
             raise HTTPException(422, "bad state")
         if level is not None and level not in (1, 2, 3):
             raise HTTPException(422, "bad level")
-        if branch is not None and len(branch) > 100:
+        if branch is not None and len(branch) > 130:
             raise HTTPException(422, "bad branch")
         out = fr.listing(s, start, end, state=state or None, level=level, branch=branch or None, person_id=person)
         out["from"], out["to"] = start.isoformat(), end.isoformat()
@@ -39,4 +39,5 @@ def register(app: FastAPI, *, DB, Manager) -> None:
         got = fr.story(s, call_id)
         if got is None:
             raise HTTPException(404, "no forwarded problem on this call")
+        audit_analysis(s, user, call_id)        # notes + satisfaction scores: audited like the analysis view
         return got

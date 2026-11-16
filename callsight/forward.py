@@ -522,6 +522,7 @@ def next_people(s: Session, h: ForwardHop, person: ForwardPerson) -> tuple[int, 
 
 def _pass_on(s, client, h, person, level, nxt, now, done) -> None:
     note = f"لم تُحل خلال 24 ساعة عند «{person.name}»"
+    his = (None, None)
     try:
         was = h.closed_at
         store_ticket(s, h, client.get_ticket(h.ticket_guid), now)   # the latest state: a close just now wins
@@ -533,7 +534,6 @@ def _pass_on(s, client, h, person, level, nxt, now, done) -> None:
             store_ticket(s, h, client.get_ticket(h.ticket_guid), now)
             if h.closed_at is not None:
                 raise CsError(409, "تعذّر إعادة فتح التذكرة")
-            h.closed_at, h.solution = his           # his own close stays on his record (story + numbers)
         client.forward_ticket(h.ticket_guid, nxt[0].guid, note)
     except CsAuthError:
         h.error = ERR_AUTH
@@ -543,6 +543,8 @@ def _pass_on(s, client, h, person, level, nxt, now, done) -> None:
         done["errors"] += 1
         return
     h.result, h.ended_at, h.error = "passed_on", now, None
+    if his[0] is not None:                          # his own close stays on his record (story + numbers)
+        h.closed_at, h.solution = his
     s.add(ForwardHop(call_id=h.call_id, level=level, person_id=nxt[0].id, ticket_guid=h.ticket_guid,
                      ticket_number=h.ticket_number, sent_at=now, result="open"))
     for p in nxt[1:]:                               # the other managers: a copy ticket each (made next)
