@@ -18,7 +18,7 @@
 - [x] 10. Review: 3 subagents (bugs, security, accuracy) per part. → A: 2 low (2-day limit re-checked on an
         unchanged old time; untested path) fixed. B: 1 low (priority filter emptied the no-follow-up view) fixed.
         C: 1 low security (unbounded unsolved query) fixed, 1 medium + 2 low accuracy (oldest-first tie-break not
-        tested; no state tag in the side section; no time for no_number) fixed. 9 findings in all, 0 rejected.
+        tested; no state tag in the side section; no time for no_number) fixed. 7 findings in all (all confirmed + fixed), 0 rejected.
         Verify: 705 passed, 1 known `.env` failure, 9 skipped; web build OK; migration up/down/up OK.
 - [ ] 11. Spec status done, roadmap "Current position", push to `main` only on the user's yes (push = live deploy).
 
