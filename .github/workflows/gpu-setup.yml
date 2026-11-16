@@ -23,6 +23,8 @@ on:
           - gpu-cmd
           - nlp-on
           - main-ps
+          - gpu-update
+          - blind-reset
       value:
         description: "start-date: YYYY-MM-DD  |  gpu-cmd: one command run on the GPU server"
         required: false
@@ -143,6 +145,16 @@ jobs:
               docker images --format '{{.Repository}}:{{.Tag}} {{.CreatedAt}}' | head -20
               git -C "$M" log -1 --format='%h %ci %s' || true
               for svc in worker beat; do "${MC[@]}" logs --since 90m "$svc" 2>&1 | grep -i -E "queue_analyses|blind" | tail -8; done ;;
+
+            gpu-update)         # the GPU server's code = this branch (it ran old code); internet only during the build
+              sudo bash "$M/deploy/aws/setup-internet.sh" on
+              trap 'sudo bash "$M/deploy/aws/setup-internet.sh" off' EXIT
+              git archive HEAD | "${G[@]}" 'tar -x -C /opt/callsight'
+              "${G[@]}" "$GC up -d --build && $GC ps && ls /opt/callsight/callsight/analysis/ratingset.py && sudo docker image prune -f >/dev/null" ;;
+
+            blind-reset)        # undo a blind set frozen by old code; the main server freezes it again from the rating set
+              cd "$M"
+              docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml exec -T postgres psql -U callsight -d callsight -At -c                 "delete from blind_set returning call_id" | wc -l ;;
 
             gpu-cmd)
               [ -n "$VALUE" ] || { echo "value: the command to run" >&2; exit 1; }
