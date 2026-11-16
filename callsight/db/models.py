@@ -517,6 +517,7 @@ class ForwardPerson(Base):
     # supervisor (isBranchSupervisor there), level 3 = the managers listed in the yaml (`managers:`)
     is_supervisor: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     is_manager: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    grp: Mapped[str | None] = mapped_column(String(20))   # the other system's group (men / women): branch names repeat
 
 
 class ForwardHop(Base):

@@ -316,8 +316,7 @@ class Row:
             from .forward import closed
             cur = self.current_hops()
             sup = cur[0] if cur and cur[0].level == 2 else None
-            if (sup is not None and closed(sup) and self.hop_people.get(sup.person_id) is not None
-                    and self.hop_people[sup.person_id].ext and not (self.forward_proof() or {}).get("ok")):
+            if sup is not None and closed(sup):     # until the chain step confirms it (proof decides there)
                 return "forward_unconfirmed"
         # the agent's own callback steps come first (build decision); then the supervisor's time
         if f.responsible_kind == "forward" and last.callback_at is None:     # with the person (part 4)
@@ -438,6 +437,9 @@ class Row:
 
 
 def _solve_by(r: Row, step: str) -> str | None:
+    if step in FORWARD_STEPS and r.hops:
+        due = r.forward_due()
+        return due.isoformat() if due else None
     e = r.form if step in FORWARD_STEPS else (r.notes[-1] if r.notes else r.form)
     if step not in (*NO_CB_STEPS, *FORWARD_STEPS) or e is None or e.expected_at is None:
         return None
@@ -490,7 +492,8 @@ def _chain_dict(row: "Row | None") -> dict:
             "level": None if solved else (cur[0].level if cur else None),
             "holders": [row.hop_people[h.person_id].name for h in cur if h.person_id in row.hop_people],
             "due_at": due.isoformat() if due and not solved else None,
-            "closed_at": pick.closed_at.isoformat() if pick.closed_at else None, "solution": pick.solution}
+            "closed_at": pick.closed_at.isoformat() if pick.closed_at else None, "solution": pick.solution,
+            "solved_at": solved[-1].ended_at.isoformat() if solved and solved[-1].ended_at else None}
 
 
 def priority_fields(code: str | None) -> dict:

@@ -74,7 +74,7 @@ function ProblemFields({ p, set, options, label, afterText, high, forwardOptions
       </label>
       {afterText}
       {forwardedTo ? <p className="muted small">المشكلة محوّلة إلى {(forwardedTo.holders?.length ? forwardedTo.holders
-        : [forwardedTo.name ?? ""]).join("، ")}: هو من يغلقها.</p> : (
+        : [forwardedTo.name ?? ""]).join("، ")}: {(forwardedTo.holders?.length ?? 0) > 1 ? "هم من يغلقونها" : "هو من يغلقها"}.</p> : (
         <div className="row">
           هل حُلّت المشكلة؟
           <label><input type="radio" checked={p.solved === "yes"} onChange={() => set({ ...p, solved: "yes" })} /> نعم</label>
@@ -98,7 +98,12 @@ function ProblemFields({ p, set, options, label, afterText, high, forwardOptions
               </optgroup>)}
             </select>
           </label>}
-          {toSupervisor && <p className="muted small">عنده 24 ساعة، ثم تنتقل تلقائيًا لمشرف فرعه، ثم للإدارة.</p>}
+          {toSupervisor && (() => {
+            const o = forwardOptions.find((x) => p.resp === `forward:${x.id}`);
+            return <p className="muted small">{o?.manager ? "عنده 24 ساعة (الإدارة: آخر مستوى)."
+              : o?.supervisor ? "عنده 24 ساعة ومكالمة جيدة للعميل، ثم تنتقل تلقائيًا للإدارة."
+              : "عنده 24 ساعة، ثم تنتقل تلقائيًا لمشرف فرعه، ثم للإدارة."}</p>;
+          })()}
           {toSupervisor && <label>ملاحظة للمسؤول (اختياري)
             <textarea value={p.fnote} maxLength={500} rows={2} onChange={(e) => set({ ...p, fnote: e.target.value })} />
           </label>}

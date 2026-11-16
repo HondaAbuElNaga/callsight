@@ -20,6 +20,7 @@ depends_on = None
 def upgrade() -> None:
     op.add_column('forward_person', sa.Column('is_supervisor', sa.Boolean(), server_default='false', nullable=False))
     op.add_column('forward_person', sa.Column('is_manager', sa.Boolean(), server_default='false', nullable=False))
+    op.add_column('forward_person', sa.Column('grp', sa.String(length=20), nullable=True))   # men / women there
     op.drop_constraint('uq_forward_person_branch_name', 'forward_person', type_='unique')
     op.create_table(
         'forward_hop',
@@ -46,6 +47,17 @@ def upgrade() -> None:
     )
     op.create_index('ix_forward_hop_call_id', 'forward_hop', ['call_id'])
     op.create_index('ix_forward_hop_result', 'forward_hop', ['result'])
+    # forwards sent before the chain (D1/D2: always to a branch supervisor) get their level-2 hop, so they are
+    # still read back, checked and erased with the call (review DC)
+    op.execute("""
+        INSERT INTO forward_hop (call_id, level, person_id, ticket_guid, ticket_number, sent_at, closed_at, solution,
+                                 result, checked_at)
+        SELECT call_id, 2, forward_person_id, forward_ticket_guid, forward_ticket_number, forwarded_at,
+               forward_closed_at, forward_solution,
+               CASE WHEN forward_closed_at IS NULL THEN 'open' ELSE 'solved' END, forward_checked_at
+        FROM call_followup
+        WHERE forward_status = 'sent' AND forward_person_id IS NOT NULL AND forward_ticket_guid IS NOT NULL""")
+    op.execute("UPDATE forward_person SET is_supervisor = true WHERE ext IS NOT NULL")
 
 
 def downgrade() -> None:
@@ -53,5 +65,6 @@ def downgrade() -> None:
     op.drop_index('ix_forward_hop_call_id', table_name='forward_hop')
     op.drop_table('forward_hop')
     op.create_unique_constraint('uq_forward_person_branch_name', 'forward_person', ['branch', 'name'])
+    op.drop_column('forward_person', 'grp')
     op.drop_column('forward_person', 'is_manager')
     op.drop_column('forward_person', 'is_supervisor')

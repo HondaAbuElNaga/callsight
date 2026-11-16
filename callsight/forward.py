@@ -1,6 +1,8 @@
-"""Forward a not-solved problem to a branch supervisor in the customer-service system (spec
-2026-11-16-priority-no-followup, part 4 D1): the supervisors list (config/forward_people.yaml + sync with the other
-system) and the send job (customer by phone -> ticket). The form side (validation, steps) is in followups.py.
+"""Forward a not-solved problem to an employee of the customer-service system (spec
+2026-11-16-priority-no-followup, part 4): the people (every employee there + config/forward_people.yaml for the
+supervisors' ext and the managers), the send job (customer by phone -> ticket), the read-back, and the forward chain
+(employee -> 24 h -> his branch supervisor -> 24 h -> the managers). The form side (validation, steps) is in
+followups.py.
 """
 from __future__ import annotations
 
@@ -11,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -51,10 +53,16 @@ def load_people_yaml(path: Path) -> list[dict]:
             if (branch, name) in seen:
                 raise ValueError(f"{path}: {branch} / {name} is listed twice")
             seen.add((branch, name))
+            if len(branch) > 100 or len(name) > 100:
+                raise ValueError(f"{path}: {section} {i}: branch and name must be 100 characters or less")
             ext = str(p.get("ext")).strip() if p.get("ext") not in (None, "") else None
             if ext is not None and not re.fullmatch(r"\d{1,6}", ext):
                 raise ValueError(f"{path}: bad ext {ext!r} for {name}")
             guid = str(p.get("guid")).strip() if p.get("guid") else None
+            if guid is not None and len(guid) > 64:
+                raise ValueError(f"{path}: bad guid for {name}")
+            if manager and ext is not None:
+                raise ValueError(f"{path}: managers have no ext (their calls are not checked)")
             out.append({"branch": branch, "name": name, "ext": ext, "guid": guid, "manager": manager})
     return out
 
@@ -106,6 +114,7 @@ def sync_people(s: Session, client: CsClient | None, path: Path | None = None,
     people = load_people_yaml(path or people_file())
     all_rows = list(s.scalars(select(ForwardPerson)))
     by_key = {(r.branch, r.name): r for r in all_rows if r.guid is None or r.ext or r.is_manager}
+    by_key_free = {k: r for k, r in by_key.items() if r.guid is None}     # a yaml-only row, not linked yet
     report: list[str] = []
     if client is None:
         keep = set()
@@ -129,6 +138,9 @@ def sync_people(s: Session, client: CsClient | None, path: Path | None = None,
         return report
 
     emps = employees(client.forward_targets())
+    linked_now = sum(1 for r in all_rows if r.guid and r.active)
+    if not emps or len(emps) < linked_now // 2:     # outage answer: change nothing (review DC)
+        return [f"SKIPPED: the other system gave {len(emps)} employees (we have {linked_now}); nothing changed"]
     by_guid_emp = {e["guid"]: e for e in emps}
     sups = [e for e in emps if e["is_supervisor"]]
     # 1. the yaml lines -> an employee there (never a guess between two people)
@@ -158,12 +170,12 @@ def sync_people(s: Session, client: CsClient | None, path: Path | None = None,
         p = links.get(e["guid"])
         r = rows_by_guid.get(e["guid"])
         if r is None and p is not None:
-            r = by_key.get((p["branch"], p["name"]))
+            r = by_key_free.pop((p["branch"], p["name"]), None)
         if r is None:
             r = ForwardPerson(guid=e["guid"], name="", branch="")
             s.add(r)
         r.guid, r.full_name, r.branch, r.active, r.synced_at = e["guid"], e["name"], e["branch"], True, now
-        r.is_supervisor = e["is_supervisor"]
+        r.is_supervisor, r.grp = e["is_supervisor"], e["group"] or None
         r.name = (p["name"] if p else e["name"])[:100]
         r.ext = p["ext"] if p else None
         r.is_manager = bool(p and p["manager"])
@@ -314,6 +326,10 @@ CLOSE_GRACE = timedelta(days=1)  # a supervisor's calls are still kept 1 day aft
 PROOF_MIN_TALK = 60            # answered, MORE than 60 s talk, satisfaction MORE than 7 (user, 2026-11-16)
 PROOF_MIN_SCORE = 7
 HOP_TIME = timedelta(hours=24)   # each person has 24 clock hours (user, 2026-11-16)
+WATCH_MAX = HOP_TIME + CLOSE_GRACE + timedelta(hours=12)   # a supervisor's calls: never kept longer after he got it
+ADVANCE_BATCH = 500
+COPY_MAX_TRIES = 288             # a copy ticket that cannot be made in 24 h (5-min runs) -> failed
+FRESH = timedelta(minutes=10)    # the chain moves only on a ticket read back this recently
 ERR_NO_NEXT = "لا يوجد من تنتقل إليه (مشرف الفرع / الإدارة غير مربوطين)"
 
 
@@ -416,7 +432,10 @@ def advance(s: Session, client: CsClient, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     done = {"solved": 0, "passed_on": 0, "copies": 0, "errors": 0}
     ids = list(s.scalars(select(ForwardHop.call_id).join(Call, Call.id == ForwardHop.call_id).where(
-        ForwardHop.result.in_(("open", "pending")), Call.content_deleted_at.is_(None)).distinct()))
+        ForwardHop.result.in_(("open", "pending")), Call.content_deleted_at.is_(None),
+        or_(ForwardHop.sent_at.is_(None), ForwardHop.sent_at >= now - timedelta(days=POLL_DAYS)))
+        .group_by(ForwardHop.call_id).order_by(func.min(ForwardHop.checked_at).desc().nulls_last())
+        .limit(ADVANCE_BATCH)))
     for cid in ids:
         f = s.scalars(select(CallFollowup).where(CallFollowup.call_id == cid)
                       .with_for_update(skip_locked=True)).first()
@@ -430,6 +449,11 @@ def advance(s: Session, client: CsClient, now: datetime | None = None) -> dict:
         except CsAuthError:
             s.commit()
             raise
+        except Exception:  # noqa: BLE001 - one broken problem must not stop the others; ids only in the log
+            s.rollback()
+            log.exception("forward chain: call %s not moved", cid)
+            done["errors"] += 1
+            continue
         s.commit()
     return done
 
@@ -465,9 +489,12 @@ def _advance_one(s, client, f, call, hops, now, done) -> None:
     for h in open_:
         if h.level == 3 or h.sent_at is None or now < h.sent_at + HOP_TIME:
             continue
+        if h.ticket_guid and (h.checked_at is None or h.checked_at < now - FRESH):
+            continue                                # not read back in this run: wait for a fresh read (review DC)
         person = _person(s, h)
-        if h.level == 2 and person.ext and closed(h) and hop_proof(s, call, h, person)["reason"] == "waiting_score":
-            continue                                # the score is late on OUR side: do not pass it on for that
+        if (h.level == 2 and person.ext and closed(h) and now < h.sent_at + 2 * HOP_TIME
+                and hop_proof(s, call, h, person)["reason"] == "waiting_score"):
+            continue                                # the score is late on OUR side: up to 24 h more, then on
         level, nxt = next_people(s, h, person)
         if not nxt:
             if h.error != ERR_NO_NEXT:
@@ -482,7 +509,9 @@ def next_people(s: Session, h: ForwardHop, person: ForwardPerson) -> tuple[int, 
     usable = (ForwardPerson.active.is_(True), ForwardPerson.guid.is_not(None), ForwardPerson.id != person.id)
     if h.level == 1:
         sup = s.scalars(select(ForwardPerson).where(*usable, ForwardPerson.is_supervisor.is_(True),
-                                                    ForwardPerson.branch == person.branch)
+                                                    ForwardPerson.is_manager.is_(False),
+                                                    ForwardPerson.branch == person.branch,
+                                                    ForwardPerson.grp.is_not_distinct_from(person.grp))
                         .order_by(ForwardPerson.ext.is_(None), ForwardPerson.id).limit(1)).first()
         if sup is not None:
             return 2, [sup]
@@ -493,12 +522,15 @@ def next_people(s: Session, h: ForwardHop, person: ForwardPerson) -> tuple[int, 
 def _pass_on(s, client, h, person, level, nxt, now, done) -> None:
     note = f"لم تُحل خلال 24 ساعة عند «{person.name}»"
     try:
-        if h.closed_at is not None:
-            try:
-                client.reopen(h.ticket_guid, note)
-            except CsError as exc:                  # e.g. already open again: the forward below decides
-                if isinstance(exc, CsAuthError):
-                    raise
+        was = h.closed_at
+        store_ticket(s, h, client.get_ticket(h.ticket_guid), now)   # the latest state: a close just now wins
+        if closed(h) and was is None:
+            return                                  # closed in the meantime: the next run checks it as a solve
+        if h.closed_at is not None:                 # closed (not solved, or stale): open it again first
+            client.reopen(h.ticket_guid, note)
+            store_ticket(s, h, client.get_ticket(h.ticket_guid), now)
+            if h.closed_at is not None:
+                raise CsError(409, "تعذّر إعادة فتح التذكرة")
         client.forward_ticket(h.ticket_guid, nxt[0].guid, note)
     except CsAuthError:
         h.error = ERR_AUTH
@@ -540,6 +572,8 @@ def _send_copy(s, client, f, call, h, now, done) -> None:
         h.tries += 1
         if step == "ticket" and exc.status not in (408, 429):
             h.result, h.error, h.ended_at = "failed", ERR_UNSURE, now
+        elif h.tries >= COPY_MAX_TRIES:
+            h.result, h.error, h.ended_at = "failed", ERR_EXPIRED, now
         else:
             h.error = ERR_UNAVAILABLE
         done["errors"] += 1
@@ -564,9 +598,13 @@ def watch_list(s: Session, now: datetime | None = None) -> dict[str, list[tuple[
          .join(ForwardHop, ForwardHop.person_id == ForwardPerson.id)
          .join(Call, Call.id == ForwardHop.call_id)
          .where(ForwardHop.level == 2, ForwardHop.sent_at.is_not(None), ForwardPerson.ext.is_not(None),
+                ForwardPerson.is_manager.is_(False),
                 or_(ForwardHop.result == "open",
                     ForwardHop.ended_at >= now - CLOSE_GRACE),     # the closing call may come just after
-                ForwardHop.sent_at >= now - timedelta(days=POLL_DAYS), Call.content_deleted_at.is_(None)))
+                or_(ForwardHop.closed_at.is_(None),
+                    ForwardHop.closed_at >= now - CLOSE_GRACE),    # closed there: 1 more day, then stop
+                ForwardHop.sent_at >= now - WATCH_MAX,             # his 24 h + 1 day at most (review DC)
+                Call.content_deleted_at.is_(None)))
     for ext, number, at_ in s.execute(q):
         d = digits9(number)
         if d:
@@ -612,13 +650,16 @@ def hop_proof(s: Session, call: Call, h: ForwardHop, person: ForwardPerson) -> d
 def linked_calls(s: Session, call: Call) -> list[Call]:
     """The supervisors' kept calls (team "forward") that belong to this forwarded call: same ext, same customer,
     after he got it. Erased together with the call's content (PDPL: no list shows them, review D2)."""
-    rows = s.execute(select(ForwardHop.sent_at, ForwardPerson.ext)
+    rows = s.execute(select(ForwardHop.sent_at, ForwardHop.ended_at, ForwardPerson.ext)
                      .join(ForwardPerson, ForwardPerson.id == ForwardHop.person_id)
                      .where(ForwardHop.call_id == call.id, ForwardHop.level == 2, ForwardHop.sent_at.is_not(None),
                             ForwardPerson.ext.is_not(None))).all()
     d = digits9(call.customer_number)
-    calls, _ = _sup_calls(s, [(ext, d, at_) for at_, ext in rows])
-    return [c for c in calls if c.content_deleted_at is None]
+    calls, _ = _sup_calls(s, [(ext, d, at_) for at_, _end, ext in rows])
+    # only inside each hop's watch window, so a later problem of the same customer keeps its calls (review DC)
+    return [c for c in calls if c.content_deleted_at is None and any(
+        c.agent_ext == ext and at_ < c.start_time <= min(at_ + WATCH_MAX, (end or c.start_time) + CLOSE_GRACE)
+        for at_, end, ext in rows)]
 
 
 def proof(calls: list[Call], scores: dict[int, int | None], has_ext: bool) -> dict:

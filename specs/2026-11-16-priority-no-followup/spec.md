@@ -185,7 +185,9 @@
       tracking view), so the supervisor can sit with the person with the facts. Date range = the KPI page's من/إلى.
     - Supervisor/admin only; agents and forward people do not see this table.
 
-21. **Customer says "not solved" after the forward person finished (user, 2026-11-16).**
+21. ~~Customer says "not solved" after the forward person finished~~ **REPLACED by the forward chain (see "Part 4
+    change", user 2026-11-16): no re-send by the agent, no escalation to our supervisor.** Old text kept below.
+    **Customer says "not solved" after the forward person finished (user, 2026-11-16).**
     - The agent can **re-send** the problem to the **same** forward person, **one time only**, with a short reason
       ("لم تُحل حسب العميل"). It goes back into "تحتاج حل" and the tracking view adds "أعيد فتحها: العميل اتصل" with
       the time; the forward person gets it again with the reason and the full story.
@@ -211,7 +213,7 @@
    {guid, number, message}. Errors `{message}`: 401 token/userGuid, 403 no rights, 400 missing customer / text / type,
    400 person has no customer-service rights.
 
-**User decision (2026-11-16): forward only to supervisors** ("only i need to send to المشرفين not all employee"):
+**(Superseded by the forward chain: any employee can be chosen.) User decision (2026-11-16): forward only to supervisors** ("only i need to send to المشرفين not all employee"):
 the drop-down shows only employees with `isBranchSupervisor = true` (about one per branch, 19 branches today),
 grouped men/women → branch. So the PBX extensions (req 16) are few and the user can give them by hand (M6 not needed).
 
@@ -253,7 +255,8 @@ system with "مشرف خدمة العملاء" rights (tickets are recorded unde
 - **"Received" step stays in the tracker, always shown** (user: "always appear; if solved see in place, if still see in
   place"). The API has no "opened" time, so the step is ticked at the supervisor's **first action** on the ticket (first
   `followup` item written by them, or the close), with that time; until then it stays in its place as the waiting step.
-- **Forward list = only the 7 supervisors in `config/forward_people.yaml`** for now (branch, name, extension 101, 201,
+- (Superseded by the chain: every employee; the yaml now gives the supervisors' ext + the managers.)
+  **Forward list = only the 7 supervisors in `config/forward_people.yaml`** for now (branch, name, extension 101, 201,
   301, 401, 501, 601, 901); more when the user sends them. Their `guid` is matched by branch + name when the API key
   arrives.
 - **Supervisors' calls (user said "ok", 2026-11-16):** today only calls that touch team extensions (104, 116, 119, 114)
@@ -301,7 +304,8 @@ system with "مشرف خدمة العملاء" rights (tickets are recorded unde
 - AI summary (Q6): when the call's summary exists, it is added once to the ticket the same way.
 - Supervisor one-line view (req 15): "who solves it" = supervisor name; state from the same steps.
 
-**D4 — Re-send, escalation, KPI**
+**D4 — Re-send, escalation, KPI** (re-send + escalation REPLACED by the forward chain; only the KPI stays: forward
+people table + one "late hop" per person whose 24 h ran out)
 - Re-send (req 21, Q12–Q13): after the expected time passed, once, reason required → `tickets/{guid}/reopen`.
   Second failure → `escalated` "عند المشرف" for our supervisor, who closes it here, picks agent or forward person as
   the cause (+ note); the ticket is then closed there with `followup` close=true and that note.
@@ -363,11 +367,11 @@ the call check (proof) is for the **branch supervisors only**; an employee's or 
     is counted from the times in D4, not from the step.
   - The health page lists `forward_send` / `forward_sync` while the link is on (a refused key shows there).
 - **Part 4 D2 (2026-11-16):**
-  - Tickets are read back every 5 min (`forward_poll`, CLI `forward-poll`) for 30 days after they were made; the
+  - Tickets are read back every 5 min (`forward_poll`, CLI `forward-poll`) (30 days at D2; with the chain: every open hop, up to 90 days); the
     timeline goes to `forward_event` (erased with the call's content), closedAt / last solution text to the form.
     A time without a zone from the other system is taken as Saudi time.
   - Supervisors' calls: kept by ingest only when outbound from the supervisor's ext to that customer, after the
-    forward, for 30 days (team `forward`). Hidden from every call list / call page (also staff), KPIs, reports and
+    forward (with the chain: while a branch supervisor holds it, +1 day after his close, at most 60 h; team `forward`). Hidden from every call list / call page (also staff), KPIs, reports and
     the blind rating set; transcribed and analysed like other calls (needed for the score). Reconcile does not
     fetch missed ones (ingest only).
   - Steps: closed there + good last call → `forward_solved` "حلّها مشرف الفرع ✓" (leaves "تحتاج حل", in the
@@ -404,6 +408,22 @@ the call check (proof) is for the **branch supervisors only**; an employee's or 
   - All employees are stored and choosable (search box + branch groups in the form). Tickets are read back while
     open, up to 90 days. "تحتاج حل" leaves out a problem whose chain is solved already in SQL.
   - Managers: `managers:` in the yaml, empty until the user sends the 4 names.
+  - Review (3 agents): calls are watched only until 1 day after the supervisor's close and at most 60 h after he
+    got it; erasing a call takes only the supervisor calls inside that window; forwards from before the chain get a
+    level-2 hop (migration); a manager is never picked as branch supervisor and has no ext; branch match = branch
+    name + group (men / women); waiting for OUR score holds the move at most 24 h more; the chain moves only on a
+    ticket read back in the last 10 min (a close just before the 24 h is never lost); a closed supervisor ticket
+    shows "غير مؤكد" until the chain step confirms it (KPI never follows the score); "تحتاج حل" shows "عند الموظف
+    «name»" / "عند مشرف الفرع «name»" / "عند الإدارة" and the holder; the line's solve-by = the holder's 24 h.
+    Bugs review: right before passing on, the ticket is read again (a close at the last minute is never lost); a
+    reopen that does not work stops the move (error on the line, tried again); an empty / much smaller people list
+    from the other system changes nothing (outage); a yaml row is reused only before it has a guid; one broken
+    problem never stops the run; at most 500 problems per run; a manager's copy ticket that cannot be made in 24 h
+    is marked failed; the "solved today" counter uses the day the chain confirmed it; old closed tickets are
+    migrated as solved (never reopened by the first run). The forward states (solved / unconfirmed) are shown before
+    the agent's own callback steps (the ticket is the stronger fact).
+    Not built yet: the per-person late-hop KPI (D4). Erasing a call does not close its tickets there; a failed
+    "close the other managers' copies" is shown on the line but not retried.
 
 ## Acceptance criteria
 - [x] Tests: form without priority → 422; bad code → 422; each code saves and comes back with the right `priority_ar`;

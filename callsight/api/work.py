@@ -227,9 +227,10 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
 
     def solved_today(i: dict, today: date) -> bool:
         """Part 4 D2 (req 19): the supervisor's solve was confirmed and the ticket closed today."""
-        f = i.get("forward")
-        return (i["step"] == "forward_solved" and bool(f and f.get("closed_at"))
-                and datetime.fromisoformat(f["closed_at"]).astimezone(RIYADH).date() == today)
+        f = i.get("forward") or {}
+        at_ = f.get("solved_at") or f.get("closed_at")      # the chain: the day it was confirmed solved
+        return (i["step"] == "forward_solved" and bool(at_)
+                and datetime.fromisoformat(at_).astimezone(RIYADH).date() == today)
 
     @app.get("/api/followups")
     def list_followups(

@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, Unauthorized, type Agent, type FollowupItem, type FollowupList, type Me, type Share } from "./api";
 import {
-  CALLBACK_LABEL, PRIORITIES, PRIORITY_LABEL, STEP_CLASS, STEP_LABEL, earlyText, formatDateTime, riyadhToday, ringText,
+  CALLBACK_LABEL, PRIORITIES, PRIORITY_LABEL, STEP_CLASS, STEP_LABEL, earlyText, formatDateTime, forwardWhere,
+  riyadhToday, ringText,
 } from "./format";
 import { CB_CLASS, PriorityTag, RESP_LABEL } from "./WorkPanels";
 import { CallsPage } from "./CallsPage";
@@ -41,6 +42,7 @@ function urgency(i: FollowupItem, now: number): string {
 function whoSolves(i: FollowupItem): string {
   const last = i.history[i.history.length - 1];
   if (!last || last.solved !== false) return "–";
+  if (i.forward?.holders?.length && i.step !== "forward_solved") return i.forward.holders.join("، ");   // the chain
   return last.responsible ?? RESP_LABEL[last.responsible_kind ?? ""] ?? "–";
 }
 
@@ -78,6 +80,8 @@ function Unsolved({ items, truncated, staff, onOpen }:
               <div className="line">
                 <PriorityTag p={i.form?.priority} />
                 <span className={`state ${STEP_CLASS[i.step]}`}>{STEP_LABEL[i.step]}</span>
+                {(i.step === "forwarded" || i.step === "forward_overdue") && forwardWhere(i.forward)
+                  && <span className="small">{forwardWhere(i.forward)}</span>}
                 {i.forward?.status === "pending" && <span className="muted small">لم يُرسل بعد</span>}
                 <Number_ n={i.customer_number} />
               </div>

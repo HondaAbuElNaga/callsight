@@ -1,7 +1,7 @@
-# Branch supervisors who can receive a forwarded problem (spec 2026-11-16-priority-no-followup, part 4, req 16).
-# For now the forward list shows ONLY these people (user, 2026-11-16). More are added when the user sends them.
-# guid = the person's id in the customer-service system (forward-targets); filled when the API key arrives,
-# matched by branch + name. ext = PBX extension: their calls to the customer are the proof of solving.
+# Branch supervisors whose calls we can check (spec 2026-11-16-priority-no-followup, part 4 + the forward chain).
+# Every employee of the customer-service system can be chosen (synced from it); this list only adds each
+# supervisor's PBX ext: his calls to the customer are the proof of solving (only supervisors are checked).
+# guid = the person's id there (forward-targets); filled by the sync, matched by name (+ branch).
 people:
   - {branch: "فرع الزهور",            name: "صالح الغامدي",        ext: "101", guid: null}
   - {branch: "حفر الباطن مصيف",        name: "اسماعيل ابو المعاطي",  ext: "301", guid: null}

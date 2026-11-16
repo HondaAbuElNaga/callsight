@@ -155,7 +155,7 @@ def employees(targets: dict) -> list[dict]:
                     continue
                 seen.add(guid)
                 out.append({"guid": guid, "name": str(e.get("name") or "")[:200],
-                            "branch": str(b.get("name") or "")[:100], "group": str(g.get("key") or ""),
+                            "branch": str(b.get("name") or "")[:100], "group": str(g.get("key") or "")[:20],
                             "is_supervisor": bool(e.get("isBranchSupervisor"))})
     return out
 

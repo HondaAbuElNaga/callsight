@@ -261,7 +261,7 @@ def test_steps_and_unsolved(fs):
     h = hop(s, f)
     h.closed_at = at(14)
     s.commit()
-    assert rows(s, at(14, 1))["a"]["step"] == "forwarded"          # closed + good call, before the chain step ran
+    assert rows(s, at(14, 1))["a"]["step"] == "forward_unconfirmed"  # closed, chain step not run yet: never "open" in KPI
     close(s, f, at(14))
     assert rows(s, at(15))["a"]["step"] == "forward_solved"
     got, _ = fu.unsolved(s, ["119"], DAY, at(15), callers=["119"])
