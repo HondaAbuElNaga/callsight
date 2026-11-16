@@ -11,7 +11,9 @@
 - [x] 7b. Tests first: `unsolved` (dates ignored, leaves when solved, agent/supervisor scope, order); then the SQL
         pre-filter + `fu.rows(call_ids=...)` in `api/work.py`.
 - [x] 8. Web: "تحتاج حل" side section (wide: side column, phone: above the list), plus: types, labels, priority select in the first form, tag in the list, counter + filter, KPI columns + text.
-- [ ] 8b. Part 4 (forward to a person): BLOCKED until the user sends the other system's API (2026-11-17). Then: write
+- [ ] 8b. Part 4 (forward to a person): API received 2026-11-16 (spec "Part 4: the other system's API"); only send
+        is covered, M1 (accountGuid by phone) blocks sending, M2–M4 block solved / questions / re-send. Waiting for the
+        developer's answers + user approval. Then: write
         requirement 12 in full (endpoints, auth, solved callback), user approves, tests first, build. Parts 1–3 can go
         live before part 4.
 - [x] 9. Verify: migration up/down/up, full pytest, web build; tick acceptance criteria with real output.

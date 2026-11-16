@@ -1,7 +1,7 @@
 # Spec: Priority on the follow-up form + "لا تحتاج متابعة" made visible
 
 **Roadmap item:** Phase 7 follow-on (idea: user, 2026-11-16).
-**Status:** parts 1–3 **done** (2026-11-16, branch `spec/2026-11-16-priority-no-followup`, not pushed yet) — part 4 (requirements 12, 16–21) waits for the other system's API
+**Status:** parts 1–3 **done** (2026-11-16, branch `spec/2026-11-16-priority-no-followup`, not pushed yet) — part 4 (requirements 12, 16–21): API received 2026-11-16, reviewed below; missing parts M1–M4 asked from its developer
 
 ## Goal
 1. Every problem the agent records gets a **priority** (عالية / متوسطة / منخفضة), so the supervisor sees what is urgent and,
@@ -199,6 +199,33 @@
       linked. This counts as a **serious mistake** ("خطأ جسيم: أغلقها مرتين والعميل لم تُحل مشكلته") for the forward
       person: its own column in the forward people table, shown in red, listed first in the mistakes list.
     - Open questions 12–14 (when the agent may re-send, what the supervisor can do).
+
+## Part 4: the other system's API (received 2026-11-16, "API خدمة العملاء - تحويل المكالمات.pdf")
+**What it gives** (base `https://api4.sstli.com`, JSON; answers from the PC with a valid certificate, 403 without a key):
+1. `POST /api/userinfo/login-secure` {userName, password} → `guid` + `token` (`Authorization: Bearer`). Alternative for
+   systems without a user: header `X-Api-Key: sk_...` made on their "المراقبة الأمنية" screen, limited to chosen paths.
+2. `GET /api/customer-service/forward-targets?userGuid=` → tree men/women → branches → employees
+   (`guid`, `name`, `jobTitle`, `isBranchSupervisor`); 474 people today (312 men's branches, 162 women's).
+3. `POST /api/customer-service/tickets` {userGuid, **accountGuid (required)**, callType 0 general / 1 study /
+   2 complaint, notes ≤ 590 chars, priority 1 low / 2 normal / 3 high / 4 urgent, close, forwardToGuid} →
+   {guid, number, message}. Errors `{message}`: 401 token/userGuid, 403 no rights, 400 missing customer / text / type,
+   400 person has no customer-service rights.
+
+**Fits the spec:** the drop-down list (req 12, open question 5 → the API list, by group → branch → person) and sending
+the problem (priority, text, forward person). Mapping: high → 3, medium → 2, low → 1 (4 "عاجلة" not used).
+
+**Missing (asked from the other system's developer; parts that need them wait):**
+- M1 **Customer `accountGuid` from the phone number** (required to create a ticket; we only know the number).
+  Blocks every send.
+- M2 **Ticket status** (closed / solved, when, by whom, closing note): a GET by ticket guid, or a call to our address
+  when it changes. Blocks "solved" (req 12, 17 step 5, 19, 20, 21).
+- M3 **Questions and answers** on a ticket (read new questions, post the agent's answer). Blocks req 18.
+- M4 **Add text to a ticket / reopen it** (AI summary later, re-send reason). Blocks req 6 update, req 21.
+- M5 (nice) "received / opened" time → tracker step 3.
+- M6 (nice) **PBX extension of each employee** in forward-targets; otherwise the user maps the people by hand in
+  `config/forward_people.yaml` (req 16), and only mapped people can confirm a solve.
+- M7 An **API key** for our server (paths: forward-targets, tickets + M1–M4), and whether `userGuid` is still needed
+  with the key. callType for our problems (complaint needs `complainSource`: its values?).
 
 ## Build decisions (3-agent reviews per part, 2026-11-16)
 - An **unchanged** expected solve time is not re-checked against the 2-day limit when a form is saved again (forms from
