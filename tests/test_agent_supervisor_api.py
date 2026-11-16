@@ -74,9 +74,9 @@ def iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
 
-def not_solved(boss_id, minutes=60) -> dict:
+def not_solved(boss_id, minutes=60, priority="medium") -> dict:
     t = datetime.now(timezone.utc) + timedelta(minutes=minutes)
-    return {"what_happened": "طلب استرجاع", "solved": False, "responsible_kind": "user",
+    return {"what_happened": "طلب استرجاع", "solved": False, "priority": priority, "responsible_kind": "user",
             "responsible_user_id": boss_id, "expected_at": iso(t + timedelta(hours=1)), "callback_at": iso(t)}
 
 
@@ -470,6 +470,7 @@ def test_form_is_frozen_once_a_note_exists_and_wrong_round_is_409(env):
     assert wrong.status_code == 409
     nxt = not_solved(boss_id(Session), minutes=24 * 60)
     nxt.pop("what_happened")
+    nxt.pop("priority")                       # set once, in the first form: a note never carries it
     r = client.post(f"/api/calls/{ids['own']}/followup/notes", json={"round": 2, "what_happened": "لم يُحل", **nxt})
     assert r.status_code == 200 and r.json()["step"] == "waiting_callback" and r.json()["round"] == 2
     login(client, "boss")

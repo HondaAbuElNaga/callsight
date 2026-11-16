@@ -34,6 +34,7 @@ class FollowupIn(BaseModel):
     no_followup: StrictBool = False
     what_happened: str | None = Field(default=None, max_length=500)
     solved: StrictBool | None = None
+    priority: str | None = Field(default=None, max_length=10)     # high / medium / low (first form only)
     responsible_kind: str | None = Field(default=None, max_length=20)
     responsible_user_id: StrictInt | None = None
     expected_at: datetime | None = None
@@ -211,6 +212,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         date_to: Annotated[date | None, Query(alias="to")] = None,
         agent: Annotated[str | None, Query(pattern=r"^\d{1,6}$")] = None,
         state: Annotated[str, Query()] = "action",
+        priority: Annotated[str | None, Query(pattern=r"^(high|medium|low)$")] = None,
     ) -> dict:
         if state not in STATES:
             raise HTTPException(422, "unknown state")
@@ -250,7 +252,9 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             items = [i for i in recent if lo <= datetime.fromisoformat(i["start_time"]) < hi]
         else:
             items = load(d_from, d_to)
-        out["counts"] = counts(items, today)
+        out["counts"] = counts(items, today)      # counters count every priority (spec requirement 13)
+        if priority:
+            items = [i for i in items if i["form"] and i["form"]["priority"] == priority]
         out["older_action"] = sum(1 for i in recent if datetime.fromisoformat(i["start_time"]) < lo
                                   and action_due(i, today))
         if state == "action":

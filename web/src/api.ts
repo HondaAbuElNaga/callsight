@@ -220,6 +220,8 @@ export interface FollowupForm {
   no_followup: boolean;
   what_happened: string | null;
   solved: boolean | null;
+  priority: "high" | "medium" | "low" | null;   // first form only; null = old form or no follow-up
+  priority_ar: string | null;
   responsible_kind: "user" | "customer" | "other_department" | null;
   responsible_user_id: number | null;
   expected_at: string | null;
@@ -243,6 +245,7 @@ export type Step = "required" | "overdue" | "no_followup" | "solved_first" | "wa
   | "note_needed" | "solved_after" | "no_number" | "waiting_solution" | "solution_overdue";
 export interface HistoryEntry {
   round: number; what_happened: string | null; solved: boolean | null; no_followup: boolean;
+  priority: "high" | "medium" | "low" | null; priority_ar: string | null;    // round 1 only
   responsible_kind: string | null; responsible_user_id: number | null; responsible: string | null;
   expected_at: string | null; callback_at: string | null; at: string; by: string | null;
   callback_status: CallbackStatus | null;
@@ -262,7 +265,7 @@ export type FollowupView =
 export interface FollowupList { settings: Settings; items: FollowupItem[]; truncated?: boolean; linked: boolean;
   counts: FollowupCounts; older_action: number }   // older_action: work left before من (62-day look-back)
 export interface FollowupIn {
-  no_followup: boolean; what_happened?: string; solved?: boolean; responsible_kind?: string;
+  no_followup: boolean; what_happened?: string; solved?: boolean; priority?: string; responsible_kind?: string;
   responsible_user_id?: number | null; expected_at?: string; callback_at?: string;
 }
 export interface Share {
@@ -385,7 +388,7 @@ export const api = {
   saveFollowup: (id: number, body: FollowupIn) => send<FollowupView>("PUT", `/api/calls/${id}/followup`, body),
   myNote: (id: number, text: string) => send<{ call_id: number; text: string | null }>("PUT", `/api/calls/${id}/my-note`, { text }),
   addNote: (id: number, body: NoteIn) => send<FollowupView>("POST", `/api/calls/${id}/followup/notes`, body),
-  followups: (p: { from?: string; to?: string; agent?: string; state?: string }) => {
+  followups: (p: { from?: string; to?: string; agent?: string; state?: string; priority?: string }) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(p)) if (v) q.set(k, v);
     return get<FollowupList>(`/api/followups?${q.toString()}`);

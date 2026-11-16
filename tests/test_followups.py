@@ -328,8 +328,8 @@ def test_validate_rules(s):
     c = mk(s, "a", at(10))
     now = at(11)
     sup = user(s, "boss", "supervisor", "114")
-    ok = {"what_happened": "x", "solved": False, "responsible_kind": "user", "responsible_user_id": sup.id,
-          "expected_at": at(16), "callback_at": at(15)}
+    ok = {"what_happened": "x", "solved": False, "priority": "low", "responsible_kind": "user",
+          "responsible_user_id": sup.id, "expected_at": at(16), "callback_at": at(15)}
     assert fu.validate(s, ok, c, now)["callback_at"] == at(15)
     for bad in ({**ok, "what_happened": " "}, {**ok, "solved": None}, {**ok, "responsible_kind": "boss"},
                 {**ok, "responsible_user_id": 999}, {**ok, "callback_at": at(10, 30)},
@@ -545,7 +545,7 @@ def test_solve_time_max_two_days_and_callback_optional(s):
     start_on(s)
     c = mk(s, "a", at(10))
     now = at(11)
-    base = {"what_happened": "x", "solved": False, "responsible_kind": "customer"}
+    base = {"what_happened": "x", "solved": False, "priority": "medium", "responsible_kind": "customer"}
     got = fu.validate(s, {**base, "expected_at": now + timedelta(days=2)}, c, now)
     assert got["callback_at"] is None and got["expected_at"] == now + timedelta(days=2)
     for bad in ({**base, "expected_at": now + timedelta(days=2, minutes=1)},          # over 2 days

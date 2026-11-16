@@ -97,5 +97,10 @@ export const STEP_NEXT: Record<string, string> = {
   waiting_callback: "اتصل بالعميل في الموعد", callback_missed: "اتصل بالعميل الآن (فات الموعد)",
   waiting_solution: "تابع الحل واكتب تحديثًا عند الحل (خلال يومين)", solution_overdue: "فات موعد الحل: اكتب تحديثًا الآن",
 };
+// priority of the first form (spec 2026-11-16-priority-no-followup): same codes as callsight/followups.py
+export type Priority = "high" | "medium" | "low";
+export const PRIORITY_LABEL: Record<Priority, string> = { high: "عالية", medium: "متوسطة", low: "منخفضة" };
+export const PRIORITY_CLASS: Record<Priority, string> = { high: "bad", medium: "warn", low: "off" };
+export const PRIORITIES: Priority[] = ["high", "medium", "low"];
 export const ROLE_LABEL: Record<string, string> = { admin: "مدير النظام", supervisor: "مشرف", agent: "موظف" };
 export const pct = (v: number | null | undefined) => (v === null || v === undefined ? "–" : `${(v * 100).toFixed(0)}%`);

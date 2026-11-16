@@ -2,8 +2,10 @@
 // everyone's (agent-supervisor spec; steps, counters, "needs action" view: follow-up stages spec).
 import { useCallback, useEffect, useState } from "react";
 import { api, Unauthorized, type Agent, type FollowupItem, type FollowupList, type Me, type Share } from "./api";
-import { CALLBACK_LABEL, STEP_CLASS, STEP_LABEL, earlyText, formatDateTime, riyadhToday, ringText } from "./format";
-import { CB_CLASS } from "./WorkPanels";
+import {
+  CALLBACK_LABEL, PRIORITIES, PRIORITY_LABEL, STEP_CLASS, STEP_LABEL, earlyText, formatDateTime, riyadhToday, ringText,
+} from "./format";
+import { CB_CLASS, PriorityTag } from "./WorkPanels";
 import { CallsPage } from "./CallsPage";
 
 interface Props { me: Me; onCalls?: () => void;   // agents: no calls page (follow-ups is their only page)
@@ -84,6 +86,7 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
   const [to, setTo] = useState(riyadhToday);
   const [agent, setAgent] = useState("");
   const [state, setState] = useState("action");
+  const [priority, setPriority] = useState("");   // spec 2026-11-16: filters the list, the counters count all
   const [data, setData] = useState<FollowupList | null>(null);
   const [shares, setShares] = useState<Share[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -107,10 +110,10 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
   useEffect(() => { if (staff) api.agents().then(setAgents).catch(fail); }, [staff, fail]);
   useEffect(() => {
     let alive = true;                 // filters apply at once: an older, slower answer must not win
-    api.followups({ from, to, agent, state })
+    api.followups({ from, to, agent, state, priority })
       .then((d) => { if (alive) { setData(d); setError(""); } }).catch((e) => alive && fail(e));
     return () => { alive = false; };
-  }, [from, to, agent, state, fail, tick]);
+  }, [from, to, agent, state, priority, fail, tick]);
   // staff: with an agent picked, only the calls shared with that agent
   const loadShares = useCallback(() => api.shares(staff ? agent : "").then((d) => setShares(d.items)).catch(fail),
     [fail, staff, agent]);
@@ -187,6 +190,12 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
         <label>إلى <input type="date" value={to} min={from} max={riyadhToday()} onChange={(e) => e.target.value && setTo(e.target.value)} /></label>
         {(from !== riyadhToday() || to !== riyadhToday()) &&
           <button type="button" className="link" onClick={() => { setFrom(riyadhToday()); setTo(riyadhToday()); }}>اليوم</button>}
+        <label>الأولوية
+          <select value={priority} onChange={(e) => setPriority(e.target.value)}>
+            <option value="">الكل</option>
+            {PRIORITIES.map((k) => <option key={k} value={k}>{PRIORITY_LABEL[k]}</option>)}
+          </select>
+        </label>
         {staff && (
           <label>الموظف
             <select value={agent} onChange={(e) => setAgent(e.target.value)}>
@@ -213,6 +222,7 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
                   {staff && <td>{i.agent_ext} <span className="muted">{i.agent_name}</span></td>}
                   <td>
                     <span className={`state ${STEP_CLASS[i.step]}`}>{STEP_LABEL[i.step]}</span>
+                    {i.form?.priority && <> <PriorityTag p={i.form.priority} /></>}
                     {i.round > 1 && <span className="muted small"> · جولة {i.round}</span>}
                     {i.came_back && <span className="tag">عاد العميل</span>}
                   </td>

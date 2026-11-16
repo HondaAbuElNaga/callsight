@@ -446,12 +446,17 @@ class CallFollowup(Base):
     responsible_kind: user (responsible_user_id) / customer / other_department. Callback status is computed on read
     (callsight/followups.py), never stored."""
     __tablename__ = "call_followup"
+    __table_args__ = (CheckConstraint("priority IN ('high', 'medium', 'low') OR priority IS NULL",
+                                      name="ck_call_followup_priority"),)
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), unique=True)
     owner_ext: Mapped[str] = mapped_column(String(16), index=True)           # call.agent_ext when filled
     no_followup: Mapped[bool] = mapped_column(Boolean, default=False)
     what_happened: Mapped[str | None] = mapped_column(String(500))
     solved: Mapped[bool | None] = mapped_column(Boolean)
+    # spec 2026-11-16-priority-no-followup: high / medium / low, set in the first form only (NULL = old form or
+    # no_followup). Fixed English codes: another system will read them.
+    priority: Mapped[str | None] = mapped_column(String(10))
     responsible_kind: Mapped[str | None] = mapped_column(String(20))
     responsible_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     expected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
