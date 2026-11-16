@@ -231,6 +231,24 @@ the problem (priority, text, forward person). Mapping: high → 3, medium → 2,
 - M7 An **API key** for our server (paths: forward-targets, tickets + M1–M4), and whether `userGuid` is still needed
   with the key. callType for our problems (complaint needs `complainSource`: its values?).
 
+### API version 2 (received 2026-11-16, "API خدمة العملاء - تحويل المكالمات (2).pdf"): M1–M4 and M7 solved
+Base `https://api4.sstli.com/api/customer-service`. Auth: `X-Api-Key` (made on their "المراقبة الأمنية" screen, only
+the 7 paths below, kept on our server only); every request carries `userGuid` = a dedicated "PBX account" user in their
+system with "مشرف خدمة العملاء" rights (tickets are recorded under that account).
+- M1 → `POST /customers/by-phone` {userGuid, phone, createIfMissing} → accountGuid (any Saudi format; not found +
+  createIfMissing=true → customer created with the number as name; >1 match → newest; bad number → 400).
+- `GET /forward-targets` (as before; we keep only `isBranchSupervisor`), `POST /tickets` (callType 0 "general" is their
+  advice for us, notes ≤ 590 required, close=false) → {guid, number}.
+- M2/M3 → `GET /tickets/{guid}?userGuid=` → `ticket.closedAt` (not null = solved; last `followup_close` holds the
+  solution text) + `timeline` (events created/forwarded/priority/reopened/closed; `followup` items = questions and
+  replies, `actorName` = writer). No push to us: we read it every few minutes.
+- M4 → `POST /tickets/{guid}/followup` {note, close:false} (AI summary, agent's answer; a closed ticket takes no text
+  before reopen), `POST /tickets/{guid}/reopen` {note} (same person, notified), `POST /tickets/{guid}/forward`
+  {toUserGuid, note} (another person).
+- Not given: M5 "opened" time → tracker step 3 dropped. M6 extensions: not in their system → `config/forward_people.yaml`
+  by supervisor guid (user gives them).
+- Needed from the user before the first real call: the API key and the PBX account's userGuid (into the server `.env`).
+
 ## Build decisions (3-agent reviews per part, 2026-11-16)
 - An **unchanged** expected solve time is not re-checked against the 2-day limit when a form is saved again (forms from
   before the 2-day rule may hold a later time); the 1-day limit of عالية is checked every time.
