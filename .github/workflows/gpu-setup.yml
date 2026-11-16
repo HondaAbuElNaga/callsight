@@ -83,10 +83,12 @@ jobs:
 
             build-models)
               sudo bash "$M/deploy/aws/setup-internet.sh" on
-              "${G[@]}" "$GC build \
-                && $GC --profile setup run --rm model-download openai/whisper-large-v3 --revision 06f233fe06e710322aca913c1bc4249a0d71fce1 \
+              # Only the fp16 safetensors + small files: the repo also holds flax/fp32/.bin copies (~21 GB more),
+              # which filled the 100 GB disk on the first try. "up -d" builds only images that are missing.
+              "${G[@]}" "$GC --profile setup run --rm model-download openai/whisper-large-v3 \
+                  --revision 06f233fe06e710322aca913c1bc4249a0d71fce1 --include '*.json' '*.txt' model.safetensors \
                 && $GC --profile setup run --rm ollama-pull qwen2.5:7b \
-                && $GC up -d && $GC ps" ;;
+                && $GC up -d && $GC ps && sudo docker builder prune -af >/dev/null && df -h /" ;;
 
             internet-off)
               sudo bash "$M/deploy/aws/setup-internet.sh" off
