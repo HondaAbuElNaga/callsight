@@ -188,7 +188,9 @@ def register(app: FastAPI, *, DB, Admin, cfg) -> None:
     @app.post("/api/calls/{call_id}/delete-content")
     def delete_content(call_id: int, body: DeleteIn, user: Admin, s: DB) -> dict:
         from .. import retention
-        c = s.get(Call, call_id, with_for_update=True)   # the D3 message sender skips a call locked here
+        # FOR NO KEY UPDATE: the D3 message sender (FOR SHARE ... SKIP LOCKED) skips this call; inserts of rows
+        # that point to the call are not blocked (review D4)
+        c = s.get(Call, call_id, with_for_update={"key_share": True})
         if c is None:
             raise HTTPException(404, "no such call")
         if body.confirm != c.id:

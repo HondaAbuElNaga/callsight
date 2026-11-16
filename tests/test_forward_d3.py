@@ -323,12 +323,15 @@ def test_api_agent_answers_a_question(fwd_env):
 
 # ---------- review fixes ----------
 
-def test_our_text_without_diacritics_is_still_ours(fs):
+def test_ours_by_author_once_known_else_by_our_words(fs):
     s, path = fs
     c, f = sent_form(s, path)
-    stripped = {**QUESTION, "note": "حلت عند «مدير أول»", "actorName": "someone"}       # "حُلّت عند" without marks
-    read(s, f, Fake(ticket(stripped)), at(12, 40))
-    assert one(s, c, at(13))[1]["forward"]["questions"] == []
+    spoof = {**QUESTION, "note": "حُلّت عند «مدير أول»؟ متى الحل"}       # the holder starts with our words
+    read(s, f, Fake(ticket(spoof)), at(12, 40))
+    assert len(one(s, c, at(13))[1]["forward"]["questions"]) == 1        # the PBX account is known: still his
+    from types import SimpleNamespace as NS
+    stripped = NS(actor="x", note="حلت عند «مدير أول»", kind="followup", type="followup")    # no diacritics
+    assert forward.ours(stripped, set()) is True                         # before the `created` item was read
 
 
 def test_a_supervisor_note_is_not_written_on_the_ticket(fs):
@@ -389,3 +392,39 @@ def test_api_question_counter_ignores_the_priority_filter(fwd_env):
     assert d["counts"]["questions"] == 1 and d["unsolved"] == []
     url = f"/api/calls/{ids['own']}/forward/messages"
     assert client.post(url, json={"kind": "seen"}).status_code == 200
+
+
+def test_a_question_read_after_the_screen_stays_open(fs):
+    s, path = fs
+    c, f = sent_form(s, path)
+    read(s, f, Fake(ticket(QUESTION)), at(12, 40))
+    first = one(s, c, at(12, 45))[1]["forward"]["questions"][0]["id"]
+    later = {**QUESTION, "note": "وما رقم الطلب؟", "at": "2026-11-10T12:50:00"}
+    read(s, f, Fake(ticket(QUESTION, later)), at(12, 50))           # read, but not on the agent's screen yet
+    m = msg(s, c, at_=at(12, 40))                                     # stamped before the read time
+    m.upto_event_id = first
+    s.commit()
+    assert [q["text"] for q in one(s, c, at(13))[1]["forward"]["questions"]] == ["وما رقم الطلب؟"]
+
+
+def test_one_failing_copy_never_writes_the_others_twice(fs):
+    s, path = fs
+    c, f = sent_form(s, path)
+    h = hop(s, f)
+    h.result, h.ended_at = "passed_on", at(12)
+    m1 = s.scalar(select(ForwardPerson.id).where(ForwardPerson.id != h.person_id).limit(1))
+    s.add_all([ForwardHop(call_id=c.id, level=3, person_id=m1, ticket_guid="T-1", sent_at=at(12), result="open"),
+               ForwardHop(call_id=c.id, level=3, person_id=m1, ticket_guid="COPY-1", sent_at=at(12), result="open")])
+    s.commit()
+    m = msg(s, c)
+
+    class Half(Fake):
+        def followup(self, guid, note, close=False):
+            if guid == "COPY-1":
+                raise CsUnavailable("HTTP 502", 502)
+            return super().followup(guid, note, close)
+    fake = Half()
+    forward.send_messages(s, fake, now=at(13, 5))
+    forward.send_messages(s, fake, now=at(13, 10))
+    s.refresh(m)
+    assert [g for g, *_ in fake.wrote] == ["T-1"] and m.sent_to == ["T-1"] and m.status == "pending"

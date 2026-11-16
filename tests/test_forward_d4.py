@@ -118,3 +118,67 @@ def test_api_staff_only_and_range(fwd_env):
     r = client.get("/api/kpi/forwards", params={"from": "2026-11-01", "to": "2026-11-02"})
     assert r.status_code == 200 and r.json()["people"] == [] and r.json()["agents"] == []
     assert client.get("/api/kpi/forwards", params={"agent": "x1"}).status_code == 422
+
+
+# ---------- review D4: fair time split, solved questions, rate, our score delay ----------
+
+def test_time_waiting_for_our_agent_is_not_on_his_clock(fs):
+    s, path = fs
+    c, f = sent_form(s, path)
+    h = hop(s, f)
+    _question(s, c, h, at(12))                                              # waits 5 h for our agent
+    s.add(ForwardMessage(call_id=c.id, kind="answer", text="نعم", created_at=at(17), status="sent"))
+    h.result, h.ended_at = "passed_on", at(12, day=NEXT)                   # 25 h on the clock, 20 h his own
+    s.commit()
+    r = person(kpi(s, at(13, day=NEXT)), 2)
+    assert (r["late"], r["excused"], r["decided"]) == (0, 1, 1)
+
+
+def test_a_failed_answer_does_not_stop_the_wait(fs):
+    s, path = fs
+    c, f = sent_form(s, path)
+    h = hop(s, f)
+    _question(s, c, h, at(12))
+    s.add(ForwardMessage(call_id=c.id, kind="answer", text="نعم", created_at=at(13), status="failed"))
+    s.commit()
+    a = kpi(s, at(0, day=NEXT))["agents"][0]
+    assert (a["on_time"], a["late"]) == (0, 1)
+
+
+def test_a_question_solved_before_its_deadline_is_not_counted(fs):
+    s, path = fs
+    c, f = sent_form(s, path)
+    h = hop(s, f)
+    _question(s, c, h, at(12))
+    h.result, h.closed_at, h.ended_at = "solved", at(12, 30), at(12, 35)
+    s.commit()
+    assert kpi(s, at(0, day=NEXT))["agents"] == []
+
+
+def test_rate_counts_only_decided_hops(fs):
+    s, path = fs
+    c, f = sent_form(s, path)                                               # open, inside its 24 h
+    r = person(kpi(s, at(15)), 2)
+    assert (r["received"], r["decided"], r["in_24h_rate"]) == (1, 0, None)
+
+
+def test_waiting_for_our_score_is_not_his_mistake(fs):
+    s, path = fs
+    c, f = sent_form(s, path)
+    sup_call(s, "sup-1", at(13), talk=90, number=c.customer_number)         # good call, no score yet
+    h = hop(s, f)
+    h.closed_at, h.result, h.ended_at = at(14), "passed_on", at(11, day=NEXT + timedelta(days=1))
+    s.commit()
+    r = person(kpi(s, at(12, day=NEXT + timedelta(days=1))), 2)
+    assert (r["late"], r["excused"]) == (0, 1)
+
+
+def test_mistake_line_shows_customer_due_and_end(fs):
+    s, path = fs
+    c, f = sent_form(s, path)
+    h = hop(s, f)
+    h.result, h.ended_at = "passed_on", at(11, 5, day=NEXT)
+    s.commit()
+    m = person(kpi(s, at(12, day=NEXT)), 2)["mistakes"][0]
+    assert m["customer_number"] == c.customer_number and m["agent_wait_seconds"] == 0
+    assert m["due"] and m["ended_at"]

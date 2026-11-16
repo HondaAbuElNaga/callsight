@@ -523,7 +523,7 @@ def tracker(row: "Row", now: datetime, names: dict[str, str] | None = None) -> l
     call / question / answer / note / summary / seen), label, at, state (done / current / late / bad / future),
     detail. Questions and our messages sit at their time; the current step turns "late" after the 24 h."""
     f = row.form
-    if f is None or f.responsible_kind != "forward":
+    if f is None or f.responsible_kind != "forward" or f.forward_status is None:
         return []
     from .forward import closed, hop_calls, is_question, our_actors, ours, proof
     items: list[dict] = []
@@ -567,8 +567,12 @@ def tracker(row: "Row", now: datetime, names: dict[str, str] | None = None) -> l
             acts.append(h.closed_at)
         got = min(acts, default=None)
         recv = add("step", f"استلمها {holder}", got, "done" if got else "future")
-        if got is None and h.result in ("passed_on", "closed_by_other"):
+        from .forward import HOP_TIME
+        if got is None and (h.result == "passed_on" or (h.result == "closed_by_other" and h.ended_at
+                                                         and h.ended_at > h.sent_at + HOP_TIME)):
             recv["state"], recv["detail"] = "bad", "لم يتخذ أي إجراء على التذكرة"
+        elif got is None and h.result == "closed_by_other":
+            recv["detail"] = "حلّها غيره قبل أن يتصرف"
         if got is None and h.result == "open" and current is None:
             recv["state"] = "current"
             current = recv
@@ -578,7 +582,8 @@ def tracker(row: "Row", now: datetime, names: dict[str, str] | None = None) -> l
                 ok = c.status == "answered"
                 add("call", f"اتصل {holder} بالعميل", c.start_time, "done" if ok else "bad",
                     (f"ردّ العميل · {c.talk_seconds or 0} ث"
-                     + (f" · الرضا {sc}/10" if sc is not None else " · بانتظار تقييم الرضا"))
+                     + (f" · الرضا {sc}/10" if sc is not None
+                        else " · بانتظار تقييم الرضا" if (c.talk_seconds or 0) > 60 else ""))
                     if ok else "لم يرد العميل")
         if h.result == "solved":
             solved = True
@@ -931,7 +936,8 @@ def add_note(s: Session, call: Call, data: dict, user: AppUser, exts, now: datet
                          expected_at=clean["expected_at"], callback_at=clean["callback_at"],
                          created_by=user.id, created_at=now)
     s.add(n)
-    if forwarded(row.form) and (clean["what_happened"] or "").strip() and user.ext == call.agent_ext:
+    if (forwarded(row.form) and (clean["what_happened"] or "").strip() and user.role == "agent" and user.ext
+            and user.ext == call.agent_ext):
         # D3: the note is written on the ticket too (the person holding it sees the update)
         s.add(ForwardMessage(call_id=call.id, kind="note", text=clean["what_happened"].strip()[:600],
                              created_by=user.id, created_at=now, status="pending"))

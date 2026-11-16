@@ -289,7 +289,8 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
     if (busy) return false;
     setError(""); setSaved(""); setBusy(true);
     try {
-      load(await api.forwardMessage(callId, kind === "answer" ? { kind, text } : { kind }));
+      const upto = Math.max(0, ...(view.forward?.questions ?? []).map((q) => q.id));   // what is on screen
+      load(await api.forwardMessage(callId, kind === "answer" ? { kind, text, upto } : { kind, upto }));
       setSaved(kind === "answer" ? "حُفظ الرد، ويُكتب في التذكرة خلال دقائق." : "تم.");
       return true;
     } catch (e) { fail(e); return false; } finally { setBusy(false); }

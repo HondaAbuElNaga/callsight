@@ -60,6 +60,7 @@ class ForwardMsgIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: str = Field(pattern=r"^(answer|seen)$")
     text: str | None = Field(default=None, max_length=500)
+    upto: StrictInt | None = None     # the newest question id on the agent's screen (later ones stay open)
 
 
 class MyNoteIn(BaseModel):
@@ -199,17 +200,22 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         row = fu.one(s, c, team_exts(), fu.get_setting(s, fu.SETTING_START))
         if row is None or row.form is None or row.form.forward_status != "sent" or not row.chain_open():
             raise HTTPException(409, "لا توجد تذكرة مفتوحة لهذه المشكلة (أعد تحميل الصفحة)")
-        if not row.questions():     # an answer belongs to a question (bounds what reaches the ticket)
+        qs = row.questions()
+        if not qs:                  # an answer belongs to a question (bounds what reaches the ticket)
             raise HTTPException(409, "لا توجد أسئلة تنتظر ردك (أعد تحميل الصفحة)")
+        newest = max(q.id for q in qs)
+        upto = newest if body.upto is None else body.upto
+        if not any(q.id <= upto for q in qs) or upto > newest:
+            raise HTTPException(409, "تغيّرت الأسئلة، أعد تحميل الصفحة")
         if body.kind == "seen":
             m = ForwardMessage(call_id=c.id, kind="seen", text=None, created_by=user.id, created_at=now,
-                               status="done")
+                               status="done", upto_event_id=upto)
         else:
             text_ = (body.text or "").strip()
             if not text_:
                 raise HTTPException(422, "اكتب الرد")
             m = ForwardMessage(call_id=c.id, kind="answer", text=text_, created_by=user.id, created_at=now,
-                               status="pending")
+                               status="pending", upto_event_id=upto)
         s.add(m)
         s.add(AdminLog(user_id=user.id, action=f"forward_{body.kind}", target=f"call:{c.id}", at=now))   # no text
         s.commit()
@@ -338,14 +344,11 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
                                   and action_due(i, today))
         # "تحتاج حل" (requirement 11): every open problem of these agents, never limited by من/إلى or the state
         # filter; only "who" (agent / الموظف filter) and the priority filter apply
-        got, out["unsolved_truncated"] = fu.unsolved(s, exts, start, now, callers=team_exts(), priority=priority,
-                                                      limit=LIST_LIMIT)
-        unsolved = [r.as_dict(now, names, users) for r in got]
-        # D3: questions waiting for an answer, whatever day the call was ("أسئلة تنتظر ردك"); like every
-        # counter it counts all priorities (requirement 13)
-        everyone = unsolved if not priority else [
-            r.as_dict(now, names, users) for r in fu.unsolved(s, exts, start, now, callers=team_exts(),
-                                                               limit=LIST_LIMIT)[0] if r.questions()]
+        # one query for every priority: the counter counts them all (requirement 13), the list follows the filter
+        got, out["unsolved_truncated"] = fu.unsolved(s, exts, start, now, callers=team_exts(), limit=LIST_LIMIT)
+        everyone = [r.as_dict(now, names, users) for r in got]
+        unsolved = [i for i in everyone if not priority or (i["form"] and i["form"]["priority"] == priority)]
+        # D3: questions waiting for an answer, whatever day the call was ("أسئلة تنتظر ردك")
         out["counts"]["questions"] = sum(asked(i) for i in everyone)
         if state == "questions":
             items = [i for i in unsolved if asked(i)]

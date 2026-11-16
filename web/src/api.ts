@@ -258,8 +258,10 @@ export interface Forward {
 }
 export interface ForwardKpiPerson {
   person_id: number; level: 1 | 2 | 3; name: string | null; branch: string | null; received: number; solved: number;
-  solved_in_24h: number; in_24h_rate: number | null; avg_seconds_to_solve: number | null; open: number; late: number;
-  mistakes: { call_id: number; sent_at: string | null; reason: string; ticket_number: number | null;
+  solved_in_24h: number; decided: number; in_24h_rate: number | null; avg_seconds_to_solve: number | null;
+  open: number; late: number; excused: number;
+  mistakes: { call_id: number; sent_at: string | null; due: string | null; ended_at: string | null; reason: string;
+    ticket_number: number | null; customer_number: string | null; agent_wait_seconds: number;
     agent: string | null }[];
 }
 export interface ForwardKpiAgent {
@@ -449,7 +451,9 @@ export const api = {
   forwardStory: (id: number) => get<ForwardStory>(`/api/forwards/${id}`),
   // D4 (req 20): the people problems were forwarded to + the agents' answers to their questions (staff only)
   forwardKpi: (p: { from: string; to: string; agent?: string }) => {
-    const q = new URLSearchParams({ from: p.from, to: p.to });
+    const q = new URLSearchParams();
+    if (p.from) q.set("from", p.from);
+    if (p.to) q.set("to", p.to);
     if (p.agent) q.set("agent", p.agent);
     return get<ForwardKpi>(`/api/kpi/forwards?${q.toString()}`);
   },
@@ -458,7 +462,7 @@ export const api = {
   myNote: (id: number, text: string) => send<{ call_id: number; text: string | null }>("PUT", `/api/calls/${id}/my-note`, { text }),
   addNote: (id: number, body: NoteIn) => send<FollowupView>("POST", `/api/calls/${id}/followup/notes`, body),
   // D3: answer the question on the forwarded ticket, or mark it seen (no answer needed)
-  forwardMessage: (id: number, body: { kind: "answer" | "seen"; text?: string }) =>
+  forwardMessage: (id: number, body: { kind: "answer" | "seen"; text?: string; upto?: number }) =>
     send<FollowupView>("POST", `/api/calls/${id}/forward/messages`, body),
   followups: (p: { from?: string; to?: string; agent?: string; state?: string; priority?: string }) => {
     const q = new URLSearchParams();

@@ -40,8 +40,11 @@
         login name on the ticket, notes only from the call's agent + warning, answer needs a question, summary =
         shown analysis and not repeated, erase lock, prefixes without diacritics). The bugs reviewer stopped on a
         usage limit: re-run together with D4's review.
-- [~] D4. Tests first, then: forward people KPI + late hops (re-send / escalation replaced by the chain, DC).
-        → 3-agent review. Built 2026-11-16 (tests/test_forward_d4.py); review pending.
+- [x] D4. Tests first, then: forward people KPI + late hops (re-send / escalation replaced by the chain, DC).
+        → 3-agent review. Built 2026-11-16 (tests/test_forward_d4.py). Review (bugs over D3+D4, security, accuracy):
+        34 findings, none high except 2 accuracy (fair time split missing; agents blamed for solved questions):
+        all fixed or recorded in spec "Review of D3 + D4". Verify: 820 passed, 1 known .env failure, 9 skipped;
+        web build OK; migration 0020 up/down(0016)/up OK.
 - [ ] D5. On the server: put the key, sync people, one real test ticket, then live on the user's "ok push".
 - [x] 9. Verify: migration up/down/up, full pytest, web build; tick acceptance criteria with real output.
 - [x] 10. Review: 3 subagents (bugs, security, accuracy) per part. → A: 2 low (2-day limit re-checked on an

@@ -489,6 +489,28 @@ solved, the times".
   branch supervisor's late case says why his close did not count (no call / not answered / ≤ 60 s / score ≤ 7).
   Agents' side: questions answered on time (by 23:00 that day, or 2 h after one read after 21:00), late, waiting,
   with the late list; the الموظف filter limits this table. Not in the PDF report (page only).
+- **Review of D3 + D4 (3 agents, 2026-11-16), fixed:**
+  - **Fair time split (req 20) in the KPI:** each person's time = from getting it to the end of his turn MINUS the
+    time a question of the ticket waited for our agent's answer. Late only when that own time is over 24 h; over
+    24 h on the clock but not on his own time → "تأخر ليس بسببه" (shown apart, not a mistake). The chain itself
+    still moves on clock hours (24 h each). A branch supervisor whose close waits only for OUR satisfaction score
+    is not late either (also "ليس بسببه"). A manager whose copy another manager solved: judged by the solver's own
+    close time. The % "حلّ خلال 24 ساعة" counts only hops whose time is decided (not still running).
+  - **Agents:** a question with no answer that was solved before the agent's deadline is not counted. A failed
+    answer (never reached the ticket) is not an answer. Which questions an answer covers = the newest question id
+    on the agent's screen (`upto_event_id`), so a question read a moment later stays open.
+  - **Writing on tickets:** delivery is kept per ticket (`sent_to`): a failing manager copy never makes the others
+    get the same text twice; a manager copy made later still gets what was already written; a network outage stops
+    the run; only HTTP writes count toward the 100 per run (waiting rows never starve new answers). The summary
+    queue takes the newest calls first and skips a call being erased; a message failing because the call was
+    erased loses its text.
+  - "Ours" on the ticket = by author once the PBX account is known (the holder cannot hide a question by starting
+    with our words); our opening words only before the `created` item was read.
+  - Only an agent account of the call's own extension sends notes to the ticket. The erase locks the call with
+    FOR NO KEY UPDATE (inserts pointing to the call are not blocked).
+  - Accepted: two answer clicks at the same instant may both be written (the button is disabled while saving);
+    the sender keeps its share lock on the call during the HTTP write (an erase can wait up to 20 s per ticket).
+    Not built: req 20 "wrong person chosen" (the other system has no "send back").
 
 ## Acceptance criteria
 - [x] Tests: form without priority → 422; bad code → 422; each code saves and comes back with the right `priority_ar`;

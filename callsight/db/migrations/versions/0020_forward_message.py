@@ -8,6 +8,7 @@ Create Date: 2026-11-16
 """
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision = '0020'
@@ -29,6 +30,8 @@ def upgrade() -> None:
         sa.Column('sent_at', sa.DateTime(timezone=True), nullable=True),
         sa.Column('error', sa.String(length=300), nullable=True),
         sa.Column('tries', sa.Integer(), server_default='0', nullable=False),
+        sa.Column('upto_event_id', sa.BigInteger(), nullable=True),
+        sa.Column('sent_to', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.CheckConstraint("kind IN ('answer', 'note', 'summary', 'seen')", name='ck_forward_message_kind'),
         sa.CheckConstraint("status IN ('pending', 'waiting', 'sent', 'failed', 'done')",
                            name='ck_forward_message_status'),

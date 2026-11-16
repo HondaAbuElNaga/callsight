@@ -587,6 +587,11 @@ def _send_copy(s, client, f, call, h, now, done) -> None:
         return
     h.ticket_guid, h.ticket_number, h.sent_at, h.result, h.error = guid, number, now, "open", None
     done["copies"] += 1
+    from .db.models import ForwardMessage
+    for m in s.scalars(select(ForwardMessage).where(
+            ForwardMessage.call_id == h.call_id, ForwardMessage.status == "sent",
+            ForwardMessage.kind.in_(("answer", "note", "summary")), ForwardMessage.created_at > now - MSG_WINDOW)):
+        m.status = "pending"                        # sent_to keeps the tickets that have it: only the copy gets it
 
 
 # ---------- D2: supervisors' calls to the customer (proof of solving) ----------
@@ -701,7 +706,8 @@ MSG_PREFIX = {"answer": "رد موظف خدمة العملاء", "note": "تحد
 OUR_PREFIXES = (*MSG_PREFIX.values(), "لم تُحل خلال 24 ساعة", "حُلّت عند", "نسخة للإدارة", "مشكلة محوّلة من")
 ANSWER_MAX = 500
 MSG_WINDOW = timedelta(days=3)       # a message that cannot be written in 3 days (ticket never reopened) -> failed
-MSG_BATCH = 100
+MSG_BATCH = 100                      # HTTP writes per run
+MSG_VISIT_MAX = 2000                 # messages looked at per run (most only wait)
 SUMMARY_BATCH = 100
 ERR_ENDED = "انتهت المتابعة: لا توجد تذكرة مفتوحة"
 ERR_MSG_EXPIRED = "تعذّر الإرسال خلال 3 أيام"
@@ -716,9 +722,12 @@ _OUR_NORM = tuple(norm_ar(p) for p in OUR_PREFIXES)
 
 
 def ours(e, us: set[str]) -> bool:
-    """Written by us: the PBX account's name, or our fixed opening words (compared without diacritics, in case the
-    other system drops them)."""
-    return bool(e.actor and e.actor in us) or norm_ar((e.note or "").strip()).startswith(_OUR_NORM)
+    """Written by us. When the PBX account's name is known (the author of the `created` item) only the author
+    decides, so the person holding it cannot hide a question by starting with our words (review D4). Before that
+    item was read: our fixed opening words (compared without diacritics)."""
+    if us:
+        return bool(e.actor and e.actor in us)
+    return norm_ar((e.note or "").strip()).startswith(_OUR_NORM)
 
 
 def is_question(e, us: set[str]) -> bool:
@@ -726,11 +735,17 @@ def is_question(e, us: set[str]) -> bool:
     return e.kind == "followup" and e.type != "followup_close" and bool((e.note or "").strip()) and not ours(e, us)
 
 
+def covered(q, m) -> bool:
+    """Answer / seen m covers question q: q was on the agent's screen (id watermark; a row without one: by time)."""
+    return m.upto_event_id >= q.id if m.upto_event_id is not None else m.created_at >= q.seen_at
+
+
 def open_questions(events, messages, us: set[str] | None = None) -> list:
-    """Questions read after the agent's last answer / "seen" (one answer covers every question shown before it)."""
+    """Questions no answer / "seen" covers yet (one answer covers every question the agent had on screen; a
+    question read later stays open, review D4). A failed answer never reached the ticket: it covers nothing."""
     us = our_actors(events) if us is None else us
-    last = max((m.created_at for m in messages if m.kind in ("answer", "seen")), default=None)
-    return [e for e in events if is_question(e, us) and (last is None or e.seen_at > last)]
+    marks = [m for m in messages if m.kind in ("answer", "seen") and m.status != "failed"]
+    return [e for e in events if is_question(e, us) and not any(covered(e, m) for m in marks)]
 
 
 def message_text(m, author: str | None) -> str:
@@ -749,13 +764,17 @@ def queue_summaries(s: Session, now: datetime) -> int:
                                          ForwardMessage.kind == "summary").exists(),
         select(CallAnalysis.id).where(CallAnalysis.call_id == CallFollowup.call_id, CallAnalysis.status == "done",
                                       CallAnalysis.summary.is_not(None)).exists())
-        .order_by(CallFollowup.call_id).limit(SUMMARY_BATCH)))
+        .order_by(CallFollowup.call_id.desc()).limit(SUMMARY_BATCH)))    # newest first: never stuck on old ones
     made = 0
     if not ids:
         return 0
     from .analysis.views import shown_analysis
     model, pv = _analysis_key()
     for cid in ids:
+        live = s.scalars(select(Call.id).where(Call.id == cid, Call.content_deleted_at.is_(None))
+                         .with_for_update(read=True, skip_locked=True)).first()
+        if live is None:                               # erased, or being erased right now
+            continue
         a = shown_analysis(s, cid, model, pv)          # the same analysis the call panel shows
         text_ = (a.summary or "").strip() if a is not None and a.status == "done" else ""
         if not text_:
@@ -788,7 +807,8 @@ def send_messages(s: Session, client: CsClient, now: datetime | None = None) -> 
     done = {"summaries": queue_summaries(s, now), "msg_sent": 0, "msg_waiting": 0, "msg_failed": 0}
     names = dict(s.execute(select(Agent.ext, Agent.name)).all())
     seen: list[int] = []
-    while len(seen) < MSG_BATCH:
+    writes = 0
+    while writes < MSG_BATCH and len(seen) < MSG_VISIT_MAX:   # only HTTP writes count (review D4: no starving)
         stmt = select(ForwardMessage).where(ForwardMessage.status.in_(("pending", "waiting")))
         if seen:
             stmt = stmt.where(ForwardMessage.id.not_in(seen))
@@ -806,11 +826,20 @@ def send_messages(s: Session, client: CsClient, now: datetime | None = None) -> 
         if call.content_deleted_at is not None or any(h.result == "solved" for h in hops) or (
                 hops and not any(h.result in ("open", "pending") for h in hops)):
             m.status, m.error = "failed", ERR_ENDED
+            if call.content_deleted_at is not None:
+                m.text = None                           # personal data: erased with the call's content
             done["msg_failed"] += 1
             s.commit()
             continue
-        ready = list(dict.fromkeys(h.ticket_guid for h in hops
-                                   if h.result == "open" and h.ticket_guid and h.closed_at is None))
+        done_to = set(m.sent_to or [])
+        ready = [g for g in dict.fromkeys(h.ticket_guid for h in hops
+                                          if h.result == "open" and h.ticket_guid and h.closed_at is None)
+                 if g not in done_to]
+        if not ready and done_to:                   # every open ticket has it already
+            m.status, m.error = "sent", None
+            m.sent_at = m.sent_at or now
+            s.commit()
+            continue
         if not ready:                               # ticket not made yet / closed there: wait (reopen comes)
             m.status = "failed" if expired else ("waiting" if hops else "pending")
             m.error = ERR_MSG_EXPIRED if expired else None
@@ -821,23 +850,35 @@ def send_messages(s: Session, client: CsClient, now: datetime | None = None) -> 
         if m.created_by is not None:                # the agent's name from the PBX list; never the login name
             u = s.get(AppUser, m.created_by)
             author = names.get(u.ext or "") or None if u else None
+        writes += 1
+        stop = False
         try:
             for g in ready:
                 client.followup(g, message_text(m, author), close=False)
+                done_to.add(g)
+                m.sent_to = sorted(done_to)         # this ticket has it, whatever happens to the next one
         except CsAuthError:
             m.error, m.tries = ERR_AUTH, m.tries + 1
             s.commit()
             raise
         except CsError as exc:                      # refused there (e.g. the ticket is gone): the agent sees why
-            m.status, m.error, m.tries = "failed", exc.message[:300], m.tries + 1
-            done["msg_failed"] += 1
+            m.tries += 1
+            if done_to:                             # another ticket got it: sent, with the refusal shown
+                m.status, m.error, m.sent_at = "sent", exc.message[:300], m.sent_at or now
+                done["msg_sent"] += 1
+            else:
+                m.status, m.error = "failed", exc.message[:300]
+                done["msg_failed"] += 1
             s.commit()
             continue
-        except CsUnavailable:                       # written twice at worst (harmless): tried again next run
+        except CsUnavailable as exc:                # only the tickets not written yet are tried again
             m.tries += 1
             m.status, m.error = ("failed", ERR_MSG_EXPIRED) if expired else (m.status, ERR_UNAVAILABLE)
             done["msg_failed" if expired else "msg_waiting"] += 1
             s.commit()
+            stop = exc.status is None or exc.status in (408, 429)   # network / busy: the rest next run
+            if stop:
+                break
             continue
         m.status, m.sent_at, m.error, m.tries = "sent", now, None, m.tries + 1
         done["msg_sent"] += 1

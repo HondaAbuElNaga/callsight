@@ -536,6 +536,10 @@ class ForwardMessage(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(String(300))
     tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # answer / seen: the newest question (forward_event.id) the agent had on screen; later questions stay open
+    upto_event_id: Mapped[int | None] = mapped_column(BigInteger)
+    # the tickets it was written on (managers' copies: one failing copy never makes the others get it twice)
+    sent_to: Mapped[list | None] = mapped_column(JSONB)
 
 
 class ForwardPerson(Base):
