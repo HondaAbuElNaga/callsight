@@ -277,6 +277,8 @@ button.danger { color: #fff; background: var(--bad); border-color: var(--bad); }
 tr.row-warn td { background: var(--warn-bg); }
 tr.row-bad td { background: var(--bad-bg); }
 .next-action { margin: 4px 0 8px; }
+.student-box { border: 1px solid var(--line, #ccc); border-radius: 6px; padding: 6px 10px; margin: 6px 0; }
+.student-box p { margin: 4px 0; }
 .panel.work.step-warn { border-color: var(--warn); }
 .panel.work.step-bad { border-color: var(--bad); }
 .note-box { border: 1px solid var(--warn); border-radius: var(--radius); padding: 10px; margin: 8px 0; }

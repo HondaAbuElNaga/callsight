@@ -45,6 +45,9 @@
         34 findings, none high except 2 accuracy (fair time split missing; agents blamed for solved questions):
         all fixed or recorded in spec "Review of D3 + D4". Verify: 820 passed, 1 known .env failure, 9 skipped;
         web build OK; migration 0020 up/down(0016)/up OK.
+- [~] DT. Training lookup (spec "Part 4: the training lookup", user 2026-11-16): `callsight/training_api.py`,
+        `forward.suggest`, `GET /api/calls/{id}/student`, student box + pre-pick in the form, `.env` keys. Tests
+        `tests/test_training.py` (33 passed); web build OK. → 3-agent review next.
 - [ ] D5. On the server: put the key, sync people, one real test ticket, then live on the user's "ok push".
 - [x] 9. Verify: migration up/down/up, full pytest, web build; tick acceptance criteria with real output.
 - [x] 10. Review: 3 subagents (bugs, security, accuracy) per part. → A: 2 low (2-day limit re-checked on an

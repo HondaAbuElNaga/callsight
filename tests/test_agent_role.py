@@ -30,6 +30,7 @@ AGENT_ALLOWED = {
     ("GET", "/api/calls/{call_id}/followup"), ("PUT", "/api/calls/{call_id}/followup"), ("GET", "/api/followups"),
     ("POST", "/api/calls/{call_id}/followup/notes"), ("PUT", "/api/calls/{call_id}/my-note"),
     ("POST", "/api/calls/{call_id}/forward/messages"),    # D3: the call's agent answers the ticket's question
+    ("GET", "/api/calls/{call_id}/student"),    # training look-up: the call's agent (own form only)
     ("GET", "/api/shares"), ("GET", "/api/calls/{call_id}/shares"), ("POST", "/api/shares/{share_id}/seen"),
     ("PUT", "/api/shares/{share_id}/reply"),
     ("GET", "/api/calls/{call_id}/summary"),

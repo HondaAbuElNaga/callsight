@@ -317,7 +317,15 @@ export interface Person { id: number; username: string; role: string; ext: strin
 export type FollowupView =
   | { needed: false; enabled: boolean }
   | (FollowupItem & { needed: true; enabled: true; can_edit: boolean; lock_reason: string | null; options: Person[];
-      forward_enabled?: boolean; forward_options?: ForwardOption[] });
+      forward_enabled?: boolean; forward_options?: ForwardOption[]; training_enabled?: boolean });
+// the training look-up (spec "Part 4: the training lookup"): the caller's student record + suggested person
+export interface Placement { branch: string; diploma: string; level: string; section: string; status: string;
+  trainers: string[] }
+export interface StudentLookup {
+  enabled: boolean; students: { student: string; placements: Placement[] }[];
+  suggestion: { person_id: number; kind: "trainer" | "branch_supervisor"; name: string } | null;
+  error: "not_mobile" | "unavailable" | null;
+}
 export interface FollowupList { settings: Settings; items: FollowupItem[]; truncated?: boolean; linked: boolean;
   counts: FollowupCounts; older_action: number;    // older_action: work left before من (62-day look-back)
   unsolved: FollowupItem[]; unsolved_truncated?: boolean }   // "تحتاج حل": open problems, whatever من/إلى say
@@ -458,6 +466,7 @@ export const api = {
     return get<ForwardKpi>(`/api/kpi/forwards?${q.toString()}`);
   },
   followup: (id: number) => get<FollowupView>(`/api/calls/${id}/followup`),
+  student: (id: number) => get<StudentLookup>(`/api/calls/${id}/student`),
   saveFollowup: (id: number, body: FollowupIn) => send<FollowupView>("PUT", `/api/calls/${id}/followup`, body),
   myNote: (id: number, text: string) => send<{ call_id: number; text: string | null }>("PUT", `/api/calls/${id}/my-note`, { text }),
   addNote: (id: number, body: NoteIn) => send<FollowupView>("POST", `/api/calls/${id}/followup/notes`, body),

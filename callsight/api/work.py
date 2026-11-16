@@ -118,7 +118,8 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         why = why or may_edit(row.form, c, user, now)
         return {"needed": True, "enabled": True, **d, "can_edit": why is None, "lock_reason": why,
                 "options": fu.responsible_options(s), "forward_enabled": on,
-                "forward_options": forward.options(s) if on else []}
+                "forward_options": forward.options(s) if on else [],
+                "training_enabled": cfg.training_lookup is not None}
 
     def may_edit(form, c: Call, user: AppUser, now: datetime) -> str | None:
         """None = may save. Agents: own call, before the form deadline, and never once the callback time passed."""
@@ -138,6 +139,29 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
     def get_followup(call_id: int, user: User, s: DB) -> dict:
         c = owned_call(s, call_id, user)
         return form_payload(s, c, user, _now())
+
+    @app.get("/api/calls/{call_id}/student")
+    def get_student(call_id: int, user: User, s: DB) -> dict:
+        """The training look-up of the caller (spec "Part 4: the training lookup"): the student(s) with this phone
+        and the suggested person for the forward form. Only for the call's agent or staff, only on a call that needs
+        the follow-up form. Never stored; an outage only hides the box."""
+        c = owned_call(s, call_id, user)
+        if cfg.training_lookup is None:
+            return {"enabled": False, "students": [], "suggestion": None, "error": None}
+        own = staff(user) or (user.ext is not None and c.agent_ext == user.ext)
+        if not own or fu.one(s, c, team_exts(), fu.get_setting(s, fu.SETTING_START)) is None:
+            raise HTTPException(404, "no follow-up form on this call")
+        from .. import training_api
+        phone = training_api.local_mobile(c.customer_number)
+        if phone is None:
+            return {"enabled": True, "students": [], "suggestion": None, "error": "not_mobile"}
+        try:
+            students = cfg.training_lookup(phone)
+        except training_api.TrainingUnavailable:
+            return {"enabled": True, "students": [], "suggestion": None, "error": "unavailable"}
+        from .. import forward
+        sug = forward.suggest(s, students) if students and cfg.forward_enabled() else None
+        return {"enabled": True, "students": students, "suggestion": sug, "error": None}
 
     @app.put("/api/calls/{call_id}/followup")
     def put_followup(call_id: int, body: FollowupIn, user: User, s: DB) -> dict:

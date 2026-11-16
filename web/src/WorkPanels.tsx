@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   api, Refused, Unauthorized,
   type AgentSummary, type CallShares, type Forward, type ForwardOption, type FollowupIn, type FollowupView,
-  type HistoryEntry, type Me, type NoteIn, type Person, type Share, type TrackerItem,
+  type HistoryEntry, type Me, type NoteIn, type Person, type Share, type StudentLookup, type TrackerItem,
 } from "./api";
 import {
   CALLBACK_LABEL, HOP_LEVEL, HOP_RESULT, PROOF_REASON, PRIORITIES, PRIORITY_CLASS, PRIORITY_LABEL, STEP_CLASS, type Priority, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, fromRiyadhInput, ringText, toRiyadhInput,
@@ -237,6 +237,25 @@ function History({ items }: { items: HistoryEntry[] }) {
   );
 }
 
+/** The training look-up (spec "Part 4: the training lookup"): who the caller is in the training system. */
+function StudentBox({ d }: { d: StudentLookup }) {
+  if (d.error === "unavailable") return <p className="muted small">نظام التدريب لا يرد الآن: اختر المسؤول بنفسك.</p>;
+  if (d.error || d.students.length === 0) return <p className="muted small">الرقم غير مسجل لطالب في نظام التدريب.</p>;
+  return (
+    <div className="student-box">
+      {d.students.map((st, i) => <div key={i}>
+        <b>{st.student || "طالب"}</b>
+        {st.placements.map((p, j) => <p key={j} className="small">
+          {[p.diploma, p.level && `المستوى ${p.level}`, p.section, p.branch, p.status].filter(Boolean).join(" · ")}
+          <br />المدرب: {p.trainers.length ? p.trainers.join("، ") : "غير محدد بعد"}
+        </p>)}
+      </div>)}
+      {d.suggestion && <p className="small">المقترح للتحويل: <b>{d.suggestion.name}</b>
+        {d.suggestion.kind === "trainer" ? " (المدرب)" : " (مشرف فرع الطالب)"}. يمكنك تغييره.</p>}
+    </div>
+  );
+}
+
 export function PriorityTag({ p }: { p: Priority | null | undefined }) {
   if (!p) return null;
   return <span className={`state prio ${PRIORITY_CLASS[p]}`} title="الأولوية">{PRIORITY_LABEL[p]}</span>;
@@ -252,6 +271,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
   const [form, setForm] = useState<Problem>(EMPTY);
   const [prio, setPrio] = useState("");             // first form only (set once)
   const [note, setNote] = useState<Problem>(EMPTY);
+  const [student, setStudent] = useState<StudentLookup | null>(null);
   const fail = useFail(onExpired, setError);
 
   const load = (v: FollowupView) => {
@@ -267,6 +287,18 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
       expected: toRiyadhInput(f.expected_at), callback: toRiyadhInput(f.callback_at), fnote: f.forward_note ?? "" });
   };
   useEffect(() => { api.followup(callId).then(load).catch(fail); /* eslint-disable-next-line */ }, [callId]);
+  const lookUp = !!view?.needed && !!view.training_enabled;
+  useEffect(() => {     // the box only: an error here never blocks the form
+    setStudent(null);
+    if (lookUp) api.student(callId).then(setStudent).catch((e) => { if (e instanceof Unauthorized) onExpired(); });
+    /* eslint-disable-next-line */ }, [callId, lookUp]);
+  // first form, "not solved", nobody picked yet: pre-pick the suggested person (the agent can change it)
+  const sug = student?.suggestion;
+  const sugOk = !!sug && !!view?.needed && !view.form && !!view.forward_enabled
+    && (view.forward_options ?? []).some((o) => o.id === sug.person_id);
+  useEffect(() => {
+    if (sugOk && form.solved === "no" && !form.resp) setForm({ ...form, resp: `forward:${sug!.person_id}` });
+    /* eslint-disable-next-line */ }, [sugOk, form.solved]);
 
   if (!view || !view.needed) return null;
   const run = async (call: () => Promise<FollowupView>, done: string) => {
@@ -340,6 +372,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
 
       <History items={view.history} />
 
+      {formOpen && student && <StudentBox d={student} />}
       {formOpen && <>
         {ro && view.lock_reason && <p className="muted small">لا يمكنك التعديل: {lockText(view.lock_reason)}</p>}
         <fieldset disabled={ro} className="form">

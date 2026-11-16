@@ -206,6 +206,57 @@ def options(s: Session) -> list[dict]:
              "manager": r.is_manager} for r in rows]
 
 
+def _words(t: str) -> set[str]:
+    return {w[2:] if w.startswith("ال") and len(w) > 3 else w for w in _tokens(t)}
+
+
+def _gender(branch: str, grp: str | None = None) -> str | None:
+    w = set(re.findall(r"\w+", norm_ar(branch)))           # "(رجال)" -> رجال
+    if "رجال" in w or grp == "men":
+        return "m"
+    if w & {"نساء", "بنات"} or grp == "women":
+        return "f"
+    return None
+
+
+def suggest(s: Session, students: list[dict]) -> dict | None:
+    """The person the form proposes for a student's problem (training look-up): the responsible trainer when exactly
+    one employee in the forward list carries his name, else the supervisor of the student's branch (most branch words
+    in common, same men / women side; a tie = no guess). Placements still running ("مستمر") are tried first.
+    -> {"person_id", "kind": "trainer" | "branch_supervisor", "name"} or None."""
+    rows = list(s.scalars(select(ForwardPerson).where(ForwardPerson.active.is_(True), ForwardPerson.guid.is_not(None))))
+    places = [p for st in students for p in st.get("placements", [])]
+    places.sort(key=lambda p: norm_ar(p.get("status", "")) != norm_ar("مستمر"))
+    for p in places:
+        for t in p.get("trainers", []):
+            want = _words(t)
+            if len(want) < 2:                       # one word is never enough to name a person
+                continue
+            hits = [r for r in rows if want <= _words(r.full_name or r.name) or want <= _words(r.name)]
+            if len(hits) == 1:
+                return {"person_id": hits[0].id, "kind": "trainer", "name": hits[0].name}
+    sups = [r for r in rows if r.is_supervisor]
+    for p in places:
+        bw, g = _branch_words(p.get("branch", "")), _gender(p.get("branch", ""))
+        if not bw:
+            continue
+        scored = []
+        for r in sups:
+            rg = _gender(r.branch, r.grp)
+            if g and rg and g != rg:
+                continue
+            n = len(bw & _branch_words(r.branch))
+            if n:
+                scored.append((n, r))
+        if not scored:
+            continue
+        best = max(n for n, _ in scored)
+        top = [r for n, r in scored if n == best]
+        if len(top) == 1:
+            return {"person_id": top[0].id, "kind": "branch_supervisor", "name": top[0].name}
+    return None
+
+
 def choosable(s: Session, person_id) -> ForwardPerson | None:
     r = s.get(ForwardPerson, person_id) if isinstance(person_id, int) else None
     return r if r is not None and r.active and r.guid else None

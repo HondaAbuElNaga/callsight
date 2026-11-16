@@ -380,6 +380,30 @@ solved, the times".
   passed on because the score never came counts as "without a good call"; `forward_event.hop_id` sits in 0018
   (0018 has not run on any server: re-run it on a local dev DB).
 
+## Part 4: the training lookup (user 2026-11-16, approved in chat)
+**Why:** the agent should know who the caller is in the training system and send a not-solved problem to the person
+responsible for the student (the trainer), not guess.
+
+**The other system:** `GET https://training.sstli.com/api/v1/students/responsible-trainer?q=<phone or national id>`,
+header `X-Api-Key` (server `.env`: `TRAINING_API_URL`, `TRAINING_API_KEY`; empty key = off). Answer
+`{data: [{student, placements: [{branch, diploma, level, section, status, trainers: []}]}]}`. Tested 2026-11-16: 401
+without a key, 200 with it; `/api/v4/...` = 404. Every answer so far has `trainers: []`: the user says the other
+system fills them later, so the trainer item's fields are not known: a string or an object with `name` / `full_name`
+/ `fullName` / `trainer` / `trainer_name` / `trainerName` is read as the name.
+
+**Requirements (user's choice "Suggest trainer"):**
+- T1. On a call that needs the follow-up form, the form shows the caller's student record (name, diploma, level,
+  section, branch, status, trainers). Only the call's agent and staff can read it (`GET /api/calls/{id}/student`).
+- T2. When the agent answers "not solved" in the first form and has not picked anyone, the suggested person is
+  pre-picked in "من يجب أن يحلّها؟"; the agent can change it. Suggestion = the trainer when exactly one active
+  employee of the forward list has every word of his name (two words at least); else the supervisor of the student's
+  branch (most branch words in common, same men / women side; a tie = no suggestion). Running placements ("مستمر")
+  are tried first. No suggestion when the forward link is off.
+- T3. Only Saudi mobiles are looked up (`05xxxxxxxx`; `966…` turned into `05…`); a landline is never sent.
+- T4. The answer is never stored in the database; kept in the API's memory 10 minutes (max 500 numbers). Timeout 8 s;
+  an outage or a bad key only shows "نظام التدريب لا يرد الآن" and never blocks the form. Logs never hold the number.
+- Out: looking up by national id from the form, trainers as a new level of the forward chain, storing the student.
+
 ## Build decisions (3-agent reviews per part, 2026-11-16)
 - An **unchanged** expected solve time is not re-checked against the 2-day limit when a form is saved again (forms from
   before the 2-day rule may hold a later time); the 1-day limit of عالية is checked every time.
