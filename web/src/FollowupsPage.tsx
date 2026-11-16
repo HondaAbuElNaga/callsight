@@ -5,7 +5,7 @@ import { api, Unauthorized, type Agent, type FollowupItem, type FollowupList, ty
 import {
   CALLBACK_LABEL, PRIORITIES, PRIORITY_LABEL, STEP_CLASS, STEP_LABEL, earlyText, formatDateTime, riyadhToday, ringText,
 } from "./format";
-import { CB_CLASS, PriorityTag } from "./WorkPanels";
+import { CB_CLASS, PriorityTag, RESP_LABEL } from "./WorkPanels";
 import { CallsPage } from "./CallsPage";
 
 interface Props { me: Me; onCalls?: () => void;   // agents: no calls page (follow-ups is their only page)
@@ -32,6 +32,65 @@ function urgency(i: FollowupItem, now: number): string {
   if (i.step === "note_needed") return "row-warn";
   if (i.step === "waiting_callback" && i.callback && new Date(i.callback.at).getTime() - now <= SOON_MS) return "row-warn";
   return "";
+}
+
+// ---------- supervisor one-line view (requirement 15) + "تحتاج حل" (requirement 11) ----------
+
+/** Who must solve it now: the latest entry's responsible person (only while not solved). */
+function whoSolves(i: FollowupItem): string {
+  const last = i.history[i.history.length - 1];
+  if (!last || last.solved !== false) return "–";
+  return last.responsible ?? RESP_LABEL[last.responsible_kind ?? ""] ?? "–";
+}
+
+function caseState(i: FollowupItem): [string, string] {
+  if (i.step === "solved_first" || i.step === "solved_after") return ["حُلّت", "ok"];
+  if (i.step === "no_followup") return ["لا تحتاج متابعة", "off"];
+  if (i.step === "required" || i.step === "overdue") return ["لم يُعبّأ", i.step === "overdue" ? "bad" : "off"];
+  return ["مفتوحة", "warn"];
+}
+
+/** The agent's text of the problem, cut to one line (full text on hover). */
+function Problem({ i }: { i: FollowupItem }) {
+  const t = i.form?.what_happened;
+  return t ? <span className="problem" title={t}>{t}</span> : <>–</>;
+}
+
+function nextTime(i: FollowupItem): string {
+  if (i.step === "waiting_callback" || i.step === "callback_missed") return i.callback ? `المعاودة: ${formatDateTime(i.callback.at)}` : "";
+  if (i.solve_by) return `الحل: ${formatDateTime(i.solve_by)}`;
+  if (i.step === "note_needed" && i.note_deadline) return `الملاحظة قبل: ${formatDateTime(i.note_deadline)}`;
+  return "";
+}
+
+function Unsolved({ items, truncated, staff, onOpen }:
+  { items: FollowupItem[]; truncated?: boolean; staff: boolean; onOpen: (id: number) => void }) {
+  return (
+    <section className="panel unsolved">
+      <h2>تحتاج حل ({items.length}{truncated ? "+" : ""})</h2>
+      <p className="muted small">كل مشكلة لم تُحل، مهما كانت التواريخ، حتى تُكتب ملاحظة بأنها حُلّت.</p>
+      {items.length === 0 ? <p className="muted">لا توجد مشاكل مفتوحة</p> : (
+        <ul>
+          {items.map((i) => (
+            <li key={i.call_id} onClick={() => onOpen(i.call_id)}>
+              <div className="line">
+                <PriorityTag p={i.form?.priority} />
+                <span className={`state ${STEP_CLASS[i.step]}`}>{STEP_LABEL[i.step]}</span>
+                <Number_ n={i.customer_number} />
+              </div>
+              <div className="line small">
+                {staff && <span>{i.agent_ext} <span className="muted">{i.agent_name}</span></span>}
+                <span className="muted">{formatDateTime(i.start_time)}</span>
+              </div>
+              {staff && <div className="line small"><Problem i={i} /><span className="muted">· يحلّها: {whoSolves(i)}</span></div>}
+              {nextTime(i) && <div className="small muted">{nextTime(i)}</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {truncated && <p className="muted small">تظهر أول 500 فقط.</p>}
+    </section>
+  );
 }
 
 function Number_({ n }: { n: string | null }) {
@@ -210,23 +269,26 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
       {data && !data.settings.followup_start ? (
         <p className="muted panel">نماذج المتابعة غير مفعّلة بعد. يفعّلها مدير النظام من صفحة المستخدمين (تاريخ البدء).</p>
       ) : data && !data.linked ? null : (
+        <div className="fu-layout">
         <div className="table-wrap">
           <table>
             <thead><tr>
-              <th>الوقت</th><th>رقم العميل</th>{staff && <th>الموظف</th>}<th>المرحلة</th><th>معاودة الاتصال</th><th>آخر موعد</th><th>ملاحظتي</th>
+              <th>الوقت</th><th>رقم العميل</th>{staff && <><th>الموظف</th><th>المشكلة</th></>}<th>المرحلة</th>
+              {staff && <><th>يحلّها</th><th>الحالة</th></>}<th>معاودة الاتصال</th><th>آخر موعد</th><th>ملاحظتي</th>
             </tr></thead>
             <tbody>
               {data?.items.map((i) => (
                 <tr key={i.call_id} className={urgency(i, now)} onClick={() => onOpenCall(i.call_id)}>
                   <td className="nowrap">{formatDateTime(i.start_time)}</td>
                   <td><Number_ n={i.customer_number} /></td>
-                  {staff && <td>{i.agent_ext} <span className="muted">{i.agent_name}</span></td>}
+                  {staff && <><td>{i.agent_ext} <span className="muted">{i.agent_name}</span></td><td><Problem i={i} /></td></>}
                   <td>
                     <span className={`state ${STEP_CLASS[i.step]}`}>{STEP_LABEL[i.step]}</span>
                     {i.form?.priority && <> <PriorityTag p={i.form.priority} /></>}
                     {i.round > 1 && <span className="muted small"> · جولة {i.round}</span>}
                     {i.came_back && <span className="tag">عاد العميل</span>}
                   </td>
+                  {staff && <><td>{whoSolves(i)}</td><td><span className={`state ${caseState(i)[1]}`}>{caseState(i)[0]}</span></td></>}
                   <td>{i.callback ? <>   {/* fix J: callback + "did the customer answer" in one cell */}
                     {formatDateTime(i.callback.at)} <span className={`state ${CB_CLASS[i.callback.status]}`}>{CALLBACK_LABEL[i.callback.status]}</span>
                     {i.callback.time && <span className="muted small"> · اتصل {i.callback.by_ext}
@@ -244,12 +306,14 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
                 </tr>
               ))}
               {data && data.items.length === 0 && (
-                <tr><td colSpan={staff ? 7 : 6} className="center muted">
+                <tr><td colSpan={staff ? 10 : 6} className="center muted">
                   {state === "action" ? "لا يوجد عمل مطلوب الآن" : "لا يوجد شيء لهذا الاختيار"}</td></tr>
               )}
             </tbody>
           </table>
           {data?.truncated && <p className="muted small">تظهر أول 500 فقط: ضيّق الفترة.</p>}
+        </div>
+        {data && <Unsolved items={data.unsolved} truncated={data.unsolved_truncated} staff={staff} onOpen={(id) => onOpenCall(id)} />}
         </div>
       )}
       {open !== null && (   /* the call opens in the side panel over this list; ✕ closes it and refreshes the list */

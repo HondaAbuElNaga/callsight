@@ -475,6 +475,31 @@ def one(s: Session, call: Call, exts, start: date | None) -> Row | None:
     return got[0] if got else None
 
 
+# "تحتاج حل" (spec 2026-11-16-priority-no-followup, requirement 11): open problems, whatever من/إلى say
+PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}          # no priority (old form) comes last
+UNSOLVED_URGENCY = {"callback_missed": 0, "solution_overdue": 1, "note_needed": 2, "waiting_callback": 3,
+                    "waiting_solution": 3, "no_number": 4}
+
+
+def unsolved(s: Session, exts, start: date, now: datetime, *, callers) -> list[Row]:
+    """Every needed call since followup_start (no date limit) whose latest entry (form, or the last note) says not
+    solved, for these owner extensions. A small SQL pre-filter finds the ids, then rows() builds them, so the steps
+    are exactly the main list's. Order: priority, then the most urgent step, then the oldest call."""
+    if not exts:
+        return []
+    last_note = (select(CallFollowupNote.solved).where(CallFollowupNote.call_id == CallFollowup.call_id)
+                 .order_by(CallFollowupNote.round.desc()).limit(1).correlate(CallFollowup).scalar_subquery())
+    ids = list(s.scalars(select(Call.id).join(CallFollowup, CallFollowup.call_id == Call.id)
+                         .where(*needed_conditions(exts, start), CallFollowup.no_followup.is_(False),
+                                func.coalesce(last_note, CallFollowup.solved).is_(False))))
+    if not ids:
+        return []
+    got = [r for r in rows(s, exts, start, day_bounds(start)[0], now + timedelta(days=1), ids, callers=callers)
+           if r.step(now) in OPEN_STEPS]
+    return sorted(got, key=lambda r: (PRIORITY_ORDER.get(r.form.priority or "", 3),
+                                      UNSOLVED_URGENCY.get(r.step(now), 9), r.call.start_time, r.call.id))
+
+
 def responsible_options(s: Session) -> list[dict]:
     users = s.scalars(select(AppUser).where(AppUser.active.is_(True), AppUser.role.in_(("supervisor", "agent")))
                       .order_by(AppUser.role.desc(), AppUser.username))

@@ -86,7 +86,7 @@ function ProblemFields({ p, set, options, label, afterText, high }:
 }
 
 const NOTE_STEPS: string[] = ["note_needed", "waiting_solution", "solution_overdue"];
-const RESP_LABEL: Record<string, string> = { customer: "العميل", other_department: "قسم آخر" };
+export const RESP_LABEL: Record<string, string> = { customer: "العميل", other_department: "قسم آخر" };
 
 function History({ items }: { items: HistoryEntry[] }) {
   if (items.length === 0) return null;

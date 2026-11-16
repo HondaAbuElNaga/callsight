@@ -226,7 +226,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         out = {"settings": {k: v.isoformat() if v else None for k, v in st.items()}, "items": [],
                "linked": staff(user) or bool(user.ext and user.ext in team_exts()),
                "counts": {"forms": 0, "notes": 0, "callbacks_today": 0, "missed": 0, "no_followup": 0},
-               "older_action": 0}
+               "older_action": 0, "unsolved": []}
         start = st[fu.SETTING_START]
         if start is None:
             return out
@@ -255,7 +255,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         else:
             items = load(d_from, d_to)
         out["counts"] = counts(items, today)      # counters count every priority (spec requirement 13)
-        if priority:
+        if priority and state != "no_followup":   # those forms have no priority: the filter would empty them
             items = [i for i in items if i["form"] and i["form"]["priority"] == priority]
         out["older_action"] = sum(1 for i in recent if datetime.fromisoformat(i["start_time"]) < lo
                                   and action_due(i, today))
@@ -286,12 +286,20 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             items = [i for i in items if i["step"] == "no_followup"]
         out["truncated"] = len(items) > LIST_LIMIT
         items = items[:LIST_LIMIT]
+        # "تحتاج حل" (requirement 11): every open problem of these agents, never limited by من/إلى or the state
+        # filter; only "who" (agent / الموظف filter) and the priority filter apply
+        unsolved = [r.as_dict(now, names, users) for r in fu.unsolved(s, exts, start, now, callers=team_exts())]
+        if priority:
+            unsolved = [i for i in unsolved if i["form"]["priority"] == priority]
+        out["unsolved_truncated"] = len(unsolved) > LIST_LIMIT
+        unsolved = unsolved[:LIST_LIMIT]
+        shown = {i["call_id"] for i in items} | {i["call_id"] for i in unsolved}
         mine = dict(s.execute(select(CallPrivateNote.call_id, CallPrivateNote.text).where(
-            CallPrivateNote.user_id == user.id, CallPrivateNote.call_id.in_([i["call_id"] for i in items]))).all()
-        ) if items else {}
-        for i in items:
+            CallPrivateNote.user_id == user.id, CallPrivateNote.call_id.in_(shown))).all()) if shown else {}
+        for i in items + unsolved:
             i["my_note"] = mine.get(i["call_id"])      # the caller's own note only (private-note spec)
         out["items"] = items
+        out["unsolved"] = unsolved
         return out
 
     # ---------- agent summary (decision 1: summary only, never the estimate / reason / flags) ----------

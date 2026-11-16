@@ -172,6 +172,9 @@ def test_no_followup_counter_and_filter(env):  # noqa: F811
     assert [i["call_id"] for i in d["items"]] == [ids["own"]] and d["counts"]["no_followup"] == 1
     assert client.get("/api/followups", params={"state": "no_followup", "agent": "104"}).json()["items"] == []
     assert client.get("/api/followups", params={"state": ""}).json()["counts"]["no_followup"] == 1
+    # a priority filter does not empty this view (no-follow-up forms have no priority; review 2026-11-16)
+    d = client.get("/api/followups", params={"state": "no_followup", "priority": "high"}).json()
+    assert [i["call_id"] for i in d["items"]] == [ids["own"]]
 
 
 def test_unchanged_expected_time_on_edit(s):  # noqa: F811   (review 2026-11-16)
@@ -192,3 +195,78 @@ def test_unchanged_expected_time_on_edit(s):  # noqa: F811   (review 2026-11-16)
     f.expected_at = later + timedelta(days=10)
     s.commit()
     assert fu.save(s, c, {**base, "priority": "medium", "expected_at": f.expected_at}, u, later).priority == "medium"
+
+
+# ---------- "تحتاج حل" (requirement 11) ----------
+
+def test_unsolved_ignores_dates_and_leaves_when_solved(s):  # noqa: F811
+    from test_followups import _note
+    start_on(s)
+    u = user(s)
+    later = at(12, day=DAY + timedelta(days=30))
+    def prob(uid, h, prio, *, number, agent="119", solved=False, nofu=False, expected=None):
+        c = mk(s, uid, at(h), number=number, agent=agent)
+        f = form(s, c, u, filled=at(h, 5), solved=solved, no_followup=nofu)
+        f.priority = None if nofu else prio
+        f.expected_at = expected
+        return c
+    prob("old_low", 9, "low", number="0501000001")
+    prob("high_wait", 10, "high", number="0501000002", expected=at(12, day=DAY + timedelta(days=40)))
+    prob("high_late", 11, "high", number="0501000003", expected=at(12))      # solution_overdue: more urgent
+    prob("none", 12, None, number="0501000004")                                 # old form: last
+    prob("solved", 13, "medium", number="0501000005", solved=True)
+    prob("nofu", 14, None, number="0501000006", nofu=True)
+    prob("theirs", 15, "high", number="0501000007", agent="104")
+    noted = prob("noted", 16, "medium", number="0501000008")
+    noted_form = s.scalars(select(CallFollowup).where(CallFollowup.call_id == noted.id)).one()
+    noted_form.callback_at = noted_form.expected_at = at(17)
+    mk(s, "cb", at(17, 5), direction="outbound", agent="104", number="0501000008")
+    s.commit()
+    got = [r.call.uid for r in fu.unsolved(s, ["119"], DAY, later, callers=["104", "116", "119"])]
+    assert got == ["high_late", "high_wait", "noted", "old_low", "none"]
+    _note(s, noted, u, at(18), solved=True)                                      # a note marks it solved: gone
+    s.commit()
+    got = [r.call.uid for r in fu.unsolved(s, ["119"], DAY, later, callers=["104", "116", "119"])]
+    assert got == ["high_late", "high_wait", "old_low", "none"]
+    assert [r.call.uid for r in fu.unsolved(s, ["104"], DAY, later, callers=["104", "116", "119"])] == ["theirs"]
+    assert fu.unsolved(s, [], DAY, later, callers=["119"]) == []
+
+
+def test_unsolved_in_the_api_whatever_the_dates(env):  # noqa: F811
+    client, Session, ids, *_ = env
+    from callsight.config import RIYADH
+    from callsight.db.models import Call
+    old = datetime.now(RIYADH) - timedelta(days=30)
+    with Session() as s_:
+        s_.add(Call(uid="old", direction="inbound", entry="queue", customer_number="0508888888",
+                    team="customer_service", agent_ext="119", start_time=old, end_time=old + timedelta(minutes=3),
+                    talk_seconds=100, total_seconds=180, status="answered", recording_status="none"))
+        s_.commit()
+        old_id = s_.scalars(select(Call.id).where(Call.uid == "old")).one()
+    login(client, "root")
+    assert client.put("/api/admin/settings", json={"followup_start": (old - timedelta(days=1)).date().isoformat()}
+                      ).status_code == 200
+    login(client, "ali")
+    body = {"what_happened": "مشكلة قديمة", "solved": False, "priority": "low", "responsible_kind": "customer",
+            "expected_at": iso(datetime.now(timezone.utc) + timedelta(hours=5))}
+    assert client.put(f"/api/calls/{old_id}/followup", json=body).status_code == 200      # late form, allowed
+    assert client.put(f"/api/calls/{ids['own']}/followup", json={**body, "priority": "high"}).status_code == 200
+    login(client, "sara")
+    assert client.put(f"/api/calls/{ids['other']}/followup", json=not_solved(boss_id(Session))).status_code == 200
+    today = datetime.now(RIYADH).date()
+    login(client, "ali")
+    for params in ({"from": today.isoformat(), "to": today.isoformat()},
+                   {"from": (today - timedelta(days=3)).isoformat(), "to": (today - timedelta(days=2)).isoformat()},
+                   {"state": "solved"}, {"state": "no_followup"}):
+        d = client.get("/api/followups", params=params).json()
+        assert [i["call_id"] for i in d["unsolved"]] == [ids["own"], old_id], params      # high first
+    d = client.get("/api/followups", params={"priority": "low"}).json()
+    assert [i["call_id"] for i in d["unsolved"]] == [old_id]
+    assert d["counts"]["forms"] == 0                                 # counters unchanged by the section
+    login(client, "boss")
+    assert {i["call_id"] for i in client.get("/api/followups").json()["unsolved"]} == {ids["own"], old_id, ids["other"]}
+    assert [i["call_id"] for i in client.get("/api/followups", params={"agent": "104"}).json()["unsolved"]] == [ids["other"]]
+    login(client, "ali")                                             # solved: leaves the section
+    assert client.put(f"/api/calls/{ids['own']}/followup", json={"what_happened": "تم", "solved": True,
+                                                                  "priority": "high"}).status_code == 200
+    assert [i["call_id"] for i in client.get("/api/followups").json()["unsolved"]] == [old_id]
