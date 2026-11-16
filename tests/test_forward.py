@@ -540,3 +540,41 @@ def test_health_lists_forward_jobs_only_when_on(fs):
     now = datetime.now(timezone.utc)
     names = lambda on: {i.key for i in health.jobs(s, now, forward_on=on)}  # noqa: E731
     assert "job.forward_send" in names(True) and "job.forward_send" not in names(False)
+
+
+def test_failed_forward_with_notes_other_answers_go_in_a_note(fwd_env):
+    client, Session, ids, sends, on = fwd_env
+    switch_on(client)
+    login(client, "ali")
+    url = f"/api/calls/{ids['own']}/followup"
+    opts = client.get(url).json()["forward_options"]
+    t = datetime.now(timezone.utc) + timedelta(hours=3)
+    body = {"what_happened": "x", "solved": False, "priority": "low", "responsible_kind": "forward",
+            "forward_person_id": opts[0]["id"], "expected_at": t.isoformat()}
+    assert client.put(url, json=body).status_code == 200
+    r = client.post(url + "/notes", json={"round": 2, "what_happened": "y", "solved": False,
+                                          "responsible_kind": "forward", "expected_at": t.isoformat()})
+    assert r.status_code == 200, r.text
+    with Session() as s:
+        f = s.scalars(select(CallFollowup).where(CallFollowup.call_id == ids["own"])).one()
+        f.forward_status = "failed"
+        s.commit()
+    assert client.get(url).json()["step"] == "forward_failed"
+    r = client.put(url, json={"what_happened": "x", "solved": True, "priority": "low"})
+    assert r.status_code == 422 and "ملاحظة" in r.json()["detail"]
+    # the note closes it (the supervisor never got it)
+    r = client.post(url + "/notes", json={"round": 3, "what_happened": "حُلّت", "solved": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["step"] == "solved_after"
+
+
+def test_rate_limit_on_the_ticket_is_retried(fs):
+    s, path = fs
+    f = pending_form(s, path)
+
+    class Busy(FakeCs):
+        def create_ticket(self, *a):
+            raise CsUnavailable("HTTP 429", 429)
+    forward.send_pending(s, Busy())
+    s.refresh(f)
+    assert (f.forward_status, f.forward_error) == ("pending", forward.ERR_UNAVAILABLE)

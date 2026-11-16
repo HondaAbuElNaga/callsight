@@ -141,8 +141,11 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         if not staff(user) and c.agent_ext != user.ext:
             raise HTTPException(404, "no such call")       # a shared call of a colleague: not even confirmed
         form = s.scalars(select(CallFollowup).where(CallFollowup.call_id == c.id)).first()
-        if not fu.forward_failed(form) and \
-                s.scalar(select(CallFollowupNote.id).where(CallFollowupNote.call_id == c.id).limit(1)) is not None:
+        has_notes = s.scalar(select(CallFollowupNote.id).where(CallFollowupNote.call_id == c.id).limit(1)) is not None
+        if has_notes and fu.forward_failed(form) and (body.solved is not False or body.responsible_kind != "forward"):
+            # the notes decide the step: only another supervisor is picked in the form, the rest is a note
+            raise HTTPException(422, "بعد الملاحظات: اختر مشرفًا آخر هنا، أو اكتب ملاحظة للإجابات الأخرى")
+        if has_notes and not fu.forward_failed(form):
             raise HTTPException(409, "notes after a callback exist: the form can no longer change")
         why = may_edit(form, c, user, now)        # a late FIRST form is allowed (it counts as late)
         if why:

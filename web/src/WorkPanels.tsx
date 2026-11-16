@@ -99,7 +99,8 @@ function ProblemFields({ p, set, options, label, afterText, high, forwardOptions
   );
 }
 
-const NOTE_STEPS: string[] = ["note_needed", "waiting_solution", "solution_overdue", "forwarded", "forward_overdue"];
+const NOTE_STEPS: string[] = ["note_needed", "waiting_solution", "solution_overdue", "forwarded", "forward_overdue",
+  "forward_failed"];
 export const RESP_LABEL: Record<string, string> = { customer: "العميل", other_department: "قسم آخر", forward: "مشرف فرع" };
 
 /** Part 4: where the forwarded problem is (ticket made / still trying / refused by the other system). */

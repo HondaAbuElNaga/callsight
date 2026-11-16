@@ -324,10 +324,11 @@ system with "مشرف خدمة العملاء" rights (tickets are recorded unde
   - Labels say "مشرف الفرع" (not "المسؤول"): "عند مشرف الفرع", "تأخر عند مشرف الفرع", "ملاحظة لمشرف الفرع".
   - Once the ticket is made (`sent`), the first form is **locked for everyone** (the ticket already holds that text).
   - A failed send → step `forward_failed` "لم تُحوَّل – اختر من جديد" (needs action, in "تحتاج حل" first); the owning
-    agent may then edit the form whatever the deadline or notes, and choose again (another supervisor, the customer,
-    solved...). Failed = refused by the other system (400), 24 h of retries, or the ticket request got no clear answer
+    agent may then edit the form whatever the deadline, and choose again (another supervisor, the customer,
+    solved...). When notes exist, the form only takes another supervisor; every other answer is a note (the notes
+    decide the step). Failed = refused by the other system (400), 24 h of retries, or the ticket request got no clear answer
     (timeout / 5xx: the ticket may exist, so it is never re-sent by itself; the message says to check there first).
-    408 / 429 and lookup timeouts are retried.
+    408 / 429 (not processed there) and lookup timeouts are retried.
   - A forwarded form that also set a callback time shows the agent's callback steps first; the supervisor's lateness
     is counted from the times in D4, not from the step.
   - The health page lists `forward_send` / `forward_sync` while the link is on (a refused key shows there).

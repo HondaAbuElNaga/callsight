@@ -46,7 +46,8 @@ STEPS = ("required", "overdue", "no_followup", "solved_first", "waiting_callback
 NO_CB_STEPS = ("waiting_solution", "solution_overdue")
 # forwarded to a branch supervisor (part 4): with them until the expected solve time, then late with them
 FORWARD_STEPS = ("forwarded", "forward_overdue")
-NOTE_STEPS = ("note_needed", *NO_CB_STEPS, *FORWARD_STEPS)        # steps where a note may be added
+# forward_failed + notes: any answer other than another supervisor is written as a note (review D1)
+NOTE_STEPS = ("note_needed", *NO_CB_STEPS, *FORWARD_STEPS, "forward_failed")   # steps where a note may be added
 # the send failed (refused, or not sure it went through): the agent must pick again in the form (review D1)
 OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number", *NO_CB_STEPS,
               *FORWARD_STEPS, "forward_failed")   # list view "open"

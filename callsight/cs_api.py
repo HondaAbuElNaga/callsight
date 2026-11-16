@@ -29,7 +29,12 @@ class CsAuthError(CsError):
 
 
 class CsUnavailable(Exception):
-    """Network error, timeout or 5xx: try again later."""
+    """Network error, timeout, 5xx, 408 or 429: try again later. status = the HTTP code when there was one; 408 / 429
+    mean the request was NOT processed (safe to send again), the others may have been."""
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass(frozen=True)
@@ -75,7 +80,7 @@ class CsClient:
         except httpx.HTTPError as exc:
             raise CsUnavailable(type(exc).__name__) from None      # never the URL: no key in logs
         if r.status_code >= 500 or r.status_code in (408, 429):      # busy / too many requests: try later
-            raise CsUnavailable(f"HTTP {r.status_code}")
+            raise CsUnavailable(f"HTTP {r.status_code}", r.status_code)
         try:
             data = r.json()
         except ValueError:

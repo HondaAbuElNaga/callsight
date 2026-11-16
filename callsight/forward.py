@@ -235,8 +235,8 @@ def send_pending(s: Session, client: CsClient, now: datetime | None = None) -> d
             done["failed"] += 1
             s.commit()
             continue
-        except CsUnavailable:
-            if step == "ticket":                    # maybe made there: a retry could make a second ticket
+        except CsUnavailable as exc:
+            if step == "ticket" and exc.status not in (408, 429):   # maybe made there: a retry could double it
                 f.forward_status, f.forward_error = "failed", ERR_UNSURE
                 f.forward_tries += 1
                 done["failed"] += 1

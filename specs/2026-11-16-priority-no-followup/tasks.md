@@ -17,8 +17,14 @@
         requirement 12 in full (endpoints, auth, solved callback), user approves, tests first, build. Parts 1–3 can go
         live before part 4.
 - [~] D0. Approved 2026-11-16 ("approve"). Still waiting: user sends CS_API_KEY + CS_USER_GUID (privately, to the server).
-- [ ] D1. Tests first, then: forward_person table + sync, migration 0016, form kind "مشرف فرع" + drop-down + note,
+- [x] D1. Tests first, then: forward_person table + sync, migration 0016, form kind "مشرف فرع" + drop-down + note,
         send job with retry, steps forwarded / forward_overdue, no solve by agent. → 3-agent review.
+        → commits 80a3e04, 66fd728 + review round 2. Review: 14 findings (2 high, 5 medium, 7 low; 2 reported twice),
+        all confirmed: fixed (stale "sent" lock, failed forward unrecoverable → step forward_failed, duplicate ticket
+        after an unclear answer, 408/429, ticket answer checks, health page, "not sent yet" on lines, spec notes);
+        callback-first order kept as a recorded choice. Round 2 (bugs): 2 more (failed + notes: other answers via a
+        note; 429 on the ticket retried), fixed. Verify: 733 passed, 1 known .env failure, 9 skipped; web build OK;
+        migration 0016 up/down/up OK.
 - [ ] D2. Tests first, then: ticket polling + forward_event, ingest of supervisors' calls (team `forward`, hidden from
         team views), solved check (closedAt + last call rules), forward_solved / unconfirmed. → 3-agent review.
 - [ ] D3. Tests first, then: tracker step list, questions/answers both ways, AI summary added once, one-line view.
