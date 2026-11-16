@@ -326,6 +326,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                       <th>الموظف</th><th>نماذج بها مشكلة</th><th>حُلّت من أول مكالمة</th><th>نسبة الحل من أول مكالمة</th>
                       <th>حُلّت بعد المتابعة</th><th>متوسط جولات المعاودة</th><th>ما زالت مفتوحة</th>
                       <th>ملاحظات بعد المعاودة</th><th>في وقتها</th><th>نسبة الملاحظات</th>
+                      <th>لا تحتاج متابعة</th><th>نسبتها</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -337,6 +338,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                         <td className="num">{v.solved_after}</td><td className="num">{v.avg_rounds == null ? "–" : v.avg_rounds.toFixed(1)}</td>
                         <td className="num">{v.open}</td>
                         <td className="num">{v.notes_due}</td><td className="num">{v.notes_on_time}</td><td className="num">{pct(v.notes_rate)}</td>
+                        <td className="num">{v.no_followup}</td><td className="num">{pct(v.no_followup_rate)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -346,6 +348,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                 تُحتسب من {data.followup.since ?? data.followup.start}. النموذج في وقته = قبل 23:00 يوم المكالمة (أو خلال ساعتين من نهاية مكالمة انتهت بعد 21:00). معاودة الاتصال في وقتها = خلال 60 دقيقة من الوقت المحدد، من أي موظف في الفريق.
                 المعاودات تُحتسب في كل جولة. الملاحظة بعد المعاودة في وقتها = قبل 23:00 يوم مكالمة المعاودة (أو خلال ساعتين منها).
                 «نماذج بها مشكلة» = النماذج المعبّأة عدا «لا تحتاج متابعة». «ما زالت مفتوحة» = بانتظار معاودة أو معاودة فائتة أو تحتاج ملاحظة.
+                «لا تحتاج متابعة» = نماذج عُلّمت بلا متابعة، و«نسبتها» = حصتها من كل النماذج المعبّأة (نسبة عالية تستحق المراجعة).
                 «عاد العميل بعد الحل» للعرض فقط.
               </p>
             </section>

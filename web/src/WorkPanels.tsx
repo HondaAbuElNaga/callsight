@@ -1,12 +1,12 @@
 // Call-panel boxes of the agent-supervisor spec: follow-up form, agent summary, share with a note, delete content.
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   api, Refused, Unauthorized,
   type AgentSummary, type CallShares, type FollowupIn, type FollowupView, type HistoryEntry, type Me, type NoteIn,
   type Person, type Share,
 } from "./api";
 import {
-  CALLBACK_LABEL, STEP_CLASS, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, fromRiyadhInput, ringText, toRiyadhInput,
+  CALLBACK_LABEL, PRIORITIES, PRIORITY_CLASS, PRIORITY_LABEL, STEP_CLASS, type Priority, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, fromRiyadhInput, ringText, toRiyadhInput,
 } from "./format";
 
 export const CB_CLASS: Record<string, string> = { on_time: "ok", waiting: "off", late: "warn", missed: "bad", no_number: "off" };
@@ -29,29 +29,39 @@ const maxIn = () => toRiyadhInput(new Date(Date.now() + MAX_SOLVE_MS).toISOStrin
 interface Problem { what: string; solved: Solved; resp: string; expected: string; callback: string }
 const EMPTY: Problem = { what: "", solved: "", resp: "", expected: "", callback: "" };
 
-/** Check the fields; returns the body part or an error text. */
-function problemBody(p: Problem, keepExpected = ""): { body?: Omit<FollowupIn, "no_followup">; error?: string } {
+const MAX_SOLVE_HIGH_MS = 24 * 3600_000;    // ... within 1 day when the priority is high
+
+/** Check the fields; returns the body part or an error text. `priority`: the first form's priority (sets the solve
+ * limit); `askPriority`: this is the first form, so the priority is required and sent with it. */
+function problemBody(p: Problem, keepExpected = "", priority = "", askPriority = false
+): { body?: Omit<FollowupIn, "no_followup">; error?: string } {
   if (!p.what.trim()) return { error: "اكتب ما حدث في المكالمة" };
+  if (askPriority && !priority) return { error: "اختر الأولوية" };
   if (!p.solved) return { error: "اختر: هل حُلّت المشكلة؟" };
-  if (p.solved === "yes") return { body: { what_happened: p.what.trim(), solved: true } };
+  const prio = askPriority ? { priority } : {};
+  if (p.solved === "yes") return { body: { what_happened: p.what.trim(), solved: true, ...prio } };
   if (!p.resp || !p.expected) return { error: "حدد المسؤول ووقت الحل المتوقع (خلال يومين)" };
   const left = (v: string) => new Date(fromRiyadhInput(v)).getTime() - Date.now();
+  if (priority === "high" && left(p.expected) > MAX_SOLVE_HIGH_MS)        // the server checks this even unchanged
+    return { error: "أقصى وقت لحل مشكلة عالية الأولوية يوم واحد" };
   if (p.expected !== keepExpected && left(p.expected) > MAX_SOLVE_MS) return { error: "أقصى وقت لحل المشكلة يومان" };
   if (p.callback && left(p.callback) <= 0) return { error: "وقت معاودة الاتصال يجب أن يكون في المستقبل" };
   if (p.callback && left(p.callback) > MAX_SOLVE_MS) return { error: "وقت معاودة الاتصال خلال يومين على الأكثر" };
   const [kind, uid] = p.resp.split(":");
-  return { body: { what_happened: p.what.trim(), solved: false, responsible_kind: kind,
+  return { body: { what_happened: p.what.trim(), solved: false, ...prio, responsible_kind: kind,
     responsible_user_id: uid ? Number(uid) : null, expected_at: fromRiyadhInput(p.expected),
     ...(p.callback ? { callback_at: fromRiyadhInput(p.callback) } : {}) } };
 }
 
-function ProblemFields({ p, set, options, label }:
-  { p: Problem; set: (p: Problem) => void; options: Person[]; label: string }) {
+function ProblemFields({ p, set, options, label, afterText, high }:
+  { p: Problem; set: (p: Problem) => void; options: Person[]; label: string; afterText?: ReactNode; high?: boolean }) {
+  const max = high ? toRiyadhInput(new Date(Date.now() + MAX_SOLVE_HIGH_MS).toISOString()) : maxIn();
   return (
     <>
       <label>{label}
         <textarea value={p.what} maxLength={500} rows={3} onChange={(e) => set({ ...p, what: e.target.value })} />
       </label>
+      {afterText}
       <div className="row">
         هل حُلّت المشكلة؟
         <label><input type="radio" checked={p.solved === "yes"} onChange={() => set({ ...p, solved: "yes" })} /> نعم</label>
@@ -67,7 +77,7 @@ function ProblemFields({ p, set, options, label }:
               <option value="other_department">قسم آخر</option>
             </select>
           </label>
-          <label>وقت الحل المتوقع (خلال يومين على الأكثر) <input type="datetime-local" value={p.expected} min={nowIn()} max={maxIn()} onChange={(e) => set({ ...p, expected: e.target.value })} /></label>
+          <label>وقت الحل المتوقع ({high ? "خلال يوم واحد: أولوية عالية" : "خلال يومين على الأكثر"}) <input type="datetime-local" value={p.expected} min={nowIn()} max={max} onChange={(e) => set({ ...p, expected: e.target.value })} /></label>
           <label>وقت معاودة الاتصال بالعميل (اختياري) <input type="datetime-local" value={p.callback} min={nowIn()} max={maxIn()} onChange={(e) => set({ ...p, callback: e.target.value })} /></label>
         </>
       )}
@@ -76,7 +86,7 @@ function ProblemFields({ p, set, options, label }:
 }
 
 const NOTE_STEPS: string[] = ["note_needed", "waiting_solution", "solution_overdue"];
-const RESP_LABEL: Record<string, string> = { customer: "العميل", other_department: "قسم آخر" };
+export const RESP_LABEL: Record<string, string> = { customer: "العميل", other_department: "قسم آخر" };
 
 function History({ items }: { items: HistoryEntry[] }) {
   if (items.length === 0) return null;
@@ -85,6 +95,7 @@ function History({ items }: { items: HistoryEntry[] }) {
       {items.map((h) => (
         <li key={h.round}>
           <b>{h.round === 1 ? "النموذج" : `ملاحظة متابعة ${h.round - 1}`}</b>
+          {h.priority && <> <PriorityTag p={h.priority} /></>}
           <span className="muted small"> · {formatDateTime(h.at)}{h.by ? ` · ${h.by}` : ""}</span>
           {h.no_followup ? <p>لا تحتاج متابعة.</p> : <>
             <p>{h.what_happened}</p>
@@ -107,6 +118,11 @@ function History({ items }: { items: HistoryEntry[] }) {
   );
 }
 
+export function PriorityTag({ p }: { p: Priority | null | undefined }) {
+  if (!p) return null;
+  return <span className={`state prio ${PRIORITY_CLASS[p]}`} title="الأولوية">{PRIORITY_LABEL[p]}</span>;
+}
+
 export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: Me; onExpired: () => void }) {
   // supervisors/admins only watch: the agent fills the form and the notes (no form, no note box, no "your task")
   const staff = me.role === "admin" || me.role === "supervisor";
@@ -115,14 +131,16 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);          // no double save (double click)
   const [form, setForm] = useState<Problem>(EMPTY);
+  const [prio, setPrio] = useState("");             // first form only (set once)
   const [note, setNote] = useState<Problem>(EMPTY);
   const fail = useFail(onExpired, setError);
 
   const load = (v: FollowupView) => {
     setView(v);
     setNote(EMPTY);
-    if (!v.needed || !v.form) return;
+    if (!v.needed || !v.form) { setPrio(""); return; }
     const f = v.form;
+    setPrio(f.priority ?? "");
     setForm({ what: f.what_happened ?? "", solved: f.no_followup || f.solved === null ? "" : f.solved ? "yes" : "no",
       resp: f.responsible_kind === "user" ? `user:${f.responsible_user_id}` : f.responsible_kind ?? "",
       expected: toRiyadhInput(f.expected_at), callback: toRiyadhInput(f.callback_at) });
@@ -137,12 +155,12 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
   };
   const saveForm = (body: FollowupIn) => run(() => api.saveFollowup(callId, body), "تم حفظ النموذج.");
   const submitForm = () => {
-    const r = problemBody(form, toRiyadhInput(view.form?.expected_at));   // an unchanged old time stays valid
+    const r = problemBody(form, toRiyadhInput(view.form?.expected_at), prio, true);   // unchanged old time stays valid
     if (r.error) { setError(r.error); return; }
     saveForm({ no_followup: false, ...r.body });
   };
   const submitNote = () => {
-    const r = problemBody(note);
+    const r = problemBody(note, "", view.form?.priority ?? "");     // the first form's priority sets the limit
     if (r.error) { setError(r.error); return; }
     run(() => api.addNote(callId, { ...(r.body as Omit<NoteIn, "round">), round: view.round + 1 }), "تم حفظ الملاحظة.");
   };
@@ -174,7 +192,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
           <legend>{view.step === "note_needed"
             ? `ملاحظة بعد مكالمة المعاودة${view.callback?.by_ext ? ` (اتصل ${view.callback.by_ext}${view.callback.answered ? "، ردّ العميل" : "، لم يرد"})` : ""}`
             : "تحديث المتابعة"}</legend>
-          <ProblemFields p={note} set={setNote} options={view.options}
+          <ProblemFields p={note} set={setNote} options={view.options} high={view.form?.priority === "high"}
             label={view.step === "note_needed" ? "ماذا حدث في مكالمة المعاودة؟" : "ماذا حدث في المشكلة؟"} />
           <button type="button" className="primary" onClick={submitNote}>حفظ الملاحظة</button>
         </fieldset>
@@ -187,7 +205,13 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
         <fieldset disabled={ro} className="form">
           {view.form && <legend>تعديل النموذج</legend>}
           {!view.form && <button type="button" onClick={() => saveForm({ no_followup: true })}>لا تحتاج متابعة (رقم خطأ، استفسار انتهى…)</button>}
-          <ProblemFields p={form} set={setForm} options={view.options} label="ماذا حدث؟" />
+          <ProblemFields p={form} set={setForm} options={view.options} label="ماذا حدث؟" high={prio === "high"}
+            afterText={<label>الأولوية
+              <select value={prio} required onChange={(e) => setPrio(e.target.value)}>
+                <option value="">اختر…</option>
+                {PRIORITIES.map((k) => <option key={k} value={k}>{PRIORITY_LABEL[k]}</option>)}
+              </select>
+            </label>} />
           <button type="button" className="primary" onClick={submitForm}>حفظ</button>
         </fieldset>
       </>}

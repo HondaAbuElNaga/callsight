@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import and_, exists, func, or_, select, true
+from sqlalchemy import and_, case, exists, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -29,6 +29,9 @@ DAY_END_HOUR = 23
 LATE_CALL_EXTRA = timedelta(hours=2)
 MAX_CALLBACK_DAYS = 2         # callback (optional) within 2 days
 MAX_SOLVE = timedelta(days=2)  # a problem not solved must have an expected solve time within 2 days
+MAX_SOLVE_HIGH = timedelta(days=1)   # ... within 1 day when the priority is high (spec 2026-11-16, requirement 14)
+# spec 2026-11-16-priority-no-followup: fixed English codes (another system reads them), high -> low
+PRIORITIES = {"high": "عالية", "medium": "متوسطة", "low": "منخفضة"}
 CAME_BACK = timedelta(hours=72)
 SETTING_START = "followup_start"
 SETTING_KPI = "followup_kpi_since"
@@ -319,6 +322,7 @@ class Row:
             cb = self.cb_of_round(rnd) if wants_cb else None
             out.append({
                 "round": rnd, "what_happened": e.what_happened, "solved": e.solved, "no_followup": bool(nofu),
+                **priority_fields(e.priority if rnd == 1 else None),       # set once, in the first form
                 "responsible_kind": e.responsible_kind, "responsible_user_id": e.responsible_user_id,
                 "responsible": users.get(e.responsible_user_id or -1),
                 "expected_at": e.expected_at.isoformat() if e.expected_at else None,
@@ -367,8 +371,13 @@ class Row:
         return out
 
 
+def priority_fields(code: str | None) -> dict:
+    return {"priority": code, "priority_ar": PRIORITIES.get(code or "")}
+
+
 def form_dict(f: CallFollowup) -> dict:
     return {"no_followup": f.no_followup, "what_happened": f.what_happened, "solved": f.solved,
+            **priority_fields(f.priority),
             "responsible_kind": f.responsible_kind, "responsible_user_id": f.responsible_user_id,
             "expected_at": f.expected_at.isoformat() if f.expected_at else None,
             "callback_at": f.callback_at.isoformat() if f.callback_at else None,
@@ -466,6 +475,40 @@ def one(s: Session, call: Call, exts, start: date | None) -> Row | None:
     return got[0] if got else None
 
 
+# "تحتاج حل" (spec 2026-11-16-priority-no-followup, requirement 11): open problems, whatever من/إلى say
+PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}          # no priority (old form) comes last
+UNSOLVED_URGENCY = {"callback_missed": 0, "solution_overdue": 1, "note_needed": 2, "waiting_callback": 3,
+                    "waiting_solution": 3, "no_number": 4}
+
+
+def unsolved(s: Session, exts, start: date, now: datetime, *, callers, priority: str | None = None,
+             limit: int = 500) -> tuple[list[Row], bool]:
+    """Every needed call since followup_start (no date limit) whose latest entry (form, or the last note) says not
+    solved, for these owner extensions. A small SQL pre-filter finds the ids, then rows() builds them, so the steps
+    are exactly the main list's. Order: priority, then the most urgent step, then the oldest call.
+    Bounded (review 2026-11-16): SQL keeps at most 2 x limit ids (by priority, oldest first), so a long history never
+    makes the page slow; returns (the first `limit` rows, truncated)."""
+    if not exts:
+        return [], False
+    last_note = (select(CallFollowupNote.solved).where(CallFollowupNote.call_id == CallFollowup.call_id)
+                 .order_by(CallFollowupNote.round.desc()).limit(1).correlate(CallFollowup).scalar_subquery())
+    rank = case(*[(CallFollowup.priority == k, v) for k, v in PRIORITY_ORDER.items()], else_=len(PRIORITY_ORDER))
+    stmt = (select(Call.id).join(CallFollowup, CallFollowup.call_id == Call.id)
+            .where(*needed_conditions(exts, start), CallFollowup.no_followup.is_(False),
+                   func.coalesce(last_note, CallFollowup.solved).is_(False))
+            .order_by(rank, Call.start_time, Call.id).limit(2 * limit + 1))
+    if priority:
+        stmt = stmt.where(CallFollowup.priority == priority)
+    ids = list(s.scalars(stmt))
+    if not ids:
+        return [], False
+    got = [r for r in rows(s, exts, start, day_bounds(start)[0], now + timedelta(days=1), ids[:2 * limit],
+                           callers=callers) if r.step(now) in OPEN_STEPS]
+    got.sort(key=lambda r: (PRIORITY_ORDER.get(r.form.priority or "", 3),
+                            UNSOLVED_URGENCY.get(r.step(now), 9), r.call.start_time, r.call.id))
+    return got[:limit], len(got) > limit or len(ids) > 2 * limit
+
+
 def responsible_options(s: Session) -> list[dict]:
     users = s.scalars(select(AppUser).where(AppUser.active.is_(True), AppUser.role.in_(("supervisor", "agent")))
                       .order_by(AppUser.role.desc(), AppUser.username))
@@ -479,7 +522,9 @@ def _empty() -> dict:
             "callbacks_rate": None, "came_back": 0,
             # follow-up stages spec
             "answered_forms": 0, "solved_first": 0, "first_rate": None, "solved_after": 0, "open": 0,
-            "rounds_to_solve": 0, "avg_rounds": None, "notes_due": 0, "notes_on_time": 0, "notes_rate": None}
+            "rounds_to_solve": 0, "avg_rounds": None, "notes_due": 0, "notes_on_time": 0, "notes_rate": None,
+            # spec 2026-11-16-priority-no-followup (show-only): "no follow-up" forms and their share of filled forms
+            "no_followup": 0, "no_followup_rate": None}
 
 
 def _rate(a: int, b: int) -> float | None:
@@ -520,6 +565,7 @@ def kpi(s: Session, lo: datetime, hi: datetime, exts: list[str], now: datetime |
                     b["notes_on_time"] += st_ == "on_time"
             if r.form is not None and not r.form.no_followup:
                 b["answered_forms"] += 1
+            b["no_followup"] += step == "no_followup"
             b["solved_first"] += step == "solved_first"
             if step == "solved_after":
                 b["solved_after"] += 1
@@ -532,6 +578,7 @@ def kpi(s: Session, lo: datetime, hi: datetime, exts: list[str], now: datetime |
         b["first_rate"] = _rate(b["solved_first"], b["answered_forms"])
         b["avg_rounds"] = _rate(b["rounds_to_solve"], b["solved_after"])
         b["notes_rate"] = _rate(b["notes_on_time"], b["notes_due"])
+        b["no_followup_rate"] = _rate(b["no_followup"], b["no_followup"] + b["answered_forms"])
     return out
 
 
@@ -548,7 +595,7 @@ def add_note(s: Session, call: Call, data: dict, user: AppUser, exts, now: datet
     rnd = len(row.notes) + 2                              # form = round 1, the note opens the next round
     if data.get("round") != rnd:
         raise NoteConflict("تغيّرت حالة المتابعة، أعد تحميل الصفحة")
-    clean = validate(s, {**data, "no_followup": False}, call, now)
+    clean = validate(s, {**data, "no_followup": False}, call, now, priority=row.form.priority)
     last = row.notes[-1] if row.notes else row.form
     cb = row.cb_of_round(rnd - 1) if last.callback_at is not None else None     # no callback asked: none to report
     n = CallFollowupNote(call_id=call.id, round=rnd, cb_call_id=cb.id if cb else None,
@@ -575,22 +622,34 @@ class FormError(ValueError):
     pass
 
 
+FORM = object()      # validate(priority=FORM): the first form, whose own `priority` field is checked and kept
+
+
 def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: datetime | None = None,
-             real_now: datetime | None = None) -> dict:
-    """Server-side checks of a submitted form; returns the clean fields."""
+             real_now: datetime | None = None, *, priority=FORM) -> dict:
+    """Server-side checks of a submitted form (priority=FORM) or note (priority = the first form's priority, which
+    sets the solve-time limit); returns the clean fields. A note's clean fields never carry a priority."""
+    is_form = priority is FORM
     if data.get("no_followup"):
-        return {"no_followup": True, "what_happened": None, "solved": None, "responsible_kind": None,
-                "responsible_user_id": None, "expected_at": None, "callback_at": None}
+        out = {"no_followup": True, "what_happened": None, "solved": None, "responsible_kind": None,
+               "responsible_user_id": None, "expected_at": None, "callback_at": None}
+        return {**out, "priority": None} if is_form else out          # nothing to rank (spec decision)
     text = (data.get("what_happened") or "").strip()
     if not text:
         raise FormError("اكتب ما حدث في المكالمة")
     if len(text) > 500:
         raise FormError("النص أطول من 500 حرف")
+    if is_form:
+        priority = data.get("priority")
+        if priority not in PRIORITIES:
+            raise FormError("اختر الأولوية")
     solved = data.get("solved")
     if solved not in (True, False):
         raise FormError("اختر: هل حُلّت المشكلة؟")
     clean = {"no_followup": False, "what_happened": text, "solved": solved, "responsible_kind": None,
              "responsible_user_id": None, "expected_at": None, "callback_at": None}
+    if is_form:
+        clean["priority"] = priority
     if solved:
         return clean
     kind = data.get("responsible_kind")
@@ -610,11 +669,14 @@ def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: d
     if expected.tzinfo is None or (callback is not None and callback.tzinfo is None):
         raise FormError("الوقت يحتاج المنطقة الزمنية")
     t_now = real_now or now                      # _validate_keep moves `now` back for the callback only
-    if expected != keep_expected:                # an unchanged old time stays valid when a form is edited
-        if expected <= t_now:
-            raise FormError("وقت الحل المتوقع يجب أن يكون في المستقبل")
-        if expected > t_now + MAX_SOLVE:
-            raise FormError("أقصى وقت لحل المشكلة يومان")
+    if expected != keep_expected and expected <= t_now:   # an unchanged old time may be in the past by now
+        raise FormError("وقت الحل المتوقع يجب أن يكون في المستقبل")
+    # high: checked even for an unchanged time (a form edited to high must fit 1 day from now). The 2-day limit is
+    # not re-checked on an unchanged time: forms saved before that rule may hold a later time (review 2026-11-16)
+    if priority == "high" and expected > t_now + MAX_SOLVE_HIGH:
+        raise FormError("أقصى وقت لحل مشكلة عالية الأولوية يوم واحد")
+    if expected != keep_expected and expected > t_now + MAX_SOLVE:
+        raise FormError("أقصى وقت لحل المشكلة يومان")
     if callback is not None:                     # optional
         if callback <= now:
             raise FormError("وقت معاودة الاتصال يجب أن يكون في المستقبل")

@@ -22,7 +22,7 @@ from .calls import visible_call, visible_scope
 MAX_LIST_DAYS = 62
 LIST_LIMIT = 500
 STATES = ("", "action", "forms", "notes", "callbacks_today", "missed", "open", "solved", "todo", "callbacks",
-          "open_callbacks", "came_back")
+          "open_callbacks", "came_back", "no_followup")
 ACTION_LOOKBACK_DAYS = 62      # unfinished work before من is counted apart ("older_action"), never forgotten
 # most urgent first in "needs action"
 URGENCY = {"callback_missed": 0, "solution_overdue": 1, "note_needed": 2, "overdue": 3, "waiting_callback": 4,
@@ -34,6 +34,7 @@ class FollowupIn(BaseModel):
     no_followup: StrictBool = False
     what_happened: str | None = Field(default=None, max_length=500)
     solved: StrictBool | None = None
+    priority: str | None = Field(default=None, max_length=10)     # high / medium / low (first form only)
     responsible_kind: str | None = Field(default=None, max_length=20)
     responsible_user_id: StrictInt | None = None
     expected_at: datetime | None = None
@@ -202,7 +203,8 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         return {"forms": sum(i["step"] in ("required", "overdue") for i in items),
                 "notes": sum(i["step"] in ("note_needed", "solution_overdue") for i in items),
                 "callbacks_today": sum(today_cb(i, today) for i in items),
-                "missed": sum(i["step"] == "callback_missed" for i in items)}
+                "missed": sum(i["step"] == "callback_missed" for i in items),
+                "no_followup": sum(i["step"] == "no_followup" for i in items)}
 
     @app.get("/api/followups")
     def list_followups(
@@ -211,6 +213,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         date_to: Annotated[date | None, Query(alias="to")] = None,
         agent: Annotated[str | None, Query(pattern=r"^\d{1,6}$")] = None,
         state: Annotated[str, Query()] = "action",
+        priority: Annotated[str | None, Query(pattern=r"^(high|medium|low)$")] = None,
     ) -> dict:
         if state not in STATES:
             raise HTTPException(422, "unknown state")
@@ -222,7 +225,8 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         st = fu.settings(s)
         out = {"settings": {k: v.isoformat() if v else None for k, v in st.items()}, "items": [],
                "linked": staff(user) or bool(user.ext and user.ext in team_exts()),
-               "counts": {"forms": 0, "notes": 0, "callbacks_today": 0, "missed": 0}, "older_action": 0}
+               "counts": {"forms": 0, "notes": 0, "callbacks_today": 0, "missed": 0, "no_followup": 0},
+               "older_action": 0, "unsolved": []}
         start = st[fu.SETTING_START]
         if start is None:
             return out
@@ -250,7 +254,9 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             items = [i for i in recent if lo <= datetime.fromisoformat(i["start_time"]) < hi]
         else:
             items = load(d_from, d_to)
-        out["counts"] = counts(items, today)
+        out["counts"] = counts(items, today)      # counters count every priority (spec requirement 13)
+        if priority and state != "no_followup":   # those forms have no priority: the filter would empty them
+            items = [i for i in items if i["form"] and i["form"]["priority"] == priority]
         out["older_action"] = sum(1 for i in recent if datetime.fromisoformat(i["start_time"]) < lo
                                   and action_due(i, today))
         if state == "action":
@@ -276,14 +282,22 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             items = [i for i in items if i["callback"] and i["callback"]["status"] in ("waiting", "missed")]
         elif state == "came_back":
             items = [i for i in items if i["came_back"]]
+        elif state == "no_followup":
+            items = [i for i in items if i["step"] == "no_followup"]
         out["truncated"] = len(items) > LIST_LIMIT
         items = items[:LIST_LIMIT]
+        # "تحتاج حل" (requirement 11): every open problem of these agents, never limited by من/إلى or the state
+        # filter; only "who" (agent / الموظف filter) and the priority filter apply
+        got, out["unsolved_truncated"] = fu.unsolved(s, exts, start, now, callers=team_exts(), priority=priority,
+                                                      limit=LIST_LIMIT)
+        unsolved = [r.as_dict(now, names, users) for r in got]
+        shown = {i["call_id"] for i in items} | {i["call_id"] for i in unsolved}
         mine = dict(s.execute(select(CallPrivateNote.call_id, CallPrivateNote.text).where(
-            CallPrivateNote.user_id == user.id, CallPrivateNote.call_id.in_([i["call_id"] for i in items]))).all()
-        ) if items else {}
-        for i in items:
+            CallPrivateNote.user_id == user.id, CallPrivateNote.call_id.in_(shown))).all()) if shown else {}
+        for i in items + unsolved:
             i["my_note"] = mine.get(i["call_id"])      # the caller's own note only (private-note spec)
         out["items"] = items
+        out["unsolved"] = unsolved
         return out
 
     # ---------- agent summary (decision 1: summary only, never the estimate / reason / flags) ----------

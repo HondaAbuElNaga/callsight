@@ -2,7 +2,12 @@
 
 > Status: `[x]` done · `[~]` in progress · `[ ]` not started
 
-**Current position (2026-11-15, night) — START HERE in a new session:**
+**Current position (2026-11-16) — START HERE in a new session:**
+- Priority + "لا تحتاج متابعة" visible + "تحتاج حل" section (parts 1–3 of
+  [spec](../specs/2026-11-16-priority-no-followup/spec.md)) are **built and reviewed on branch
+  `spec/2026-11-16-priority-no-followup`, NOT pushed** (push to `main` = live; waits for the user's "ok push"; migration
+  0015 runs on deploy). Part 4 (forward a problem to a person in another system) waits for that system's API (user
+  sends it 2026-11-17).
 - AWS main server (Frankfurt) live: https://calls.mohanadyehia.com, fixed address 63.184.90.120, accounts `admin` and
   `supervisor` (ext 114). Pushing to `main` on GitHub (private repo `HondaAbuElNaga/callsight`) updates it automatically.
 - PBX link works through `sstli.ras.yeastar.com`: calls every 2 minutes, recordings download. Employee list loaded
@@ -147,3 +152,8 @@ the HR/legal OK.
   تم الاتصال – أضف ملاحظة → حُلّت بعد المتابعة or the next round; stage KPIs (first-call solve %, solved after
   follow-up, open, average rounds, notes on time %); agent page: needs-action view (62 days), counters, urgent
   rows, refresh 60 s, copy/call number, auto-seen notes, form first. Live 2026-11-15 (PR #2) (idea: user)
+- [~] Priority + no-follow-up visible + "تحتاج حل" ([spec](../specs/2026-11-16-priority-no-followup/spec.md)):
+  parts 1–3 built (required priority عالية/متوسطة/منخفضة in the first form, 1 day to solve when عالية, priority
+  filter + tag; "لا تحتاج متابعة" counter/filter + KPI/PDF columns; "تحتاج حل" side section whatever the dates;
+  supervisor one-line view), 3-agent review per part, 705 tests — not pushed yet. Part 4 (forward to a person in
+  another system, tracking view, forward-people KPI) waits for the API (idea: user)
