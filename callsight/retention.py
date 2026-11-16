@@ -68,7 +68,7 @@ def select_calls(session: Session, days: int, now: datetime) -> list[Call]:
     """Calls older than `days` that still hold personal content (a recording that is not deleted yet)."""
     cutoff = now - timedelta(days=days)
     return list(session.scalars(select(Call).where(Call.start_time < cutoff,
-                                                   Call.recording_status.in_(("ok", "pending", "error", "missing")))
+                                                   Call.recording_status.in_(("ok", "pending", "error", "missing", "held")))
                                 .order_by(Call.id)))
 
 

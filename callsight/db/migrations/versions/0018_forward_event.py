@@ -2,16 +2,16 @@
 forward_event (the ticket's timeline: events, questions, replies; personal data, erased with the call's content) and
 forward_closed_at / forward_solution / forward_checked_at on call_followup. Additive only.
 
-Revision ID: 0017
-Revises: 0016
+Revision ID: 0018
+Revises: 0017
 Create Date: 2026-11-16
 """
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0017'
-down_revision = '0016'
+revision = '0018'
+down_revision = '0017'
 branch_labels = None
 depends_on = None
 

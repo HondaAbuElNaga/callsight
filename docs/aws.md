@@ -111,7 +111,7 @@ ssh cs-gpu "sudo bash /opt/callsight/deploy/aws/install-gpu.sh"          # leave
 # .env: copy deploy/aws/env.gpu.example to /opt/callsight/.env, fill it, chmod 600
 ssh cs-gpu "cd /opt/callsight && C='sudo docker compose -f deploy/aws/compose.gpu.yml --env-file .env' \
   && \$C build \
-  && \$C --profile setup run --rm model-download openai/whisper-large-v3 --revision 06f233fe06e710322aca913c1bc4249a0d71fce1 \
+  && \$C --profile setup run --rm model-download openai/whisper-large-v3 --revision 06f233fe06e710322aca913c1bc4249a0d71fce1 --include '*.json' '*.txt' model.safetensors \
   && \$C --profile setup run --rm ollama-pull qwen2.5:7b \
   && \$C up -d"
 ssh cs-main "sudo bash /opt/callsight/deploy/aws/setup-internet.sh off"

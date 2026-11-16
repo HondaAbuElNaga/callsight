@@ -1,0 +1,132 @@
+# Set up and look after the AWS GPU server (docs/aws.md section 4), started by hand: Actions -> GPU setup.
+# The PC cannot reach AWS over SSH, so this runs on the runner installed ON the main server, which reaches the
+# GPU server over the private network (port 22 of the GPU server is open only from the main server).
+# Order of the first setup: install-key -> prepare -> build-models -> internet-off -> start-date -> finish.
+# install-key needs the repository secret GPU_SSH_KEY (the private setup key) for one run; delete it afterwards.
+name: GPU setup
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: What to do
+        type: choice
+        options:
+          - install-key
+          - prepare
+          - build-models
+          - internet-off
+          - status
+          - start-date
+          - finish
+          - main-status
+          - gpu-cmd
+      value:
+        description: "start-date: YYYY-MM-DD  |  gpu-cmd: one command run on the GPU server"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpu-setup
+  cancel-in-progress: false
+
+jobs:
+  task:
+    runs-on: [self-hosted, callsight-main]
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the task
+        env:
+          TASK: ${{ inputs.task }}
+          VALUE: ${{ inputs.value }}
+          GPU_IP: 10.20.12.163
+          GPU_SSH_KEY: ${{ secrets.GPU_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          M=/opt/callsight
+          G=(ssh cs-gpu)
+          GC='cd /opt/callsight && sudo docker compose -f deploy/aws/compose.gpu.yml --env-file .env'
+          get() { grep -E "^$1=" "$M/.env" | tail -1 | cut -d= -f2- | sed -E 's/[[:space:]]+#.*$//' || true; }
+          date_ok() { [[ "$VALUE" =~ ^20[0-9]{2}-[0-9]{2}-[0-9]{2}$ ]] || { echo "value must be YYYY-MM-DD" >&2; exit 1; }; }
+
+          case "$TASK" in
+            install-key)
+              [ -n "$GPU_SSH_KEY" ] || { echo "secret GPU_SSH_KEY is missing" >&2; exit 1; }
+              install -d -m 700 "$HOME/.ssh"
+              printf '%s\n' "$GPU_SSH_KEY" | tr -d '\r' > "$HOME/.ssh/callsight_gpu"
+              chmod 600 "$HOME/.ssh/callsight_gpu"
+              if ! grep -q '^Host cs-gpu$' "$HOME/.ssh/config" 2>/dev/null; then
+                printf 'Host cs-gpu\n  HostName %s\n  User ubuntu\n  IdentityFile ~/.ssh/callsight_gpu\n  IdentitiesOnly yes\n  StrictHostKeyChecking accept-new\n  ServerAliveInterval 30\n' \
+                  "$GPU_IP" >> "$HOME/.ssh/config"
+                chmod 600 "$HOME/.ssh/config"
+              fi
+              "${G[@]}" 'hostname; nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader' ;;
+
+            prepare)
+              sudo bash "$M/deploy/aws/setup-internet.sh" on
+              "${G[@]}" 'sudo install -d -o ubuntu -g ubuntu /opt/callsight'
+              git archive HEAD | "${G[@]}" 'tar -x -C /opt/callsight'
+              "${G[@]}" 'sudo bash /opt/callsight/deploy/aws/install-gpu.sh'
+              {
+                echo "MAIN_IP=10.20.1.10"
+                echo "POSTGRES_PASSWORD=$(get POSTGRES_PASSWORD)"
+                echo "REDIS_PASSWORD=$(get REDIS_PASSWORD)"
+                for k in ASR_START_DATE ASR_MODEL ASR_MIN_TALK ASR_MAX_SECONDS ASR_BATCH ASR_IDLE_UNLOAD_S NLP_ENABLED LLM_MODEL LLM_NUM_CTX; do
+                  v=$(get "$k")
+                  if [ -n "$v" ]; then echo "$k=$v"; fi
+                done
+              } | "${G[@]}" 'umask 077 && cat > /opt/callsight/.env.new && mv /opt/callsight/.env.new /opt/callsight/.env'
+              "${G[@]}" 'cut -d= -f1 /opt/callsight/.env | tr "\n" " "; echo' ;;
+
+            build-models)
+              sudo bash "$M/deploy/aws/setup-internet.sh" on
+              # Only the fp16 safetensors + small files: the repo also holds flax/fp32/.bin copies (~21 GB more),
+              # which filled the 100 GB disk on the first try. "up -d" builds only images that are missing.
+              "${G[@]}" "$GC --profile setup run --rm model-download openai/whisper-large-v3 \
+                  --revision 06f233fe06e710322aca913c1bc4249a0d71fce1 --include '*.json' '*.txt' model.safetensors \
+                && $GC --profile setup run --rm ollama-pull qwen2.5:7b \
+                && $GC up -d && $GC ps && sudo docker builder prune -af >/dev/null && df -h /" ;;
+
+            internet-off)
+              sudo bash "$M/deploy/aws/setup-internet.sh" off
+              if "${G[@]}" 'curl -m 8 -sI https://example.com >/dev/null'; then
+                echo "the GPU server still reaches the internet" >&2; exit 1
+              fi
+              echo "no internet on the GPU server: correct" ;;
+
+            status)
+              "${G[@]}" "nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader; \
+                ls /etc/callsight; systemctl is-enabled callsight-gpu || true; \
+                $GC ps; $GC logs --tail 60 asr-worker; $GC logs --tail 20 nlp-worker" || true
+              sudo bash "$M/deploy/aws/setup-internet.sh" status || true ;;
+
+            start-date)
+              date_ok
+              cd "$M"
+              if grep -q '^ASR_START_DATE=' .env; then sed -i "s/^ASR_START_DATE=.*/ASR_START_DATE=$VALUE/" .env
+              else echo "ASR_START_DATE=$VALUE" >> .env; fi
+              docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml up -d
+              "${G[@]}" "cd /opt/callsight && { grep -q '^ASR_START_DATE=' .env \
+                && sed -i 's/^ASR_START_DATE=.*/ASR_START_DATE=$VALUE/' .env || echo 'ASR_START_DATE=$VALUE' >> .env; } \
+                && grep '^ASR_START_DATE=' .env && $GC up -d" ;;
+
+            finish)
+              "${G[@]}" 'sudo rm -f /etc/callsight/stay-on && sudo systemctl start --no-block callsight-gpu && echo "started: works, then powers off"' ;;
+
+            main-status)          # from the main server only: works while the GPU server sleeps
+              cd "$M"
+              MC=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml)
+              "${MC[@]}" exec -T worker python -m callsight transcribe status
+              "${MC[@]}" exec -T worker python -m callsight gpu-work
+              "${MC[@]}" exec -T postgres psql -U callsight -d callsight -At -c \
+                "select 'finished per hour (UTC)', date_trunc('hour', finished_at), count(*) from transcript
+                 where finished_at > now() - interval '12 hours' group by 2 order by 2" ;;
+
+            gpu-cmd)
+              [ -n "$VALUE" ] || { echo "value: the command to run" >&2; exit 1; }
+              "${G[@]}" "$VALUE" ;;
+          esac

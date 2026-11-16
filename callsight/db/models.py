@@ -58,7 +58,7 @@ class Call(Base):
     hangup_by: Mapped[str | None] = mapped_column(String(10))   # outbound: agent / customer / busy (ring-time spec)
     recording_file: Mapped[str | None] = mapped_column(String(300))
     recording_path: Mapped[str | None] = mapped_column(String(400))   # relative to AUDIO_DIR
-    recording_status: Mapped[str] = mapped_column(String(10), default="none")  # none/pending/ok/error/missing/deleted
+    recording_status: Mapped[str] = mapped_column(String(10), default="none")  # none/pending/ok/error/missing/deleted/held
     recording_attempts: Mapped[int] = mapped_column(Integer, default=0)
     # agent-supervisor spec: an admin erased this call's personal content (recording, texts, forms); row kept for KPIs
     content_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -398,6 +398,18 @@ class BlindSet(Base):
     rank: Mapped[int] = mapped_column(Integer)
     agent_ext: Mapped[str | None] = mapped_column(String(16))
     sampler_version: Mapped[str] = mapped_column(String(20))
+    salt: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RatingPick(Base):
+    """The rating set (spec 2026-11-16-rating-set): calls of days the user chose, picked once, rated first (after the
+    blind ones); the blind set is drawn from these when they exist."""
+    __tablename__ = "rating_pick"
+    call_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("call.id", ondelete="CASCADE"), primary_key=True)
+    rank: Mapped[int] = mapped_column(Integer)
+    day: Mapped[date] = mapped_column(Date)
+    agent_ext: Mapped[str | None] = mapped_column(String(16))
     salt: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

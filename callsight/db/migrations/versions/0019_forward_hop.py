@@ -3,16 +3,16 @@ who held the problem: level 1 employee / 2 branch supervisor / 3 manager; the so
 with the call's content); forward_person gets is_supervisor / is_manager and loses the (branch, name) unique key,
 because every employee of the other system is stored now (two people may share a name in one branch).
 
-Revision ID: 0018
-Revises: 0017
+Revision ID: 0019
+Revises: 0018
 Create Date: 2026-11-16
 """
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0018'
-down_revision = '0017'
+revision = '0019'
+down_revision = '0018'
 branch_labels = None
 depends_on = None
 

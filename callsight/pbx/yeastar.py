@@ -31,7 +31,7 @@ def safe_recording_name(file: str) -> str:
     name = (file or "").strip()
     if (not name or name in (".", "..") or PurePosixPath(name).name != name
             or PureWindowsPath(name).name != name or "\x00" in name):
-        raise PbxError(f"unsafe recording file name: {file!r}")
+        raise PbxError("unsafe recording file name")   # the name holds the caller's number: never logged
     return name
 
 

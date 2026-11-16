@@ -37,9 +37,11 @@ def pool(session: Session) -> list[tuple[int, str]]:
         Call.status == "answered", Call.direction.in_(CUSTOMER_DIRECTIONS), Call.agent_ext.is_not(None), done,
         Call.team.is_distinct_from("forward"))      # part 4 D2: branch supervisors' proof calls are not rated
         .order_by(Call.id)).all()
+    from .ratingset import ids as rating_ids
     from .settings import rating_excluded
     skip = rating_excluded()                     # test calls: never in the blind set
-    return [(cid, ext) for cid, ext in rows if cid not in skip]
+    picks = rating_ids(session)                  # a rating set exists: the blind set comes from it (2026-11-16)
+    return [(cid, ext) for cid, ext in rows if cid not in skip and (not picks or cid in picks)]
 
 
 def sample(calls: list[tuple[int, str]], n: int, salt: str = DEFAULT_SALT) -> list[tuple[int, str]]:
@@ -89,6 +91,14 @@ def ensure(session: Session, n: int = DEFAULT_N, min_pool: int = DEFAULT_MIN_POO
     """Beat job: freeze automatically once the pool is big enough. Returns rows created (0 = nothing done)."""
     if is_frozen(session):
         return 0
+    from .ratingset import ids as rating_ids
+    picks = rating_ids(session)
+    if picks:                                    # a rating set: wait until all its transcripts are finished, so
+        busy = session.scalar(select(exists().where(  # the 100 blind come from the whole set (2026-11-16 review)
+            Transcript.call_id.in_(picks), Transcript.status.in_(("queued", "running")))))
+        if busy:
+            return 0
+        min_pool = n
     try:
         return freeze(session, n=n, min_pool=min_pool)
     except ValueError:
