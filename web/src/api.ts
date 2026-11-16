@@ -257,7 +257,8 @@ export interface NoteIn {
   round: number; what_happened: string; solved: boolean; responsible_kind?: string;
   responsible_user_id?: number | null; expected_at?: string; callback_at?: string;
 }
-export interface FollowupCounts { forms: number; notes: number; callbacks_today: number; missed: number }
+export interface FollowupCounts { forms: number; notes: number; callbacks_today: number; missed: number;
+  no_followup: number }   // calls marked "لا تحتاج متابعة" in من/إلى
 export interface Person { id: number; username: string; role: string; ext: string | null }
 export type FollowupView =
   | { needed: false; enabled: boolean }
@@ -291,6 +292,7 @@ export interface FollowupKpiBucket {
   // follow-up stages
   answered_forms: number; solved_first: number; first_rate: number | null; solved_after: number; open: number;
   rounds_to_solve: number; avg_rounds: number | null; notes_due: number; notes_on_time: number; notes_rate: number | null;
+  no_followup: number; no_followup_rate: number | null;   // share of the filled forms (show-only)
 }
 export interface FollowupKpi {
   enabled: boolean; active: boolean; start: string | null; since: string | null;

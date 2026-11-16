@@ -22,7 +22,7 @@ from .calls import visible_call, visible_scope
 MAX_LIST_DAYS = 62
 LIST_LIMIT = 500
 STATES = ("", "action", "forms", "notes", "callbacks_today", "missed", "open", "solved", "todo", "callbacks",
-          "open_callbacks", "came_back")
+          "open_callbacks", "came_back", "no_followup")
 ACTION_LOOKBACK_DAYS = 62      # unfinished work before من is counted apart ("older_action"), never forgotten
 # most urgent first in "needs action"
 URGENCY = {"callback_missed": 0, "solution_overdue": 1, "note_needed": 2, "overdue": 3, "waiting_callback": 4,
@@ -203,7 +203,8 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         return {"forms": sum(i["step"] in ("required", "overdue") for i in items),
                 "notes": sum(i["step"] in ("note_needed", "solution_overdue") for i in items),
                 "callbacks_today": sum(today_cb(i, today) for i in items),
-                "missed": sum(i["step"] == "callback_missed" for i in items)}
+                "missed": sum(i["step"] == "callback_missed" for i in items),
+                "no_followup": sum(i["step"] == "no_followup" for i in items)}
 
     @app.get("/api/followups")
     def list_followups(
@@ -224,7 +225,8 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         st = fu.settings(s)
         out = {"settings": {k: v.isoformat() if v else None for k, v in st.items()}, "items": [],
                "linked": staff(user) or bool(user.ext and user.ext in team_exts()),
-               "counts": {"forms": 0, "notes": 0, "callbacks_today": 0, "missed": 0}, "older_action": 0}
+               "counts": {"forms": 0, "notes": 0, "callbacks_today": 0, "missed": 0, "no_followup": 0},
+               "older_action": 0}
         start = st[fu.SETTING_START]
         if start is None:
             return out
@@ -280,6 +282,8 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             items = [i for i in items if i["callback"] and i["callback"]["status"] in ("waiting", "missed")]
         elif state == "came_back":
             items = [i for i in items if i["came_back"]]
+        elif state == "no_followup":
+            items = [i for i in items if i["step"] == "no_followup"]
         out["truncated"] = len(items) > LIST_LIMIT
         items = items[:LIST_LIMIT]
         mine = dict(s.execute(select(CallPrivateNote.call_id, CallPrivateNote.text).where(

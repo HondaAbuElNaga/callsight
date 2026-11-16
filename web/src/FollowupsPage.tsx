@@ -14,7 +14,7 @@ interface Props { me: Me; onCalls?: () => void;   // agents: no calls page (foll
 const STATE_OPTIONS: [string, string][] = [
   ["action", "يحتاج عملاً"], ["forms", "نماذج مطلوبة"], ["notes", "ملاحظات مطلوبة"],
   ["callbacks_today", "معاودات اليوم"], ["missed", "معاودات فائتة"], ["open", "متابعات مفتوحة"], ["solved", "حُلّت"],
-  ["came_back", "عاد العميل بعد الحل"], ["", "الكل"],
+  ["came_back", "عاد العميل بعد الحل"], ["no_followup", "لا تحتاج متابعة"], ["", "الكل"],
 ];
 const LOOKBACK_DAYS = 62;   // same as the server's look-back for unfinished work
 const REFRESH_MS = 60_000;
@@ -140,7 +140,8 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
       {c && data?.settings.followup_start && data.linked && (
         <div className="counters">   {/* click = show only that kind; click again = back to "needs action" */}
           {([["forms", c.forms, "نماذج مطلوبة", "bad"], ["notes", c.notes, "ملاحظات مطلوبة", "warn"],
-             ["callbacks_today", c.callbacks_today, "معاودات اليوم", ""], ["missed", c.missed, "معاودات فائتة", "bad"]] as const)
+             ["callbacks_today", c.callbacks_today, "معاودات اليوم", ""], ["missed", c.missed, "معاودات فائتة", "bad"],
+             ["no_followup", c.no_followup, "لا تحتاج متابعة", ""]] as const)
             .map(([k, n, label, tone]) => (
               <button key={k} type="button" aria-pressed={state === k}
                 className={`counter ${n ? tone : ""} ${state === k ? "active" : ""}`}

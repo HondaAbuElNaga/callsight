@@ -202,14 +202,16 @@ def followup_table(fu: dict, agents: list[dict]) -> str:
     out.append('<table><tr><th>الموظف</th><th class="n">نماذج بها مشكلة</th><th class="n">حُلّت من أول مكالمة</th>'
                '<th class="n">نسبة الحل من أول مكالمة</th><th class="n">حُلّت بعد المتابعة</th>'
                '<th class="n">متوسط الجولات</th><th class="n">مفتوحة</th><th class="n">ملاحظات مستحقة</th>'
-               '<th class="n">في وقتها</th><th class="n">نسبة الملاحظات</th></tr>')
+               '<th class="n">في وقتها</th><th class="n">نسبة الملاحظات</th>'
+               '<th class="n">لا تحتاج متابعة</th><th class="n">نسبتها</th></tr>')
     for label, v in rows:
         avg = "–" if v.get("avg_rounds") is None else f'{v["avg_rounds"]:.1f}'
         out.append(f'<tr><td>{label}</td><td class="n">{num(v["answered_forms"])}</td>'
                    f'<td class="n">{num(v["solved_first"])}</td><td class="n">{pct(v["first_rate"])}</td>'
                    f'<td class="n">{num(v["solved_after"])}</td><td class="n">{num(avg)}</td>'
                    f'<td class="n">{num(v["open"])}</td><td class="n">{num(v["notes_due"])}</td>'
-                   f'<td class="n">{num(v["notes_on_time"])}</td><td class="n">{pct(v["notes_rate"])}</td></tr>')
+                   f'<td class="n">{num(v["notes_on_time"])}</td><td class="n">{pct(v["notes_rate"])}</td>'
+                   f'<td class="n">{num(v["no_followup"])}</td><td class="n">{pct(v["no_followup_rate"])}</td></tr>')
     out.append("</table>")
     return "".join(out)
 
