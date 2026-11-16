@@ -29,6 +29,8 @@ ERR_UNAVAILABLE = "النظام الآخر لا يرد، نحاول مرة أخ�
 ERR_NO_GUID = "المسؤول غير مربوط بالنظام الآخر بعد"
 ERR_EXPIRED = "تعذّر الإرسال خلال 24 ساعة"
 ERR_AUTH = "مفتاح الربط مرفوض، أبلغ المدير"
+# the ticket request got no clear answer: it may exist there, so it is never sent again by itself (review D1)
+ERR_UNSURE = "لم يتأكد إنشاء التذكرة: تحقق في نظام خدمة العملاء قبل الإعادة"
 
 
 def people_file() -> Path:
@@ -186,7 +188,7 @@ def _cut(text: str, n: int) -> str:
 def send_pending(s: Session, client: CsClient, now: datetime | None = None) -> dict:
     """Send every pending forward (oldest first). Each one: customer by phone -> ticket. Row locks (SKIP LOCKED) so
     two runs never send the same form twice. Returns counts; raises CsAuthError (after saving what was done) so the
-    job shows as failed on the health page."""
+    job shows as failed on the health page (job.forward_send, listed while the link is on)."""
     now = now or datetime.now(timezone.utc)
     done = {"sent": 0, "failed": 0, "retry": 0}
     names = dict(s.execute(select(Agent.ext, Agent.name)).all())
@@ -216,8 +218,10 @@ def send_pending(s: Session, client: CsClient, now: datetime | None = None) -> d
             done["retry"] += 1
             s.commit()
             continue
+        step = "lookup"
         try:
             account = client.customer_by_phone(call.customer_number or "")
+            step = "ticket"
             guid, number = client.create_ticket(account, ticket_notes(call, f, names.get(call.agent_ext or "", "")),
                                                 CS_PRIORITY.get(f.priority or "", 2), person.guid)
         except CsAuthError:
@@ -232,6 +236,12 @@ def send_pending(s: Session, client: CsClient, now: datetime | None = None) -> d
             s.commit()
             continue
         except CsUnavailable:
+            if step == "ticket":                    # maybe made there: a retry could make a second ticket
+                f.forward_status, f.forward_error = "failed", ERR_UNSURE
+                f.forward_tries += 1
+                done["failed"] += 1
+                s.commit()
+                continue
             f.forward_error = ERR_UNAVAILABLE
             f.forward_tries += 1
             done["retry"] += 1

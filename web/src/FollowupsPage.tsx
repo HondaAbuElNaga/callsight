@@ -76,6 +76,7 @@ function Unsolved({ items, truncated, staff, onOpen }:
               <div className="line">
                 <PriorityTag p={i.form?.priority} />
                 <span className={`state ${STEP_CLASS[i.step]}`}>{STEP_LABEL[i.step]}</span>
+                {i.forward?.status === "pending" && <span className="muted small">لم يُرسل بعد</span>}
                 <Number_ n={i.customer_number} />
               </div>
               <div className="line small">
@@ -285,6 +286,7 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
                   {staff && <><td>{i.agent_ext} <span className="muted">{i.agent_name}</span></td><td><Problem i={i} /></td></>}
                   <td>
                     <span className={`state ${STEP_CLASS[i.step]}`}>{STEP_LABEL[i.step]}</span>
+                    {i.forward?.status === "pending" && <span className="muted small"> · لم يُرسل بعد</span>}
                     {i.form?.priority && <> <PriorityTag p={i.form.priority} /></>}
                     {i.round > 1 && <span className="muted small"> · جولة {i.round}</span>}
                     {i.came_back && <span className="tag">عاد العميل</span>}

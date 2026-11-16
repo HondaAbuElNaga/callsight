@@ -41,17 +41,19 @@ CALLBACK_STATES = ("waiting", "on_time", "late", "missed", "no_number")
 # steps of one call (spec 2026-11-15-followup-stages), computed on read, never stored
 STEPS = ("required", "overdue", "no_followup", "solved_first", "waiting_callback", "callback_missed",
          "note_needed", "solved_after", "no_number", "waiting_solution", "solution_overdue",
-         "forwarded", "forward_overdue")
+         "forwarded", "forward_overdue", "forward_failed")
 # not solved WITHOUT a callback time (callback is optional): waiting until the expected solve time, then overdue
 NO_CB_STEPS = ("waiting_solution", "solution_overdue")
 # forwarded to a branch supervisor (part 4): with them until the expected solve time, then late with them
 FORWARD_STEPS = ("forwarded", "forward_overdue")
 NOTE_STEPS = ("note_needed", *NO_CB_STEPS, *FORWARD_STEPS)        # steps where a note may be added
+# the send failed (refused, or not sure it went through): the agent must pick again in the form (review D1)
 OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number", *NO_CB_STEPS,
-              *FORWARD_STEPS)   # list view "open"
-KPI_OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", *NO_CB_STEPS, *FORWARD_STEPS)
+              *FORWARD_STEPS, "forward_failed")   # list view "open"
+KPI_OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", *NO_CB_STEPS, *FORWARD_STEPS,
+                  "forward_failed")
 FORWARD_NOTE_MAX = 500
-ACTION_STEPS = ("required", "overdue", "note_needed", "callback_missed", "solution_overdue")
+ACTION_STEPS = ("required", "overdue", "note_needed", "callback_missed", "solution_overdue", "forward_failed")
 # + waiting_callback / waiting_solution due by today
 
 
@@ -273,6 +275,9 @@ class Row:
         last = self.notes[-1] if self.notes else f
         if last.solved is True:
             return "solved_after" if self.notes else "solved_first"
+        if f.responsible_kind == "forward" and f.forward_status == "failed":
+            return "forward_failed"
+        # the agent's own callback steps come first (build decision); then the supervisor's time
         if f.responsible_kind == "forward" and last.callback_at is None:     # with the supervisor (part 4)
             due = f.expected_at                  # the time sent to the supervisor, whatever later notes say
             return "forward_overdue" if due is not None and now > due + GRACE else "forwarded"
@@ -386,6 +391,15 @@ def _solve_by(r: Row, step: str) -> str | None:
     if step not in (*NO_CB_STEPS, *FORWARD_STEPS) or e is None or e.expected_at is None:
         return None
     return e.expected_at.isoformat()
+
+
+def forwarded(f: CallFollowup | None) -> bool:
+    """With the supervisor (or on its way): only they close it. A failed send is not forwarded."""
+    return f is not None and f.responsible_kind == "forward" and f.forward_status in ("pending", "sent")
+
+
+def forward_failed(f: CallFollowup | None) -> bool:
+    return f is not None and f.responsible_kind == "forward" and f.forward_status == "failed"
 
 
 def forward_dict(f: CallFollowup, person: ForwardPerson | None) -> dict | None:
@@ -508,7 +522,7 @@ def one(s: Session, call: Call, exts, start: date | None) -> Row | None:
 
 # "تحتاج حل" (spec 2026-11-16-priority-no-followup, requirement 11): open problems, whatever من/إلى say
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}          # no priority (old form) comes last
-UNSOLVED_URGENCY = {"callback_missed": 0, "solution_overdue": 1, "forward_overdue": 1, "note_needed": 2,
+UNSOLVED_URGENCY = {"forward_failed": 0, "callback_missed": 0, "solution_overdue": 1, "forward_overdue": 1, "note_needed": 2,
                     "waiting_callback": 3, "waiting_solution": 3, "forwarded": 3, "no_number": 4}
 
 
@@ -627,7 +641,7 @@ def add_note(s: Session, call: Call, data: dict, user: AppUser, exts, now: datet
     if data.get("round") != rnd:
         raise NoteConflict("تغيّرت حالة المتابعة، أعد تحميل الصفحة")
     clean = validate(s, {**data, "no_followup": False}, call, now, priority=row.form.priority,
-                     forwarded=row.form.responsible_kind == "forward")
+                     forwarded=forwarded(row.form))
     last = row.notes[-1] if row.notes else row.form
     cb = row.cb_of_round(rnd - 1) if last.callback_at is not None else None     # no callback asked: none to report
     n = CallFollowupNote(call_id=call.id, round=rnd, cb_call_id=cb.id if cb else None,
@@ -747,7 +761,10 @@ def save(s: Session, call: Call, data: dict, user: AppUser, now: datetime | None
          forward_ok: bool = False) -> CallFollowup:
     now = now or _utcnow()
     # locked: the send job (part 4) must not make a ticket while this edit changes the form
-    f = s.scalars(select(CallFollowup).where(CallFollowup.call_id == call.id).with_for_update()).first()
+    # populate_existing: the caller may hold this row already; re-read it under the lock (review D1: a stale
+    # "pending" let an edit through right after the job marked it "sent")
+    f = s.scalars(select(CallFollowup).where(CallFollowup.call_id == call.id).with_for_update()
+                  .execution_options(populate_existing=True)).first()
     if f is not None and f.forward_status == "sent":
         raise FormError("حُوّلت المشكلة لمشرف الفرع: لا يمكن تعديل النموذج")
     keep = f.expected_at if f is not None else None

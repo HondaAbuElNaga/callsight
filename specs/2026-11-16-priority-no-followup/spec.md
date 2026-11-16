@@ -317,6 +317,20 @@ system with "مشرف خدمة العملاء" rights (tickets are recorded unde
   empty under a non-zero counter).
 - "تحتاج حل" is bounded in SQL: at most 2 × 500 open problems are loaded (by priority, oldest first), sorted by urgency,
   first 500 shown ("+" in the heading when cut). The priority filter runs in SQL.
+- **Part 4 D1 (review 2026-11-16):**
+  - The ticket carries **our call number**, not a link: branch supervisors have no login on our site.
+  - Supervisors are synced **hourly** (job `forward_sync`, minute 7); CLI: `forward-sync`, `forward-targets` (list the
+    supervisors the other system gives, to fill a guid by hand), `forward-send`.
+  - Labels say "مشرف الفرع" (not "المسؤول"): "عند مشرف الفرع", "تأخر عند مشرف الفرع", "ملاحظة لمشرف الفرع".
+  - Once the ticket is made (`sent`), the first form is **locked for everyone** (the ticket already holds that text).
+  - A failed send → step `forward_failed` "لم تُحوَّل – اختر من جديد" (needs action, in "تحتاج حل" first); the owning
+    agent may then edit the form whatever the deadline or notes, and choose again (another supervisor, the customer,
+    solved...). Failed = refused by the other system (400), 24 h of retries, or the ticket request got no clear answer
+    (timeout / 5xx: the ticket may exist, so it is never re-sent by itself; the message says to check there first).
+    408 / 429 and lookup timeouts are retried.
+  - A forwarded form that also set a callback time shows the agent's callback steps first; the supervisor's lateness
+    is counted from the times in D4, not from the step.
+  - The health page lists `forward_send` / `forward_sync` while the link is on (a refused key shows there).
 - The side column is narrow, so each "تحتاج حل" line is a small stacked card, not one table row. The agent's name and
   the supervisor fields (problem, who solves it, state "مفتوحة") are shown to supervisors/admins only. `no_number`
   lines show the callback time; `note_needed` lines show the note deadline.

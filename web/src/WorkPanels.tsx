@@ -164,7 +164,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
   const load = (v: FollowupView) => {
     setView(v);
     // a note on a forwarded problem: never "solved", the person stays (the server checks both)
-    setNote(v.needed && v.forward ? { ...EMPTY, solved: "no", resp: "forward" } : EMPTY);
+    setNote(v.needed && v.forward && v.forward.status !== "failed" ? { ...EMPTY, solved: "no", resp: "forward" } : EMPTY);
     if (!v.needed || !v.form) { setPrio(""); return; }
     const f = v.form;
     setPrio(f.priority ?? "");
@@ -195,7 +195,9 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
   const ro = !view.can_edit || busy;
   const noteStep = !staff && NOTE_STEPS.includes(view.step);
   // round 1 without a callback: the form stays editable (deadline rules on the server) next to the update box
-  const formOpen = !staff && view.round === 1 && view.history.length <= 1 && view.step !== "note_needed";
+  // a failed forward: the form opens again so the agent picks another way (review D1)
+  const formOpen = !staff && (view.step === "forward_failed"
+    || (view.round === 1 && view.history.length <= 1 && view.step !== "note_needed"));
   const next = STEP_NEXT[view.step];
   return (
     <section className={`panel work step-${STEP_CLASS[view.step]}`}>

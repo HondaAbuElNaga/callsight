@@ -25,7 +25,7 @@ STATES = ("", "action", "forms", "notes", "callbacks_today", "missed", "open", "
           "open_callbacks", "came_back", "no_followup")
 ACTION_LOOKBACK_DAYS = 62      # unfinished work before من is counted apart ("older_action"), never forgotten
 # most urgent first in "needs action"
-URGENCY = {"callback_missed": 0, "solution_overdue": 1, "note_needed": 2, "overdue": 3, "waiting_callback": 4,
+URGENCY = {"forward_failed": 0, "callback_missed": 0, "solution_overdue": 1, "note_needed": 2, "overdue": 3, "waiting_callback": 4,
            "waiting_solution": 5, "required": 6}
 
 
@@ -118,6 +118,8 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             return None
         if c.agent_ext != user.ext:
             return "not your call"
+        if fu.forward_failed(form):         # the send failed: the agent picks again, whatever the time (review D1)
+            return None
         if now > fu.form_deadline(c) and form is not None:
             return "after the form deadline only a supervisor can change it"
         if form is not None and form.callback_at is not None and form.callback_at <= now:
@@ -139,7 +141,8 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         if not staff(user) and c.agent_ext != user.ext:
             raise HTTPException(404, "no such call")       # a shared call of a colleague: not even confirmed
         form = s.scalars(select(CallFollowup).where(CallFollowup.call_id == c.id)).first()
-        if s.scalar(select(CallFollowupNote.id).where(CallFollowupNote.call_id == c.id).limit(1)) is not None:
+        if not fu.forward_failed(form) and \
+                s.scalar(select(CallFollowupNote.id).where(CallFollowupNote.call_id == c.id).limit(1)) is not None:
             raise HTTPException(409, "notes after a callback exist: the form can no longer change")
         why = may_edit(form, c, user, now)        # a late FIRST form is allowed (it counts as late)
         if why:

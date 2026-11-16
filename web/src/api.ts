@@ -252,7 +252,7 @@ export interface ForwardOption { id: number; name: string; branch: string; ext: 
 // follow-up stages (spec 2026-11-15-followup-stages)
 export type Step = "required" | "overdue" | "no_followup" | "solved_first" | "waiting_callback" | "callback_missed"
   | "note_needed" | "solved_after" | "no_number" | "waiting_solution" | "solution_overdue"
-  | "forwarded" | "forward_overdue";
+  | "forwarded" | "forward_overdue" | "forward_failed";
 export interface HistoryEntry {
   round: number; what_happened: string | null; solved: boolean | null; no_followup: boolean;
   priority: "high" | "medium" | "low" | null; priority_ar: string | null;    // round 1 only

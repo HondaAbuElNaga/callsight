@@ -74,7 +74,7 @@ class CsClient:
             r = self._http.request(method, path, **kw)
         except httpx.HTTPError as exc:
             raise CsUnavailable(type(exc).__name__) from None      # never the URL: no key in logs
-        if r.status_code >= 500:
+        if r.status_code >= 500 or r.status_code in (408, 429):      # busy / too many requests: try later
             raise CsUnavailable(f"HTTP {r.status_code}")
         try:
             data = r.json()
@@ -107,11 +107,12 @@ class CsClient:
         d = self._call("POST", "/tickets", json={
             "userGuid": self.cfg.user_guid, "accountGuid": account_guid, "callType": 0, "notes": notes,
             "priority": priority, "close": False, "forwardToGuid": forward_to})
-        guid = d.get("guid")
-        if not guid:
-            raise CsError(400, "no ticket guid in the answer")
+        guid = str(d.get("guid") or "")
+        if not guid or len(guid) > 64:          # our column is 64; never retry: the ticket may exist (review D1)
+            raise CsError(400, "bad ticket guid in the answer")
         num = d.get("number")
-        return str(guid), (int(num) if isinstance(num, int) or (isinstance(num, str) and num.isdigit()) else None)
+        num = int(num) if isinstance(num, int) or (isinstance(num, str) and num.isdigit()) else None
+        return guid, (num if num is not None and 0 < num < 2**31 else None)
 
 
 def supervisors(targets: dict) -> list[dict]:

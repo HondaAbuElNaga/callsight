@@ -437,3 +437,106 @@ def test_api_forward_off(fwd_env):
     r = client.put(url, json={"what_happened": "x", "solved": False, "priority": "low", "responsible_kind": "forward",
                               "forward_person_id": 1, "expected_at": t.isoformat()})
     assert r.status_code == 422 and "غير مفعّل" in r.json()["detail"] and sends == []
+
+
+# ---------- review D1 fixes ----------
+
+def test_sent_lock_reads_the_row_again_under_the_lock(fs, engine):  # noqa: F811
+    """An edit that loaded the form as "pending" before the job marked it "sent" must still be refused."""
+    from sqlalchemy.orm import sessionmaker
+    s, path = fs
+    start_on(s)
+    people = linked(s, path)
+    u = user(s)
+    c = mk(s, "a", at(10))
+    now = at(11)
+    f = fu.save(s, c, fwd_data(people["صالح الغامدي"].id, now), u, now, forward_ok=True)
+    assert f.forward_status == "pending"                     # this session now holds a "pending" copy
+    with sessionmaker(engine)() as job:                      # the send job, in its own session
+        jf = job.get(CallFollowup, f.id)
+        jf.forward_status, jf.forward_ticket_guid = "sent", "T-1"
+        job.commit()
+    with pytest.raises(fu.FormError, match="لا يمكن تعديل"):
+        fu.save(s, c, {**fwd_data(None, now), "responsible_kind": "customer"}, u, now, forward_ok=True)
+
+
+def test_failed_forward_needs_action_and_the_agent_picks_again(fs):
+    s, path = fs
+    start_on(s)
+    people = linked(s, path)
+    u = user(s)
+    c = mk(s, "a", at(10))
+    now = at(11)
+    f = fu.save(s, c, fwd_data(people["صالح الغامدي"].id, now), u, now, forward_ok=True)
+    fu.add_note(s, c, {"round": 2, "what_happened": "x", "solved": False, "responsible_kind": "forward",
+                       "expected_at": now + timedelta(hours=4)}, u, ["119"], now + timedelta(minutes=5))
+    f.forward_status, f.forward_error = "failed", forward.ERR_EXPIRED
+    s.commit()
+    assert rows(s, at(12))["a"]["step"] == "forward_failed"
+    assert "forward_failed" in fu.ACTION_STEPS and "forward_failed" in fu.OPEN_STEPS
+    assert not fu.forwarded(f) and fu.forward_failed(f)
+    # picking again (another supervisor) sends again
+    later = now + timedelta(hours=30)
+    f = fu.save(s, c, fwd_data(people["السيد عبدالمنعم"].id, later), u, later, forward_ok=True)
+    assert f.forward_status == "pending" and f.forward_error is None
+
+
+def test_api_failed_forward_reopens_the_form_after_the_deadline(fwd_env):
+    client, Session, ids, sends, on = fwd_env
+    switch_on(client)
+    login(client, "ali")
+    url = f"/api/calls/{ids['own']}/followup"
+    pid = client.get(url).json()["forward_options"][0]["id"]
+    t = datetime.now(timezone.utc) + timedelta(hours=3)
+    body = {"what_happened": "x", "solved": False, "priority": "low", "responsible_kind": "forward",
+            "forward_person_id": pid, "expected_at": t.isoformat()}
+    assert client.put(url, json=body).status_code == 200
+    with Session() as s:                     # the deadline passed and the send failed
+        c = s.get(Call, ids["own"])
+        c.start_time -= timedelta(days=2)
+        c.end_time -= timedelta(days=2)
+        f = s.scalars(select(CallFollowup).where(CallFollowup.call_id == ids["own"])).one()
+        f.forward_status, f.forward_error = "failed", "x"
+        s.commit()
+    switch_on(client)
+    with Session() as s:
+        from callsight.followups import SETTING_START, set_setting
+        set_setting(s, SETTING_START, (datetime.now(timezone.utc) - timedelta(days=3)).date(), None)
+        s.commit()
+    login(client, "ali")
+    d = client.get(url).json()
+    assert d["step"] == "forward_failed" and d["can_edit"] is True
+    r = client.put(url, json={**body, "responsible_kind": "customer", "forward_person_id": None})
+    assert r.status_code == 200, r.text
+    assert r.json()["forward"] is None and r.json()["step"] == "waiting_solution"
+
+
+def test_ticket_timeout_is_not_retried(fs):
+    s, path = fs
+    f = pending_form(s, path)
+
+    class Slow(FakeCs):
+        def create_ticket(self, *a):
+            raise CsUnavailable("ReadTimeout")
+    forward.send_pending(s, Slow())
+    s.refresh(f)
+    assert (f.forward_status, f.forward_error) == ("failed", forward.ERR_UNSURE)
+
+
+def test_client_retryable_codes_and_bad_ticket_answers():
+    for st in (408, 429):
+        with mock_client(lambda req, st=st: httpx.Response(st, json={})) as c, pytest.raises(CsUnavailable):
+            c.forward_targets()
+    with mock_client(lambda req: httpx.Response(200, json={"guid": "x" * 65, "number": 1})) as c:
+        with pytest.raises(CsError):
+            c.create_ticket("A", "n", 2, "G")
+    with mock_client(lambda req: httpx.Response(200, json={"guid": "T", "number": 2**31})) as c:
+        assert c.create_ticket("A", "n", 2, "G") == ("T", None)
+
+
+def test_health_lists_forward_jobs_only_when_on(fs):
+    from callsight import health
+    s, _ = fs
+    now = datetime.now(timezone.utc)
+    names = lambda on: {i.key for i in health.jobs(s, now, forward_on=on)}  # noqa: E731
+    assert "job.forward_send" in names(True) and "job.forward_send" not in names(False)
