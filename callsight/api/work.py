@@ -199,9 +199,9 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         row = fu.one(s, c, team_exts(), fu.get_setting(s, fu.SETTING_START))
         if row is None or row.form is None or row.form.forward_status != "sent" or not row.chain_open():
             raise HTTPException(409, "لا توجد تذكرة مفتوحة لهذه المشكلة (أعد تحميل الصفحة)")
+        if not row.questions():     # an answer belongs to a question (bounds what reaches the ticket)
+            raise HTTPException(409, "لا توجد أسئلة تنتظر ردك (أعد تحميل الصفحة)")
         if body.kind == "seen":
-            if not row.questions():
-                raise HTTPException(409, "لا توجد أسئلة تنتظر ردك (أعد تحميل الصفحة)")
             m = ForwardMessage(call_id=c.id, kind="seen", text=None, created_by=user.id, created_at=now,
                                status="done")
         else:
@@ -341,8 +341,12 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         got, out["unsolved_truncated"] = fu.unsolved(s, exts, start, now, callers=team_exts(), priority=priority,
                                                       limit=LIST_LIMIT)
         unsolved = [r.as_dict(now, names, users) for r in got]
-        # D3: questions waiting for an answer, whatever day the call was ("أسئلة تنتظر ردك")
-        out["counts"]["questions"] = sum(asked(i) for i in unsolved)
+        # D3: questions waiting for an answer, whatever day the call was ("أسئلة تنتظر ردك"); like every
+        # counter it counts all priorities (requirement 13)
+        everyone = unsolved if not priority else [
+            r.as_dict(now, names, users) for r in fu.unsolved(s, exts, start, now, callers=team_exts(),
+                                                               limit=LIST_LIMIT)[0] if r.questions()]
+        out["counts"]["questions"] = sum(asked(i) for i in everyone)
         if state == "questions":
             items = [i for i in unsolved if asked(i)]
         if state == "action":

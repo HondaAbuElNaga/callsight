@@ -19,7 +19,7 @@ const ITEM_TYPE: Record<string, string> = {
 };
 
 /** "3 س 20 د" / "2 يوم 4 س": time to solve. */
-function took(sec: number | null | undefined): string {
+export function took(sec: number | null | undefined): string {
   if (sec === null || sec === undefined) return "–";
   const h = Math.floor(sec / 3600);
   const m = Math.round((sec % 3600) / 60);
@@ -186,7 +186,7 @@ function Line({ i, onOpen }: { i: ForwardLineItem; onOpen: () => void }) {
   );
 }
 
-function Story({ id, onClose, onExpired }: { id: number; onClose: () => void; onExpired: () => void }) {
+export function Story({ id, onClose, onExpired }: { id: number; onClose: () => void; onExpired: () => void }) {
   const [st, setSt] = useState<ForwardStory | null>(null);
   const [error, setError] = useState("");
   const expired = useRef(onExpired);

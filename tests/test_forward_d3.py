@@ -9,7 +9,7 @@ from sqlalchemy import select, text
 from callsight import followups as fu
 from callsight import forward
 from callsight.cs_api import CsAuthError, CsError, CsUnavailable
-from callsight.db.models import AdminLog, CallAnalysis, CallFollowup, ForwardHop, ForwardMessage, ForwardPerson
+from callsight.db.models import AdminLog, Agent, CallAnalysis, CallFollowup, ForwardHop, ForwardMessage, ForwardPerson
 from test_agent_supervisor_api import env, login, switch_on  # noqa: F401
 from test_api import engine  # noqa: F401
 from test_followups import DAY, at, mk, rows, s, start_on, user  # noqa: F401
@@ -113,11 +113,13 @@ def test_answer_is_written_on_the_open_ticket_with_the_prefix(fs):
     s, path = fs
     c, f = sent_form(s, path)
     u = s.scalar(select(CallFollowup.filled_by).where(CallFollowup.call_id == c.id))
+    s.merge(Agent(ext="119", name="علي سالم", team="customer_service", in_team=True))
+    s.commit()
     m = msg(s, c, by=u)
     fake = Fake()
     done = forward.send_messages(s, fake, now=at(13, 5))
     assert done["msg_sent"] == 1
-    assert fake.wrote == [("T-1", "رد موظف خدمة العملاء «ali»: نعم في الرياض", False)]
+    assert fake.wrote == [("T-1", "رد موظف خدمة العملاء «علي سالم»: نعم في الرياض", False)]   # never the login name
     s.refresh(m)
     assert m.status == "sent" and m.sent_at == at(13, 5)
     assert forward.send_messages(s, fake, now=at(13, 10))["msg_sent"] == 0     # never twice
@@ -317,3 +319,73 @@ def test_api_agent_answers_a_question(fwd_env):
         assert log.target == f"call:{ids['own']}"
     login(client, "root")
     assert client.post(url, json={"kind": "answer", "text": "x"}).status_code == 403     # supervisors watch
+
+
+# ---------- review fixes ----------
+
+def test_our_text_without_diacritics_is_still_ours(fs):
+    s, path = fs
+    c, f = sent_form(s, path)
+    stripped = {**QUESTION, "note": "حلت عند «مدير أول»", "actorName": "someone"}       # "حُلّت عند" without marks
+    read(s, f, Fake(ticket(stripped)), at(12, 40))
+    assert one(s, c, at(13))[1]["forward"]["questions"] == []
+
+
+def test_a_supervisor_note_is_not_written_on_the_ticket(fs):
+    s, path = fs
+    c, f = sent_form(s, path, forwarded=at(11))
+    boss = user(s, "boss", "supervisor", None)
+    fu.add_note(s, c, {"round": 2, "what_happened": "ملاحظة داخلية", "solved": False,
+                       "responsible_kind": "forward", "expected_at": at(15)}, boss, ["104", "119", "116"], now=at(12))
+    assert s.scalars(select(ForwardMessage).where(ForwardMessage.call_id == c.id)).all() == []
+
+
+def test_the_summary_text_is_not_repeated_in_the_panel(fs):
+    s, path = fs
+    c, f = sent_form(s, path)
+    msg(s, c, kind="summary", text_="نص الملخص", status="sent")
+    fwd = one(s, c, at(13))[1]["forward"]
+    assert fwd["messages"][0]["text"] is None
+    assert all(i["detail"] is None for i in fwd["tracker"] if i["kind"] == "summary")
+
+
+def test_a_call_being_erased_is_skipped_this_run(fs, engine):  # noqa: F811
+    s, path = fs
+    c, f = sent_form(s, path)
+    m = msg(s, c)
+    from sqlalchemy.orm import Session as S
+    with S(engine) as other:                    # the erase holds the call row
+        other.get(type(c), c.id, with_for_update=True)
+        fake = Fake()
+        forward.send_messages(s, fake, now=at(13, 5))
+        assert fake.wrote == []
+        other.rollback()
+    s.refresh(m)
+    assert m.status == "pending"
+
+
+def test_api_question_counter_ignores_the_priority_filter(fwd_env):
+    client, Session, ids, sends, _ = fwd_env
+    switch_on(client)
+    now = datetime.now(timezone.utc)
+    with Session() as s:
+        s.execute(text("TRUNCATE forward_message, forward_event, forward_hop RESTART IDENTITY CASCADE"))
+        pid = s.scalar(select(ForwardPerson.id).where(ForwardPerson.ext == "101"))
+        u = s.scalar(text("SELECT id FROM app_user WHERE username = :n"), {"n": "ali"})
+        s.add(CallFollowup(call_id=ids["own"], owner_ext="119", what_happened="x", solved=False, priority="low",
+                           responsible_kind="forward", forward_person_id=pid, forward_status="sent",
+                           forward_ticket_guid="T", forwarded_at=now - timedelta(minutes=20),
+                           expected_at=now + timedelta(hours=2), filled_by=u,
+                           first_filled_at=now - timedelta(minutes=20), updated_by=u,
+                           updated_at=now - timedelta(minutes=20)))
+        h = ForwardHop(call_id=ids["own"], level=2, person_id=pid, ticket_guid="T",
+                       sent_at=now - timedelta(minutes=20), result="open")
+        s.add(h)
+        s.commit()
+        forward.store_ticket(s, h, ticket(QUESTION), now)
+        s.commit()
+    login(client, "ali")
+    d = client.get("/api/followups", params={"priority": "high"}).json()
+    assert d["counts"]["questions"] == 1 and d["unsolved"] == []
+    url = f"/api/calls/{ids['own']}/forward/messages"
+    assert client.post(url, json={"kind": "seen"}).status_code == 200

@@ -348,3 +348,6 @@ tr.clickable:hover td { background: var(--bg); }
 .tracker .tk-question .tk-dot { background: var(--warn-bg); color: var(--warn); }
 .answer-box .question { margin: 4px 0; padding: 6px 8px; background: var(--warn-bg); border-radius: var(--radius);
   overflow-wrap: anywhere; }
+
+.mistakes { margin: 4px 0 8px; padding-inline-start: 18px; }
+.mistakes li { margin: 2px 0; overflow-wrap: anywhere; }

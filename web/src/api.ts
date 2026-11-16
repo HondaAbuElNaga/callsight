@@ -256,6 +256,18 @@ export interface Forward {
   messages?: ForwardMessageView[];
   tracker?: TrackerItem[];
 }
+export interface ForwardKpiPerson {
+  person_id: number; level: 1 | 2 | 3; name: string | null; branch: string | null; received: number; solved: number;
+  solved_in_24h: number; in_24h_rate: number | null; avg_seconds_to_solve: number | null; open: number; late: number;
+  mistakes: { call_id: number; sent_at: string | null; reason: string; ticket_number: number | null;
+    agent: string | null }[];
+}
+export interface ForwardKpiAgent {
+  ext: string; name: string; questions: number; on_time: number; late: number; waiting: number;
+  mistakes: { call_id: number; asked_at: string | null; due: string | null; answered_at: string | null;
+    from: string | null; reason: string }[];
+}
+export interface ForwardKpi { from: string; to: string; people: ForwardKpiPerson[]; agents: ForwardKpiAgent[] }
 export interface ForwardMessageView {
   id: number; kind: "answer" | "note" | "summary" | "seen"; text: string | null;
   status: "pending" | "waiting" | "sent" | "failed" | "done"; error: string | null; at: string | null;
@@ -435,6 +447,12 @@ export const api = {
     return get<ForwardsList>(`/api/forwards?${q.toString()}`);
   },
   forwardStory: (id: number) => get<ForwardStory>(`/api/forwards/${id}`),
+  // D4 (req 20): the people problems were forwarded to + the agents' answers to their questions (staff only)
+  forwardKpi: (p: { from: string; to: string; agent?: string }) => {
+    const q = new URLSearchParams({ from: p.from, to: p.to });
+    if (p.agent) q.set("agent", p.agent);
+    return get<ForwardKpi>(`/api/kpi/forwards?${q.toString()}`);
+  },
   followup: (id: number) => get<FollowupView>(`/api/calls/${id}/followup`),
   saveFollowup: (id: number, body: FollowupIn) => send<FollowupView>("PUT", `/api/calls/${id}/followup`, body),
   myNote: (id: number, text: string) => send<{ call_id: number; text: string | null }>("PUT", `/api/calls/${id}/my-note`, { text }),

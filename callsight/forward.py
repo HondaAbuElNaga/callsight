@@ -712,9 +712,13 @@ def our_actors(events) -> set[str]:
     return {e.actor for e in events if e.type == "created" and e.actor}
 
 
+_OUR_NORM = tuple(norm_ar(p) for p in OUR_PREFIXES)
+
+
 def ours(e, us: set[str]) -> bool:
-    note = (e.note or "").strip()
-    return bool(e.actor and e.actor in us) or note.startswith(OUR_PREFIXES)
+    """Written by us: the PBX account's name, or our fixed opening words (compared without diacritics, in case the
+    other system drops them)."""
+    return bool(e.actor and e.actor in us) or norm_ar((e.note or "").strip()).startswith(_OUR_NORM)
 
 
 def is_question(e, us: set[str]) -> bool:
@@ -747,11 +751,13 @@ def queue_summaries(s: Session, now: datetime) -> int:
                                       CallAnalysis.summary.is_not(None)).exists())
         .order_by(CallFollowup.call_id).limit(SUMMARY_BATCH)))
     made = 0
+    if not ids:
+        return 0
+    from .analysis.views import shown_analysis
+    model, pv = _analysis_key()
     for cid in ids:
-        text_ = s.scalar(select(CallAnalysis.summary).where(
-            CallAnalysis.call_id == cid, CallAnalysis.status == "done", CallAnalysis.summary.is_not(None))
-            .order_by(CallAnalysis.id.desc()).limit(1))
-        text_ = (text_ or "").strip()
+        a = shown_analysis(s, cid, model, pv)          # the same analysis the call panel shows
+        text_ = (a.summary or "").strip() if a is not None and a.status == "done" else ""
         if not text_:
             continue
         res = s.execute(pg_insert(ForwardMessage).values(
@@ -760,6 +766,17 @@ def queue_summaries(s: Session, now: datetime) -> int:
         made += res.scalar() is not None
     s.commit()
     return made
+
+
+def _analysis_key() -> tuple[str | None, str | None]:
+    """(LLM_MODEL, prompt version): which analysis counts as the current one (as on the call panel)."""
+    try:
+        from .analysis.llm import prompt_version
+        from .analysis.settings import load_topics
+        topics = load_topics(Path(os.getenv("TOPICS_FILE", str(ROOT / "config" / "topics.yaml"))))
+        return os.getenv("LLM_MODEL", "qwen2.5:7b").strip(), prompt_version(topics)
+    except Exception:  # noqa: BLE001 - no topics file: the newest done analysis is used
+        return None, None
 
 
 def send_messages(s: Session, client: CsClient, now: datetime | None = None) -> dict:
@@ -779,10 +796,14 @@ def send_messages(s: Session, client: CsClient, now: datetime | None = None) -> 
         if m is None:
             break
         seen.append(m.id)
-        call = s.get(Call, m.call_id)
+        call = s.scalars(select(Call).where(Call.id == m.call_id)
+                         .with_for_update(read=True, skip_locked=True)).first()
+        if call is None:                            # being erased right now (locked): looked at again next run
+            s.rollback()
+            continue
         hops = list(s.scalars(select(ForwardHop).where(ForwardHop.call_id == m.call_id).order_by(ForwardHop.id)))
         expired = now - m.created_at > MSG_WINDOW
-        if call is None or call.content_deleted_at is not None or any(h.result == "solved" for h in hops) or (
+        if call.content_deleted_at is not None or any(h.result == "solved" for h in hops) or (
                 hops and not any(h.result in ("open", "pending") for h in hops)):
             m.status, m.error = "failed", ERR_ENDED
             done["msg_failed"] += 1
@@ -797,9 +818,9 @@ def send_messages(s: Session, client: CsClient, now: datetime | None = None) -> 
             s.commit()
             continue
         author = None
-        if m.created_by is not None:
+        if m.created_by is not None:                # the agent's name from the PBX list; never the login name
             u = s.get(AppUser, m.created_by)
-            author = (names.get(u.ext or "") or u.username) if u else None
+            author = names.get(u.ext or "") or None if u else None
         try:
             for g in ready:
                 client.followup(g, message_text(m, author), close=False)

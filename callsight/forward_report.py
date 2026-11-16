@@ -231,3 +231,136 @@ def story(s: Session, call_id: int) -> dict | None:
             "hops": out_hops,
             "other_items": [{"kind": e.kind, "type": e.type, "note": e.note, "at": _iso(e.at), "actor": e.actor}
                             for e in other[:EVENT_MAX]]}
+
+
+# ---------- D4 (req 20): the KPI page's table of the people problems were forwarded to ----------
+
+MISTAKES_MAX = 200          # mistake lines kept per person / agent (the count stays exact)
+LATE_REASON = {"passed_on": "لم تُحل خلال 24 ساعة فانتقلت لمن بعده", "open": "ما زالت عنده بعد 24 ساعة",
+               "solved": "حلّها بعد مرور 24 ساعة", "closed_by_other": "لم يحلّها خلال 24 ساعة (حلّها غيره بعد ذلك)"}
+PROOF_AR = {"no_call": "لم يتصل بالعميل", "not_answered": "لم يرد العميل", "short": "المكالمة 60 ثانية أو أقل",
+            "waiting_score": "بانتظار تقييم الرضا", "low_score": "الرضا 7 أو أقل", "no_ext": "لا توجد تحويلة"}
+
+
+def late_reason(h: ForwardHop, now: datetime) -> str | None:
+    """A late hop (spec D4: "each hop that ran out of 24 h counts as a late hop for that person"): he held it
+    for 24 h without solving it. None = not late."""
+    from .forward import HOP_TIME
+    if h.sent_at is None:
+        return None
+    due = h.sent_at + HOP_TIME
+    if h.result == "passed_on":
+        return LATE_REASON["passed_on"]
+    if h.result == "open":
+        return LATE_REASON["open"] if now > due else None
+    if h.result == "solved":
+        end = done_at(h)
+        return LATE_REASON["solved"] if end and end > due else None
+    if h.result == "closed_by_other":
+        return LATE_REASON["closed_by_other"] if h.ended_at and h.ended_at > due else None
+    return None
+
+
+def people_kpi(s: Session, start: date, end: date, now: datetime | None = None, agent: str | None = None) -> dict:
+    """Req 20 with the forward chain, show-only. By the day each person GOT the problem (Saudi days):
+    - people: per person and level: received, solved, solved in 24 h (+ %), average time to solve (his own time),
+      late (mistakes) with one line each (call, time, reason; a branch supervisor's close without a good call says
+      why). Staff only (the API checks the role).
+    - agents: questions from the person holding a problem, answered on time / late / still waiting (the form rule:
+      by 23:00 that day, or 2 h after a question read after 21:00), one line per late answer. "Seen, no answer
+      needed" counts as an answer.
+    `agent` = an extension: the agents table shows only him (the people table stays whole)."""
+    from .db.models import ForwardMessage
+    from .followups import after_deadline
+    from .forward import HOP_TIME, is_question
+    now = now or datetime.now(timezone.utc)
+    lo, hi = _bounds(start, end)
+    hs = list(s.scalars(select(ForwardHop).join(Call, Call.id == ForwardHop.call_id).where(
+        ForwardHop.sent_at >= lo, ForwardHop.sent_at < hi, ForwardHop.result.not_in(("pending", "failed")),
+        Call.content_deleted_at.is_(None)).order_by(ForwardHop.sent_at, ForwardHop.id)))
+    pids = {h.person_id for h in hs}
+    people = {p.id: p for p in s.scalars(select(ForwardPerson).where(ForwardPerson.id.in_(pids)))} if pids else {}
+    calls = {c.id: c for c in s.scalars(select(Call).where(Call.id.in_({h.call_id for h in hs})))} if hs else {}
+    names = dict(s.execute(select(Agent.ext, Agent.name)).all())
+    sup = [(people[h.person_id].ext, digits9(calls[h.call_id].customer_number), h.sent_at) for h in hs
+           if h.level == 2 and h.person_id in people and people[h.person_id].ext and h.call_id in calls]
+    sup_calls, scores = _sup_calls(s, sup)
+    per: dict[tuple[int, int], dict] = {}
+    for h in hs:
+        p, c = people.get(h.person_id), calls.get(h.call_id)
+        d = per.setdefault((h.level, h.person_id), {
+            "person_id": h.person_id, "level": h.level, "name": p.name if p else None, "branch": bkey(p),
+            "received": 0, "solved": 0, "solved_in_24h": 0, "in_24h_rate": None, "avg_seconds_to_solve": None,
+            "open": 0, "late": 0, "mistakes": [], "_t": []})
+        d["received"] += 1
+        d["open"] += h.result == "open"
+        if h.result == "solved":
+            d["solved"] += 1
+            t = done_at(h)
+            if t:
+                d["_t"].append(max(0.0, (t - h.sent_at).total_seconds()))
+                d["solved_in_24h"] += t <= h.sent_at + HOP_TIME
+        why = late_reason(h, now)
+        if why is None:
+            continue
+        d["late"] += 1
+        if h.level == 2 and h.result != "solved" and closed(h) and p is not None and p.ext and c is not None:
+            stop = h.ended_at or now
+            mine = [x for x in sup_calls if x.agent_ext == p.ext and digits9(x.customer_number)
+                    == digits9(c.customer_number) and h.sent_at < x.start_time <= stop]
+            pr = proof(mine, {x.id: scores.get(x.id) for x in mine}, True)
+            if not pr["ok"]:
+                why += f" · أغلقها دون مكالمة جيدة: {PROOF_AR.get(pr['reason'] or '', '–')}"
+        if len(d["mistakes"]) < MISTAKES_MAX:
+            d["mistakes"].append({"call_id": h.call_id, "sent_at": _iso(h.sent_at), "reason": why,
+                                  "ticket_number": h.ticket_number,
+                                  "agent": (names.get(c.agent_ext or "") or c.agent_ext) if c else None})
+    rows = []
+    for d in per.values():
+        t = d.pop("_t")
+        d["avg_seconds_to_solve"] = _avg(t)
+        d["in_24h_rate"] = round(d["solved_in_24h"] / d["received"], 4) if d["received"] else None
+        rows.append(d)
+    rows.sort(key=lambda d: (d["level"], -d["late"], -d["received"], d["name"] or ""))
+
+    # the agents' side: questions on their forwarded problems, read in the period
+    evs = list(s.scalars(select(ForwardEvent).join(Call, Call.id == ForwardEvent.call_id).where(
+        ForwardEvent.seen_at >= lo, ForwardEvent.seen_at < hi, ForwardEvent.kind == "followup",
+        Call.content_deleted_at.is_(None))))
+    q_calls = {e.call_id for e in evs}
+    created: dict[int, set[str]] = defaultdict(set)
+    msgs: dict[int, list] = defaultdict(list)
+    q_owner: dict[int, str | None] = {}
+    if q_calls:
+        for cid, actor in s.execute(select(ForwardEvent.call_id, ForwardEvent.actor).where(
+                ForwardEvent.call_id.in_(q_calls), ForwardEvent.type == "created")):
+            if actor:
+                created[cid].add(actor)
+        for m in s.scalars(select(ForwardMessage).where(ForwardMessage.call_id.in_(q_calls),
+                                                        ForwardMessage.kind.in_(("answer", "seen")))
+                           .order_by(ForwardMessage.created_at, ForwardMessage.id)):
+            msgs[m.call_id].append(m)
+        q_owner = dict(s.execute(select(Call.id, Call.agent_ext).where(Call.id.in_(q_calls))).all())
+    ag: dict[str, dict] = {}
+    for e in sorted(evs, key=lambda x: (x.seen_at, x.id)):
+        ext = q_owner.get(e.call_id)
+        if not ext or (agent and ext != agent) or not is_question(e, created[e.call_id]):
+            continue
+        d = ag.setdefault(ext, {"ext": ext, "name": names.get(ext, ""), "questions": 0, "on_time": 0, "late": 0,
+                                "waiting": 0, "mistakes": []})
+        d["questions"] += 1
+        due = after_deadline(e.seen_at)
+        ans = next((m for m in msgs[e.call_id] if m.created_at >= e.seen_at), None)
+        if ans is not None and ans.created_at <= due:
+            d["on_time"] += 1
+            continue
+        if ans is None and now <= due:
+            d["waiting"] += 1
+            continue
+        d["late"] += 1
+        if len(d["mistakes"]) < MISTAKES_MAX:
+            d["mistakes"].append({"call_id": e.call_id, "asked_at": _iso(e.seen_at), "due": _iso(due),
+                                  "answered_at": _iso(ans.created_at) if ans else None, "from": e.actor,
+                                  "reason": "ردّ بعد الموعد" if ans else "لم يرد حتى انتهى الموعد"})
+    return {"from": start.isoformat(), "to": end.isoformat(), "people": rows,
+            "agents": sorted(ag.values(), key=lambda d: (-d["late"], d["ext"]))}

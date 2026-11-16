@@ -220,7 +220,7 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
              ["callbacks_today", c.callbacks_today, "معاودات اليوم", ""], ["missed", c.missed, "معاودات فائتة", "bad"],
              ["no_followup", c.no_followup, "لا تحتاج متابعة", ""],
              ["forward_solved_today", c.forward_solved_today ?? 0, "حُلّت بالتحويل اليوم", "ok"],
-             ["questions", c.questions ?? 0, staff ? "أسئلة تنتظر رد الموظف" : "أسئلة تنتظر ردك", "bad"]] as const)
+             ["questions", c.questions ?? 0, staff ? "أسئلة تنتظر رد موظف المكالمة" : "أسئلة تنتظر ردك", "bad"]] as const)
             .map(([k, n, label, tone]) => (
               <button key={k} type="button" aria-pressed={state === k}
                 className={`counter ${n ? tone : ""} ${state === k ? "active" : ""}`}

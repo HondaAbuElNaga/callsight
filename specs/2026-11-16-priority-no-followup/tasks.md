@@ -34,10 +34,14 @@
   Review 2026-11-16: 3 agents, 29 findings (no high); fixed or recorded in spec Build decisions DC. 770 passed.
 - [x] DP. Forwards page (spec "Part 4: forwards page"): archive list + filters, story of one problem, numbers per
   employee / branch supervisor / manager / branch. Built + 3-agent review fixed 2026-11-16.
-- [ ] D3. Tests first, then: tracker step list, questions/answers both ways, AI summary added once, one-line view.
-        → 3-agent review.
-- [ ] D4. Tests first, then: forward people KPI + late hops (re-send / escalation replaced by the chain, DC).
-        → 3-agent review.
+- [x] D3. Tests first, then: tracker step list, questions/answers both ways, AI summary added once, one-line view.
+        → 3-agent review. Built 2026-11-16 (commit 2c5b281 + review fixes). Review: accuracy 13 findings (no high),
+        security 7 (no high): fixed (labels, counter ignores priority, tracker for pending/failed, agent name, no
+        login name on the ticket, notes only from the call's agent + warning, answer needs a question, summary =
+        shown analysis and not repeated, erase lock, prefixes without diacritics). The bugs reviewer stopped on a
+        usage limit: re-run together with D4's review.
+- [~] D4. Tests first, then: forward people KPI + late hops (re-send / escalation replaced by the chain, DC).
+        → 3-agent review. Built 2026-11-16 (tests/test_forward_d4.py); review pending.
 - [ ] D5. On the server: put the key, sync people, one real test ticket, then live on the user's "ok push".
 - [x] 9. Verify: migration up/down/up, full pytest, web build; tick acceptance criteria with real output.
 - [x] 10. Review: 3 subagents (bugs, security, accuracy) per part. → A: 2 low (2-day limit re-checked on an

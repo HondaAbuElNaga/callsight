@@ -29,6 +29,7 @@ AGENT_ALLOWED = {
     # agent-supervisor spec: own follow-up forms, calls shared with them, the summary of own/shared calls
     ("GET", "/api/calls/{call_id}/followup"), ("PUT", "/api/calls/{call_id}/followup"), ("GET", "/api/followups"),
     ("POST", "/api/calls/{call_id}/followup/notes"), ("PUT", "/api/calls/{call_id}/my-note"),
+    ("POST", "/api/calls/{call_id}/forward/messages"),    # D3: the call's agent answers the ticket's question
     ("GET", "/api/shares"), ("GET", "/api/calls/{call_id}/shares"), ("POST", "/api/shares/{share_id}/seen"),
     ("PUT", "/api/shares/{share_id}/reply"),
     ("GET", "/api/calls/{call_id}/summary"),
@@ -48,6 +49,7 @@ STAFF_ONLY = {
     ("POST", "/api/admin/users/{user_id}/password"), ("GET", "/api/admin/settings"), ("PUT", "/api/admin/settings"),
     ("GET", "/api/admin/log"), ("POST", "/api/calls/{call_id}/delete-content"),
     ("GET", "/api/forwards"), ("GET", "/api/forwards/{call_id}"),      # forwards page: staff only
+    ("GET", "/api/kpi/forwards"),                                      # D4: forward people KPI, staff only
 }
 CATCH_ALL = {("GET", "/api/{rest:path}")}       # plain 404 for unknown /api paths
 ORIGIN = "http://testserver"                     # live WebSocket Origin allowlist in these tests

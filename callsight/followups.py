@@ -370,7 +370,8 @@ class Row:
             "step": step, "round": rnd,
             "note_deadline": after_deadline(cur.end).isoformat() if step == "note_needed" and cur else None,
             "solve_by": _solve_by(self, step),
-            "forward": forward_dict(f, self.person, self.forward_proof(), self, now) if f is not None else None,
+            "forward": (forward_dict(f, self.person, self.forward_proof(), self, now, names)
+                        if f is not None else None),
             "history": self.history(now, users or {}),
             "callback": None if cb_state is None else {
                 "at": open_.callback_at.isoformat(), "due": (open_.callback_at + GRACE).isoformat(),
@@ -476,7 +477,8 @@ def _hop_dict(h: ForwardHop, p: ForwardPerson | None) -> dict:
 
 
 def forward_dict(f: CallFollowup, person: ForwardPerson | None, proof: dict | None = None,
-                 row: "Row | None" = None, now: datetime | None = None) -> dict | None:
+                 row: "Row | None" = None, now: datetime | None = None,
+                 names: dict[str, str] | None = None) -> dict | None:
     """Part 4: who the problem went to, whether the ticket was made, and (D2) what came back: closed time, solution
     text, the supervisor's calls and the proof verdict. Never the ticket's guid or the key."""
     if f.responsible_kind != "forward":
@@ -488,14 +490,14 @@ def forward_dict(f: CallFollowup, person: ForwardPerson | None, proof: dict | No
             "closed_at": f.forward_closed_at.isoformat() if f.forward_closed_at else None,
             "solution": f.forward_solution,
             "checked_at": f.forward_checked_at.isoformat() if f.forward_checked_at else None,
-            "proof": proof, **_chain_dict(row), **_talk_dict(row, now or _utcnow())}
+            "proof": proof, **_chain_dict(row), **_talk_dict(row, now or _utcnow(), names)}
 
 
-LEVEL_AR = {1: "الموظف", 2: "مشرف الفرع", 3: "الإدارة"}
+LEVEL_AR = {1: "موظف الفرع", 2: "مشرف الفرع", 3: "الإدارة"}
 PROOF_REASON_AR = {"no_call": "لم يتصل بالعميل", "not_answered": "لم يرد العميل", "short": "المكالمة 60 ثانية أو أقل",
                    "waiting_score": "بانتظار تقييم الرضا", "low_score": "الرضا 7 أو أقل", "no_ext": "لا توجد تحويلة"}
-MSG_LABEL = {"answer": "ردّ الموظف", "note": "تحديث أُرسل للتذكرة", "summary": "ملخص المكالمة (آلي) أُرسل للتذكرة",
-             "seen": "اطّلع الموظف على السؤال"}
+MSG_LABEL = {"answer": "ردّ موظف المكالمة", "note": "تحديث من موظف المكالمة على التذكرة",
+             "summary": "ملخص المكالمة (آلي) على التذكرة", "seen": "اطّلع موظف المكالمة على السؤال (لا يحتاج رداً)"}
 SOLVED_END = "حُلّت ✓"
 
 
@@ -503,18 +505,20 @@ def _iso(t: datetime | None) -> str | None:
     return t.isoformat() if t else None
 
 
-def _talk_dict(row: "Row | None", now: datetime) -> dict:
-    """D3: the questions waiting for the agent, what we wrote on the ticket, and the tracker (req 17)."""
+def _talk_dict(row: "Row | None", now: datetime, names: dict[str, str] | None = None) -> dict:
+    """D3: the questions waiting for the agent, what we wrote on the ticket, and the tracker (req 17). The AI
+    summary's text is never repeated here (it is read, audited, on the call's summary panel)."""
     if row is None:
         return {"questions": [], "messages": [], "tracker": []}
     return {"questions": [{"id": e.id, "from": e.actor, "text": e.note, "at": _iso(e.at or e.seen_at)}
                           for e in row.questions()],
-            "messages": [{"id": m.id, "kind": m.kind, "text": m.text, "status": m.status, "error": m.error,
-                          "at": _iso(m.created_at), "sent_at": _iso(m.sent_at)} for m in row.messages],
-            "tracker": tracker(row, now)}
+            "messages": [{"id": m.id, "kind": m.kind, "text": None if m.kind == "summary" else m.text,
+                          "status": m.status, "error": m.error, "at": _iso(m.created_at),
+                          "sent_at": _iso(m.sent_at)} for m in row.messages],
+            "tracker": tracker(row, now, names)}
 
 
-def tracker(row: "Row", now: datetime) -> list[dict]:
+def tracker(row: "Row", now: datetime, names: dict[str, str] | None = None) -> list[dict]:
     """Req 17, "like a delivery tracker": the forwarded problem step by step, oldest first. Each item: kind (step /
     call / question / answer / note / summary / seen), label, at, state (done / current / late / bad / future),
     detail. Questions and our messages sit at their time; the current step turns "late" after the 24 h."""
@@ -529,7 +533,9 @@ def tracker(row: "Row", now: datetime) -> list[dict]:
         items.append(it)
         return it
 
-    add("step", "سُجّلت المشكلة", f.first_filled_at, "done", f"الأولوية: {PRIORITIES.get(f.priority or '', '–')}")
+    agent = (names or {}).get(row.call.agent_ext or "") or row.call.agent_ext or "–"
+    add("step", "سُجّلت المشكلة", f.first_filled_at, "done",
+        f"موظف المكالمة: {agent} · الأولوية: {PRIORITIES.get(f.priority or '', '–')}")
     who = f"«{row.person.name}»" if row.person else "المسؤول"
     if f.forward_status == "failed":
         add("step", f"لم تُحوَّل إلى {who}", f.updated_at, "bad", f.forward_error)
@@ -561,6 +567,8 @@ def tracker(row: "Row", now: datetime) -> list[dict]:
             acts.append(h.closed_at)
         got = min(acts, default=None)
         recv = add("step", f"استلمها {holder}", got, "done" if got else "future")
+        if got is None and h.result in ("passed_on", "closed_by_other"):
+            recv["state"], recv["detail"] = "bad", "لم يتخذ أي إجراء على التذكرة"
         if got is None and h.result == "open" and current is None:
             recv["state"] = "current"
             current = recv
@@ -569,7 +577,8 @@ def tracker(row: "Row", now: datetime) -> list[dict]:
                 sc = row.scores.get(c.id)
                 ok = c.status == "answered"
                 add("call", f"اتصل {holder} بالعميل", c.start_time, "done" if ok else "bad",
-                    (f"ردّ العميل · {c.talk_seconds or 0} ث" + (f" · الرضا {sc}/10" if sc is not None else ""))
+                    (f"ردّ العميل · {c.talk_seconds or 0} ث"
+                     + (f" · الرضا {sc}/10" if sc is not None else " · بانتظار تقييم الرضا"))
                     if ok else "لم يرد العميل")
         if h.result == "solved":
             solved = True
@@ -587,14 +596,14 @@ def tracker(row: "Row", now: datetime) -> list[dict]:
         elif h.result == "open" and closed(h):
             pr = row.forward_proof() if h is sup_hop else None
             reason = PROOF_REASON_AR.get(pr["reason"] or "", "") if pr and not pr["ok"] else ""
-            add("step", f"أغلقها {holder}", h.closed_at, "bad", f"غير مؤكد: {reason}" if reason else "غير مؤكد",
-                solution=h.solution)
+            add("step", f"حُلّت عند {holder} (غير مؤكد)", h.closed_at, "bad",
+                f"غير مؤكد: {reason}" if reason else None, solution=h.solution)
     for e in row.events:
         if is_question(e, us):
             add("question", f"سؤال من «{e.actor or '–'}»", e.at or e.seen_at, "done", e.note)
     for m in row.messages:
         add(m.kind, MSG_LABEL.get(m.kind, m.kind), m.created_at,
-            "bad" if m.status == "failed" else "done", m.text if m.kind != "seen" else None,
+            "bad" if m.status == "failed" else "done", m.text if m.kind in ("answer", "note") else None,
             status=m.status, error=m.error)
     if not solved:
         last = add("step", SOLVED_END, None, "future", end=True)
@@ -922,7 +931,7 @@ def add_note(s: Session, call: Call, data: dict, user: AppUser, exts, now: datet
                          expected_at=clean["expected_at"], callback_at=clean["callback_at"],
                          created_by=user.id, created_at=now)
     s.add(n)
-    if forwarded(row.form) and (clean["what_happened"] or "").strip():
+    if forwarded(row.form) and (clean["what_happened"] or "").strip() and user.ext == call.agent_ext:
         # D3: the note is written on the ticket too (the person holding it sees the update)
         s.add(ForwardMessage(call_id=call.id, kind="note", text=clean["what_happened"].strip()[:600],
                              created_by=user.id, created_at=now, status="pending"))

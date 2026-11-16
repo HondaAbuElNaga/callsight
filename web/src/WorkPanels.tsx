@@ -123,11 +123,13 @@ export const RESP_LABEL: Record<string, string> = { customer: "العميل", ot
 function ForwardLine({ f }: { f: Forward }) {
   const who = `${f.name ?? "المسؤول"}${f.branch ? ` (${f.branch})` : ""}`;
   const sup = f.hops?.filter((h) => h.level === 2 && h.result !== "pending").pop();
-  if (f.status === "sent" && f.tracker?.length)
+  if (f.tracker?.length)
     return <>
       <p>حُوّلت إلى {who}{f.ticket_number ? ` · تذكرة رقم ${f.ticket_number}` : ""}</p>
       <Tracker items={f.tracker} />
-      {f.due_at && <p className="small">مهلة من يحملها الآن حتى {formatDateTime(f.due_at)}</p>}
+      {f.due_at && <p className="small muted">المهلة عند {f.holders?.length ? f.holders.join("، ") : "من يحملها"}:
+        حتى {formatDateTime(f.due_at)} (24 ساعة لكل شخص)</p>}
+      {f.status === "failed" && <p className="bad-text">عدّل النموذج واختر من جديد.</p>}
     </>;
   if (f.status === "sent")
     return <>
@@ -319,13 +321,15 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
       {view.forward && <ForwardLine f={view.forward} />}
       {view.forward && !staff && <AnswerBox f={view.forward} busy={busy} onSend={sendAnswer} />}
       {view.forward && staff && (view.forward.questions?.length ?? 0) > 0 &&
-        <p className="bad-text">سؤال من «{view.forward.questions![0].from ?? "المسؤول"}» ينتظر رد الموظف.</p>}
+        <p className="bad-text">سؤال من «{view.forward.questions![view.forward.questions!.length - 1].from ?? "المسؤول"}» ينتظر رد موظف المكالمة.</p>}
 
       {noteStep && (
         <fieldset disabled={busy} className="form note-box">
           <legend>{view.step === "note_needed"
             ? `ملاحظة بعد مكالمة المعاودة${view.callback?.by_ext ? ` (اتصل ${view.callback.by_ext}${view.callback.answered ? "، ردّ العميل" : "، لم يرد"})` : ""}`
             : "تحديث المتابعة"}</legend>
+          {view.forward?.status === "sent" && <p className="muted small">تُكتب هذه الملاحظة أيضاً في التذكرة في نظام
+            خدمة العملاء، ويراها {view.forward.holders?.length ? view.forward.holders.join("، ") : view.forward.name ?? "المسؤول"}.</p>}
           <ProblemFields p={note} set={setNote} options={view.options} high={view.form?.priority === "high"}
             forwardedTo={view.forward}
             label={view.step === "note_needed" ? "ماذا حدث في مكالمة المعاودة؟" : "ماذا حدث في المشكلة؟"} />

@@ -461,6 +461,35 @@ solved, the times".
     Not built yet: the per-person late-hop KPI (D4). Erasing a call does not close its tickets there; a failed
     "close the other managers' copies" is shown on the line but not retried.
 
+- **Part 4 D3 (built 2026-11-16):** table `forward_message` (migration 0020; after main's 0016_rating_pick the forward
+  migrations are 0017–0019): what we write on the ticket — the agent's answer, the agent's update notes, the call's AI
+  summary (once, the analysis the call panel shows) — sent by the 5-minute `forward_send` job to every open ticket of
+  the problem (managers' copies too). Closed ticket → "بانتظار إعادة فتح التذكرة"; not written in 3 days or nothing
+  open any more → failed with the reason. Our texts start with fixed words ("رد موظف خدمة العملاء…"), so a re-read
+  never takes them for a question (compared without diacritics); the PBX account = the actor of the `created` item.
+  - Question = a `followup` item (not the close) by anyone else. One answer covers every question read before it.
+    An answer needs a waiting question (bounds what reaches the ticket); the agent's own updates go as notes.
+  - Not in the spec, chosen: **"اطّلعت، لا يحتاج رداً"** (seen) closes the questions without writing anything there,
+    because every message of the holder counts as a question (also plain updates). In D4 it counts as an answer.
+  - Only the call's agent answers (supervisors watch, 403). A note goes on the ticket only when the call's agent
+    writes it (the note box says so); the ticket shows the agent's PBX name, never a login name.
+  - The summary's text is not repeated in the panel (it is read, audited, on the summary panel).
+  - Counter "أسئلة تنتظر ردك" counts every priority (req 13); a question puts the problem first in "تحتاج حل"
+    (within its priority) and first in "يحتاج عملاً".
+  - Tracker labels: "موظف الفرع" (level 1) vs "موظف المكالمة" (our agent). A holder who passed it on without any
+    action shows "لم يتخذ أي إجراء" in red. Questions from an earlier holder stay open until answered (the answer goes
+    to the current holder).
+  - Erasing a call locks the call row first; the sender skips a locked call. Texts already written on the other
+    system's tickets are NOT removed there by an erase (must be removed there by hand).
+- **Part 4 D4 (built 2026-11-16):** KPI page section "التحويلات: من حلّ في وقته ومن تأخر" (staff only, show-only, by
+  the KPI page's من/إلى = the day each person GOT the problem; route `/api/kpi/forwards`): per level and person:
+  received, solved, solved in 24 h (+ %), average time to solve (his own time), still with him, **late = mistakes**
+  (24 h ran out: passed on / still with him / solved after / a manager whose copy another manager solved after his
+  24 h); clicking the count lists each case (time, reason, ticket, our agent) and a case opens the forward story. A
+  branch supervisor's late case says why his close did not count (no call / not answered / ≤ 60 s / score ≤ 7).
+  Agents' side: questions answered on time (by 23:00 that day, or 2 h after one read after 21:00), late, waiting,
+  with the late list; the الموظف filter limits this table. Not in the PDF report (page only).
+
 ## Acceptance criteria
 - [x] Tests: form without priority → 422; bad code → 422; each code saves and comes back with the right `priority_ar`;
       `no_followup` with a priority sent → stored NULL; note with `priority` → 422; supervisor edit can change it.

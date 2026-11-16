@@ -33,6 +33,21 @@ def register(app: FastAPI, *, DB, Manager, audit_analysis) -> None:
         out["from"], out["to"] = start.isoformat(), end.isoformat()
         return out
 
+    @app.get("/api/kpi/forwards")
+    def forward_kpi(user: Manager, s: DB,
+                    date_from: Annotated[date | None, Query(alias="from")] = None,
+                    date_to: Annotated[date | None, Query(alias="to")] = None,
+                    agent: Annotated[str | None, Query(pattern=r"^\d{1,6}$")] = None) -> dict:
+        """D4 (req 20): the people problems were forwarded to (late = 24 h ran out, one line each) and the
+        agents' answers to their questions. Staff only, show-only, by the KPI page's من/إلى."""
+        from .. import forward_report as fr
+        today = datetime.now(RIYADH).date()
+        end = date_to or today
+        start = date_from or end - timedelta(days=6)
+        if start > end or (end - start).days >= fr.MAX_DAYS:
+            raise HTTPException(422, "bad date range (at most 366 days)")
+        return fr.people_kpi(s, start, end, agent=agent)
+
     @app.get("/api/forwards/{call_id}")
     def forward_story(call_id: int, user: Manager, s: DB) -> dict:
         from .. import forward_report as fr
