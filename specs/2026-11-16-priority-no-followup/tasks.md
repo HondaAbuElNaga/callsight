@@ -25,11 +25,15 @@
         callback-first order kept as a recorded choice. Round 2 (bugs): 2 more (failed + notes: other answers via a
         note; 429 on the ticket retried), fixed. Verify: 733 passed, 1 known .env failure, 9 skipped; web build OK;
         migration 0016 up/down/up OK.
-- [~] D2. Tests first, then: ticket polling + forward_event, ingest of supervisors' calls (team `forward`, hidden from
+- [x] D2. Tests first, then: ticket polling + forward_event, ingest of supervisors' calls (team `forward`, hidden from
         team views), solved check (closedAt + last call rules), forward_solved / unconfirmed. → 3-agent review.
+  Review 2026-11-16: 3 agents, 15 findings; fixed (see spec Build decisions D2). Not fixed: "تحتاج حل" pre-filter still loads confirmed forward solves (done with the chain's per-hop result); counter = closed today.
+- [ ] DC. Forward chain (spec "Part 4 change"): all employees in the drop-down, forward_hop table, 24 h → branch
+  supervisor → 4 managers (copy tickets, first close wins), per-hop polling/proof/watch. Waits for the user's approval
+  and the 4 managers' names.
 - [ ] D3. Tests first, then: tracker step list, questions/answers both ways, AI summary added once, one-line view.
         → 3-agent review.
-- [ ] D4. Tests first, then: re-send (reopen), escalation + supervisor close with cause, forward people KPI + mistakes.
+- [ ] D4. Tests first, then: forward people KPI + late hops (re-send / escalation replaced by the chain, DC).
         → 3-agent review.
 - [ ] D5. On the server: put the key, sync people, one real test ticket, then live on the user's "ok push".
 - [x] 9. Verify: migration up/down/up, full pytest, web build; tick acceptance criteria with real output.
