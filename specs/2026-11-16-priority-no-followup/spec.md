@@ -211,7 +211,11 @@
    {guid, number, message}. Errors `{message}`: 401 token/userGuid, 403 no rights, 400 missing customer / text / type,
    400 person has no customer-service rights.
 
-**Fits the spec:** the drop-down list (req 12, open question 5 → the API list, by group → branch → person) and sending
+**User decision (2026-11-16): forward only to supervisors** ("only i need to send to المشرفين not all employee"):
+the drop-down shows only employees with `isBranchSupervisor = true` (about one per branch, 19 branches today),
+grouped men/women → branch. So the PBX extensions (req 16) are few and the user can give them by hand (M6 not needed).
+
+**Fits the spec:** the drop-down list (req 12, open question 5 → the API list, supervisors only, by group → branch) and sending
 the problem (priority, text, forward person). Mapping: high → 3, medium → 2, low → 1 (4 "عاجلة" not used).
 
 **Missing (asked from the other system's developer; parts that need them wait):**
@@ -222,8 +226,8 @@ the problem (priority, text, forward person). Mapping: high → 3, medium → 2,
 - M3 **Questions and answers** on a ticket (read new questions, post the agent's answer). Blocks req 18.
 - M4 **Add text to a ticket / reopen it** (AI summary later, re-send reason). Blocks req 6 update, req 21.
 - M5 (nice) "received / opened" time → tracker step 3.
-- M6 (nice) **PBX extension of each employee** in forward-targets; otherwise the user maps the people by hand in
-  `config/forward_people.yaml` (req 16), and only mapped people can confirm a solve.
+- M6 not needed (supervisors only): the user gives each supervisor's PBX extension in `config/forward_people.yaml`
+  (req 16); only mapped people can confirm a solve.
 - M7 An **API key** for our server (paths: forward-targets, tickets + M1–M4), and whether `userGuid` is still needed
   with the key. callType for our problems (complaint needs `complainSource`: its values?).
 
