@@ -256,10 +256,59 @@ system with "مشرف خدمة العملاء" rights (tickets are recorded unde
 - **Forward list = only the 7 supervisors in `config/forward_people.yaml`** for now (branch, name, extension 101, 201,
   301, 401, 501, 601, 901); more when the user sends them. Their `guid` is matched by branch + name when the API key
   arrives.
-- **To decide in the full design (found by Claude):** today only calls that touch team extensions (104, 116, 119, 114)
+- **Supervisors' calls (user said "ok", 2026-11-16):** today only calls that touch team extensions (104, 116, 119, 114)
   are saved, so a supervisor's call from 101 to the customer is **not stored** → no proof of solving. Part 4 must also
   keep calls from these 7 extensions to customers who have an open forwarded problem (and their recordings, for the
-  satisfaction score > 7). That means branch supervisors' calls get recorded, transcribed and scored here.
+  satisfaction score > 7). That means branch supervisors' calls get recorded, transcribed and scored here. **Allowed by the user.**
+
+## Part 4 full design (2026-11-16, waiting for the user's approval)
+**Settings (server `.env`, never in the code or the browser):** `CS_API_URL=https://api4.sstli.com/api/customer-service`,
+`CS_API_KEY` (X-Api-Key), `CS_USER_GUID` (the PBX account). Empty key = part 4 off (the form works as today).
+
+**D1 — Forward and send**
+- People: `config/forward_people.yaml` (7 supervisors). A daily job (and a CLI `sync-forward-people`) reads
+  `forward-targets`, fills each person's `guid` by branch + name into a table `forward_person` (guid, name, branch,
+  ext, active); a person missing from the API turns inactive (cannot be chosen, old problems keep their name).
+- Form: "من يجب أن يحلّها؟" gets a new kind **"مشرف فرع"** + a drop-down of the active supervisors (branch — name);
+  العميل stays; our own users / قسم آخر stay for problems that are not forwarded. Optional "ملاحظة للمسؤول" ≤ 500.
+- Saved on the form (migration 0016): `forward_person_id`, `forward_note`, `forward_status`
+  (`pending` / `sent` / `failed`), `forward_ticket_guid`, `forward_ticket_number`, `forwarded_at`, `forward_error`.
+- Send (worker job, right after the save, then retried every 5 min, up to 24 h): `customers/by-phone`
+  (createIfMissing=true) → `tickets` {callType 0, priority high→3 / medium→2 / low→1, close=false, forwardToGuid,
+  notes ≤ 590: customer number · priority · expected solve time · agent's text · agent's note · agent name/ext ·
+  call time · ticket link to our call}. A 400 "person not in the forward list" or bad number → `failed` with the
+  message, the line shows it and the agent picks again; 401/403 → stop all sends and warn the admin (bad key).
+- The agent cannot mark a forwarded problem solved (notes can still be written; their text is added to the ticket).
+- Steps: `forwarded` "عند المسؤول" (in "تحتاج حل"); expected time passed → `forward_overdue` "تأخر عند المسؤول".
+
+**D2 — Status back + proof**
+- Every 5 min the worker reads `GET tickets/{guid}` for open forwarded problems; stores the timeline items
+  (table `forward_event`: kind, type, note, at, actor; new ones only) and `closedAt`.
+- Supervisors' calls: ingest also keeps an **outbound** call from a `forward_person.ext` when its number matches a
+  customer with a problem forwarded to that person (after `forwarded_at`). Stored with team `forward`, so they never
+  appear in team lists, KPIs, the live board or reports; only in the tracker. Recording + transcript + score as usual.
+- Solved check (req 12, Q8–Q9): closedAt set **and** the latest call of that supervisor to the customer after the
+  forward was answered, > 60 s talk, `llm_score` > 7 → `forward_solved` (leaves "تحتاج حل"). Otherwise
+  "حُلّت (غير مؤكد)" with the reason (no call / not answered / ≤ 60 s / score ≤ 7 / waiting for the score), stays.
+  Note: on AWS the score needs the GPU server (not set up yet) → until then such problems wait at "بانتظار تقييم الرضا".
+
+**D3 — Tracker + questions**
+- Call panel, vertical step list (req 17): سُجّلت · حُوّلت (or "لم يُرسل بعد") · استلمها المسؤول (ticked at the
+  supervisor's first action) · each call · حُلّت ✓ / reason in red; "متأخر" in red when late.
+- Questions (req 18): a timeline `followup` item written by anyone other than the PBX account = a message from the
+  supervisor → "سؤال من «name»" in "تحتاج حل" + counter "أسئلة تنتظر ردك"; the agent's answer (≤ 500) is posted with
+  `tickets/{guid}/followup` (close=false). Closed ticket: the answer waits until reopen (shown).
+- AI summary (Q6): when the call's summary exists, it is added once to the ticket the same way.
+- Supervisor one-line view (req 15): "who solves it" = supervisor name; state from the same steps.
+
+**D4 — Re-send, escalation, KPI**
+- Re-send (req 21, Q12–Q13): after the expected time passed, once, reason required → `tickets/{guid}/reopen`.
+  Second failure → `escalated` "عند المشرف" for our supervisor, who closes it here, picks agent or forward person as
+  the cause (+ note); the ticket is then closed there with `followup` close=true and that note.
+- KPI page (req 20): forward people table + mistakes lists, agent's "أخطاء بقرار المشرف"; supervisor/admin only.
+
+**Tests:** the other system is faked in tests (no real call); one manual check with the real key on the server
+(sync people, one test ticket to a supervisor who knows it is a test) before going live.
 
 ## Build decisions (3-agent reviews per part, 2026-11-16)
 - An **unchanged** expected solve time is not re-checked against the 2-day limit when a form is saved again (forms from
