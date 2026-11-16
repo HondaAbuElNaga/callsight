@@ -39,6 +39,8 @@ class FollowupIn(BaseModel):
     responsible_user_id: StrictInt | None = None
     expected_at: datetime | None = None
     callback_at: datetime | None = None
+    forward_person_id: StrictInt | None = None                    # part 4: responsible_kind "forward"
+    forward_note: str | None = Field(default=None, max_length=500)
 
 
 class NoteIn(BaseModel):
@@ -101,8 +103,14 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         if row is None:
             return {"needed": False, "enabled": start is not None}
         d = row.as_dict(now, _names(s), usernames(s))
-        return {"needed": True, "enabled": True, **d, "can_edit": may_edit(row.form, c, user, now) is None,
-                "lock_reason": may_edit(row.form, c, user, now), "options": fu.responsible_options(s)}
+        from .. import forward
+        on = cfg.forward_enabled()
+        sent = row.form is not None and row.form.forward_status == "sent"
+        why = "forwarded to the branch supervisor: the form can no longer change" if sent else None
+        why = why or may_edit(row.form, c, user, now)
+        return {"needed": True, "enabled": True, **d, "can_edit": why is None, "lock_reason": why,
+                "options": fu.responsible_options(s), "forward_enabled": on,
+                "forward_options": forward.options(s) if on else []}
 
     def may_edit(form, c: Call, user: AppUser, now: datetime) -> str | None:
         """None = may save. Agents: own call, before the form deadline, and never once the callback time passed."""
@@ -137,10 +145,15 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         if why:
             raise HTTPException(403, why)
         try:
-            fu.save(s, c, body.model_dump(), user, now)
+            f = fu.save(s, c, body.model_dump(), user, now, forward_ok=cfg.forward_enabled())
         except fu.FormError as exc:
             s.rollback()
             raise HTTPException(422, str(exc)) from None
+        if f.forward_status == "pending" and cfg.forward_send is not None:
+            try:
+                cfg.forward_send()          # send now; the 5-minute job retries anyway if this fails
+            except Exception:  # noqa: BLE001  the form is saved, the send is only sooner
+                pass
         return form_payload(s, c, user, now)
 
     @app.post("/api/calls/{call_id}/followup/notes")

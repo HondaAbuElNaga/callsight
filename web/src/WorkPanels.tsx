@@ -2,8 +2,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   api, Refused, Unauthorized,
-  type AgentSummary, type CallShares, type FollowupIn, type FollowupView, type HistoryEntry, type Me, type NoteIn,
-  type Person, type Share,
+  type AgentSummary, type CallShares, type Forward, type ForwardOption, type FollowupIn, type FollowupView,
+  type HistoryEntry, type Me, type NoteIn, type Person, type Share,
 } from "./api";
 import {
   CALLBACK_LABEL, PRIORITIES, PRIORITY_CLASS, PRIORITY_LABEL, STEP_CLASS, type Priority, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, fromRiyadhInput, ringText, toRiyadhInput,
@@ -26,8 +26,9 @@ type Solved = "" | "yes" | "no";
 const MAX_SOLVE_MS = 2 * 24 * 3600_000;     // a problem not solved: expected solve time within 2 days (server checks too)
 const nowIn = () => toRiyadhInput(new Date().toISOString());
 const maxIn = () => toRiyadhInput(new Date(Date.now() + MAX_SOLVE_MS).toISOString());
-interface Problem { what: string; solved: Solved; resp: string; expected: string; callback: string }
-const EMPTY: Problem = { what: "", solved: "", resp: "", expected: "", callback: "" };
+// resp: "user:<id>" / "customer" / "other_department" / "forward:<id>" (form) / "forward" (note on a forwarded problem)
+interface Problem { what: string; solved: Solved; resp: string; expected: string; callback: string; fnote: string }
+const EMPTY: Problem = { what: "", solved: "", resp: "", expected: "", callback: "", fnote: "" };
 
 const MAX_SOLVE_HIGH_MS = 24 * 3600_000;    // ... within 1 day when the priority is high
 
@@ -48,35 +49,48 @@ function problemBody(p: Problem, keepExpected = "", priority = "", askPriority =
   if (p.callback && left(p.callback) <= 0) return { error: "وقت معاودة الاتصال يجب أن يكون في المستقبل" };
   if (p.callback && left(p.callback) > MAX_SOLVE_MS) return { error: "وقت معاودة الاتصال خلال يومين على الأكثر" };
   const [kind, uid] = p.resp.split(":");
-  return { body: { what_happened: p.what.trim(), solved: false, ...prio, responsible_kind: kind,
-    responsible_user_id: uid ? Number(uid) : null, expected_at: fromRiyadhInput(p.expected),
-    ...(p.callback ? { callback_at: fromRiyadhInput(p.callback) } : {}) } };
+  const who = kind === "forward"
+    ? (uid ? { forward_person_id: Number(uid), forward_note: p.fnote.trim() } : {})   // the person: first form only
+    : { responsible_user_id: uid ? Number(uid) : null };
+  return { body: { what_happened: p.what.trim(), solved: false, ...prio, responsible_kind: kind, ...who,
+    expected_at: fromRiyadhInput(p.expected), ...(p.callback ? { callback_at: fromRiyadhInput(p.callback) } : {}) } };
 }
 
-function ProblemFields({ p, set, options, label, afterText, high }:
-  { p: Problem; set: (p: Problem) => void; options: Person[]; label: string; afterText?: ReactNode; high?: boolean }) {
+function ProblemFields({ p, set, options, label, afterText, high, forwardOptions = [], forwardedTo }:
+  { p: Problem; set: (p: Problem) => void; options: Person[]; label: string; afterText?: ReactNode; high?: boolean;
+    forwardOptions?: ForwardOption[];   // first form, link on: the branch supervisors
+    forwardedTo?: Forward | null }) {   // a note on a forwarded problem: only the supervisor closes it
   const max = high ? toRiyadhInput(new Date(Date.now() + MAX_SOLVE_HIGH_MS).toISOString()) : maxIn();
+  const toSupervisor = p.resp.startsWith("forward:");
   return (
     <>
       <label>{label}
         <textarea value={p.what} maxLength={500} rows={3} onChange={(e) => set({ ...p, what: e.target.value })} />
       </label>
       {afterText}
-      <div className="row">
-        هل حُلّت المشكلة؟
-        <label><input type="radio" checked={p.solved === "yes"} onChange={() => set({ ...p, solved: "yes" })} /> نعم</label>
-        <label><input type="radio" checked={p.solved === "no"} onChange={() => set({ ...p, solved: "no" })} /> لا</label>
-      </div>
+      {forwardedTo ? <p className="muted small">المشكلة عند مشرف الفرع {forwardedTo.name ?? ""}: هو من يغلقها.</p> : (
+        <div className="row">
+          هل حُلّت المشكلة؟
+          <label><input type="radio" checked={p.solved === "yes"} onChange={() => set({ ...p, solved: "yes" })} /> نعم</label>
+          <label><input type="radio" checked={p.solved === "no"} onChange={() => set({ ...p, solved: "no" })} /> لا</label>
+        </div>
+      )}
       {p.solved === "no" && (
         <>
-          <label>من يجب أن يحلّها؟
+          {!forwardedTo && <label>من يجب أن يحلّها؟
             <select value={p.resp} onChange={(e) => set({ ...p, resp: e.target.value })}>
               <option value="">اختر…</option>
               {options.map((o) => <option key={o.id} value={`user:${o.id}`}>{o.username}{o.ext ? ` · ${o.ext}` : ""}</option>)}
               <option value="customer">العميل</option>
               <option value="other_department">قسم آخر</option>
+              {forwardOptions.length > 0 && <optgroup label="مشرف فرع (يُحوَّل إلى نظام خدمة العملاء)">
+                {forwardOptions.map((o) => <option key={o.id} value={`forward:${o.id}`}>{o.branch} · {o.name}</option>)}
+              </optgroup>}
             </select>
-          </label>
+          </label>}
+          {toSupervisor && <label>ملاحظة لمشرف الفرع (اختياري)
+            <textarea value={p.fnote} maxLength={500} rows={2} onChange={(e) => set({ ...p, fnote: e.target.value })} />
+          </label>}
           <label>وقت الحل المتوقع ({high ? "خلال يوم واحد: أولوية عالية" : "خلال يومين على الأكثر"}) <input type="datetime-local" value={p.expected} min={nowIn()} max={max} onChange={(e) => set({ ...p, expected: e.target.value })} /></label>
           <label>وقت معاودة الاتصال بالعميل (اختياري) <input type="datetime-local" value={p.callback} min={nowIn()} max={maxIn()} onChange={(e) => set({ ...p, callback: e.target.value })} /></label>
         </>
@@ -85,8 +99,19 @@ function ProblemFields({ p, set, options, label, afterText, high }:
   );
 }
 
-const NOTE_STEPS: string[] = ["note_needed", "waiting_solution", "solution_overdue"];
-export const RESP_LABEL: Record<string, string> = { customer: "العميل", other_department: "قسم آخر" };
+const NOTE_STEPS: string[] = ["note_needed", "waiting_solution", "solution_overdue", "forwarded", "forward_overdue"];
+export const RESP_LABEL: Record<string, string> = { customer: "العميل", other_department: "قسم آخر", forward: "مشرف فرع" };
+
+/** Part 4: where the forwarded problem is (ticket made / still trying / refused by the other system). */
+function ForwardLine({ f }: { f: Forward }) {
+  const who = `${f.name ?? "مشرف الفرع"}${f.branch ? ` (${f.branch})` : ""}`;
+  if (f.status === "sent")
+    return <p>حُوّلت إلى {who}{f.ticket_number ? ` · تذكرة رقم ${f.ticket_number}` : ""}
+      {f.forwarded_at && <span className="muted small"> · {formatDateTime(f.forwarded_at)}</span>}</p>;
+  if (f.status === "failed")
+    return <p className="bad-text">لم تُحوَّل إلى {who}: {f.error ?? "رفض النظام الآخر"}. عدّل النموذج واختر من جديد.</p>;
+  return <p className="muted">لم يُرسل بعد إلى {who}، نحاول مرة أخرى{f.error ? ` (${f.error})` : ""}.</p>;
+}
 
 function History({ items }: { items: HistoryEntry[] }) {
   if (items.length === 0) return null;
@@ -101,7 +126,8 @@ function History({ items }: { items: HistoryEntry[] }) {
             <p>{h.what_happened}</p>
             <p className="small">
               {h.solved ? <span className="state ok">حُلّت</span> : <span className="state warn">لم تُحل</span>}
-              {h.solved === false && <> · المسؤول: {h.responsible ?? RESP_LABEL[h.responsible_kind ?? ""] ?? "–"}</>}
+              {h.solved === false && <> · المسؤول: {h.responsible ?? RESP_LABEL[h.responsible_kind ?? ""] ?? "–"}
+                {h.responsible_kind === "forward" && h.responsible ? " (مشرف فرع)" : ""}</>}
               {h.solved === false && h.expected_at && <> · الحل المتوقع: {formatDateTime(h.expected_at)}</>}
               {h.callback_at && <> · معاودة الاتصال: {formatDateTime(h.callback_at)}</>}
               {h.callback_status && <> <span className={`state ${CB_CLASS[h.callback_status]}`}>{CALLBACK_LABEL[h.callback_status]}</span></>}
@@ -137,13 +163,15 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
 
   const load = (v: FollowupView) => {
     setView(v);
-    setNote(EMPTY);
+    // a note on a forwarded problem: never "solved", the person stays (the server checks both)
+    setNote(v.needed && v.forward ? { ...EMPTY, solved: "no", resp: "forward" } : EMPTY);
     if (!v.needed || !v.form) { setPrio(""); return; }
     const f = v.form;
     setPrio(f.priority ?? "");
     setForm({ what: f.what_happened ?? "", solved: f.no_followup || f.solved === null ? "" : f.solved ? "yes" : "no",
-      resp: f.responsible_kind === "user" ? `user:${f.responsible_user_id}` : f.responsible_kind ?? "",
-      expected: toRiyadhInput(f.expected_at), callback: toRiyadhInput(f.callback_at) });
+      resp: f.responsible_kind === "user" ? `user:${f.responsible_user_id}`
+        : f.responsible_kind === "forward" ? `forward:${f.forward_person_id}` : f.responsible_kind ?? "",
+      expected: toRiyadhInput(f.expected_at), callback: toRiyadhInput(f.callback_at), fnote: f.forward_note ?? "" });
   };
   useEffect(() => { api.followup(callId).then(load).catch(fail); /* eslint-disable-next-line */ }, [callId]);
 
@@ -186,6 +214,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
         </p>
       )}
       {view.came_back && <p className="tag">اتصل العميل مرة أخرى خلال 72 ساعة بعد الحل</p>}
+      {view.forward && <ForwardLine f={view.forward} />}
 
       {noteStep && (
         <fieldset disabled={busy} className="form note-box">
@@ -193,6 +222,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
             ? `ملاحظة بعد مكالمة المعاودة${view.callback?.by_ext ? ` (اتصل ${view.callback.by_ext}${view.callback.answered ? "، ردّ العميل" : "، لم يرد"})` : ""}`
             : "تحديث المتابعة"}</legend>
           <ProblemFields p={note} set={setNote} options={view.options} high={view.form?.priority === "high"}
+            forwardedTo={view.forward}
             label={view.step === "note_needed" ? "ماذا حدث في مكالمة المعاودة؟" : "ماذا حدث في المشكلة؟"} />
           <button type="button" className="primary" onClick={submitNote}>حفظ الملاحظة</button>
         </fieldset>
@@ -206,6 +236,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
           {view.form && <legend>تعديل النموذج</legend>}
           {!view.form && <button type="button" onClick={() => saveForm({ no_followup: true })}>لا تحتاج متابعة (رقم خطأ، استفسار انتهى…)</button>}
           <ProblemFields p={form} set={setForm} options={view.options} label="ماذا حدث؟" high={prio === "high"}
+            forwardOptions={view.forward_enabled ? view.forward_options : []}
             afterText={<label>الأولوية
               <select value={prio} required onChange={(e) => setPrio(e.target.value)}>
                 <option value="">اختر…</option>
@@ -224,6 +255,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
 function lockText(reason: string): string {
   if (reason.startsWith("after the form deadline")) return "انتهى وقت التعبئة";
   if (reason.startsWith("the callback time")) return "مرّ وقت معاودة الاتصال";
+  if (reason.startsWith("forwarded to the branch supervisor")) return "حُوّلت المشكلة لمشرف الفرع";
   return "ليست مكالمتك";
 }
 

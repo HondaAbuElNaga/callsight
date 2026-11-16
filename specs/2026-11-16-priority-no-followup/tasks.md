@@ -16,7 +16,7 @@
         developer's answers + user approval. Then: write
         requirement 12 in full (endpoints, auth, solved callback), user approves, tests first, build. Parts 1–3 can go
         live before part 4.
-- [ ] D0. User approves "Part 4 full design" in spec.md; user sends CS_API_KEY + CS_USER_GUID (privately, to the server).
+- [~] D0. Approved 2026-11-16 ("approve"). Still waiting: user sends CS_API_KEY + CS_USER_GUID (privately, to the server).
 - [ ] D1. Tests first, then: forward_person table + sync, migration 0016, form kind "مشرف فرع" + drop-down + note,
         send job with retry, steps forwarded / forward_overdue, no solve by agent. → 3-agent review.
 - [ ] D2. Tests first, then: ticket polling + forward_event, ingest of supervisors' calls (team `forward`, hidden from

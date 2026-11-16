@@ -261,7 +261,7 @@ system with "مشرف خدمة العملاء" rights (tickets are recorded unde
   keep calls from these 7 extensions to customers who have an open forwarded problem (and their recordings, for the
   satisfaction score > 7). That means branch supervisors' calls get recorded, transcribed and scored here. **Allowed by the user.**
 
-## Part 4 full design (2026-11-16, waiting for the user's approval)
+## Part 4 full design (2026-11-16, approved by the user the same day)
 **Settings (server `.env`, never in the code or the browser):** `CS_API_URL=https://api4.sstli.com/api/customer-service`,
 `CS_API_KEY` (X-Api-Key), `CS_USER_GUID` (the PBX account). Empty key = part 4 off (the form works as today).
 

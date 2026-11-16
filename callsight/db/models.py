@@ -447,7 +447,9 @@ class CallFollowup(Base):
     (callsight/followups.py), never stored."""
     __tablename__ = "call_followup"
     __table_args__ = (CheckConstraint("priority IN ('high', 'medium', 'low') OR priority IS NULL",
-                                      name="ck_call_followup_priority"),)
+                                      name="ck_call_followup_priority"),
+                      CheckConstraint("forward_status IN ('pending', 'sent', 'failed') OR forward_status IS NULL",
+                                      name="ck_call_followup_forward_status"))
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), unique=True)
     owner_ext: Mapped[str] = mapped_column(String(16), index=True)           # call.agent_ext when filled
@@ -465,6 +467,32 @@ class CallFollowup(Base):
     first_filled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_by: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # spec 2026-11-16-priority-no-followup part 4 (D1): responsible_kind "forward" = a branch supervisor in the
+    # customer-service system. Status: pending (to send / retrying) -> sent (ticket made) / failed (error shown).
+    forward_person_id: Mapped[int | None] = mapped_column(ForeignKey("forward_person.id"))
+    forward_note: Mapped[str | None] = mapped_column(String(500))
+    forward_status: Mapped[str | None] = mapped_column(String(10))
+    forward_ticket_guid: Mapped[str | None] = mapped_column(String(64))
+    forward_ticket_number: Mapped[int | None] = mapped_column(Integer)
+    forwarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))   # the ticket was made
+    forward_error: Mapped[str | None] = mapped_column(String(300))
+    forward_tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class ForwardPerson(Base):
+    """A branch supervisor who can receive a forwarded problem (config/forward_people.yaml, part 4 D1). guid = their
+    id in the customer-service system (from the yaml, or matched by name on sync); ext = PBX extension (proof calls).
+    active = still in the yaml and, after a sync, still a supervisor in that system. Not personal data of a call."""
+    __tablename__ = "forward_person"
+    __table_args__ = (UniqueConstraint("branch", "name", name="uq_forward_person_branch_name"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    branch: Mapped[str] = mapped_column(String(100))
+    name: Mapped[str] = mapped_column(String(100))
+    ext: Mapped[str | None] = mapped_column(String(16))
+    guid: Mapped[str | None] = mapped_column(String(64), unique=True)
+    full_name: Mapped[str | None] = mapped_column(String(200))     # as the other system writes it (after a sync)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class CallFollowupNote(Base):

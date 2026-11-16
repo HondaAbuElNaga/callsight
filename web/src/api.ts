@@ -222,8 +222,10 @@ export interface FollowupForm {
   solved: boolean | null;
   priority: "high" | "medium" | "low" | null;   // first form only; null = old form or no follow-up
   priority_ar: string | null;
-  responsible_kind: "user" | "customer" | "other_department" | null;
+  responsible_kind: "user" | "customer" | "other_department" | "forward" | null;
   responsible_user_id: number | null;
+  forward_person_id?: number | null;   // part 4: the branch supervisor (responsible_kind "forward")
+  forward_note?: string | null;
   expected_at: string | null;
   callback_at: string | null;
   first_filled_at: string;
@@ -239,10 +241,18 @@ export interface FollowupItem {
   step: Step; round: number; note_deadline: string | null; history: HistoryEntry[];
   solve_by?: string | null;     // not solved without a callback: the expected solve time (max 2 days)
   my_note?: string | null;      // the viewer's own private reminder (only they see it)
+  forward?: Forward | null;     // part 4: forwarded to a branch supervisor in the customer-service system
 }
+export interface Forward {
+  person_id: number | null; name: string | null; branch: string | null; ext: string | null; note: string | null;
+  status: "pending" | "sent" | "failed" | null; ticket_number: number | null; forwarded_at: string | null;
+  error: string | null;
+}
+export interface ForwardOption { id: number; name: string; branch: string; ext: string | null }
 // follow-up stages (spec 2026-11-15-followup-stages)
 export type Step = "required" | "overdue" | "no_followup" | "solved_first" | "waiting_callback" | "callback_missed"
-  | "note_needed" | "solved_after" | "no_number" | "waiting_solution" | "solution_overdue";
+  | "note_needed" | "solved_after" | "no_number" | "waiting_solution" | "solution_overdue"
+  | "forwarded" | "forward_overdue";
 export interface HistoryEntry {
   round: number; what_happened: string | null; solved: boolean | null; no_followup: boolean;
   priority: "high" | "medium" | "low" | null; priority_ar: string | null;    // round 1 only
@@ -262,13 +272,15 @@ export interface FollowupCounts { forms: number; notes: number; callbacks_today:
 export interface Person { id: number; username: string; role: string; ext: string | null }
 export type FollowupView =
   | { needed: false; enabled: boolean }
-  | (FollowupItem & { needed: true; enabled: true; can_edit: boolean; lock_reason: string | null; options: Person[] });
+  | (FollowupItem & { needed: true; enabled: true; can_edit: boolean; lock_reason: string | null; options: Person[];
+      forward_enabled?: boolean; forward_options?: ForwardOption[] });
 export interface FollowupList { settings: Settings; items: FollowupItem[]; truncated?: boolean; linked: boolean;
   counts: FollowupCounts; older_action: number;    // older_action: work left before من (62-day look-back)
   unsolved: FollowupItem[]; unsolved_truncated?: boolean }   // "تحتاج حل": open problems, whatever من/إلى say
 export interface FollowupIn {
   no_followup: boolean; what_happened?: string; solved?: boolean; priority?: string; responsible_kind?: string;
   responsible_user_id?: number | null; expected_at?: string; callback_at?: string;
+  forward_person_id?: number | null; forward_note?: string;
 }
 export interface Share {
   id: number; call_id: number; from: string; to: string; to_user_id: number; created_at: string;

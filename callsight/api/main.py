@@ -56,6 +56,10 @@ class ApiConfig:
     live_lookup: Callable[[str], dict | None] | None = None   # live call by PBX call id (from the snapshot)
     # agent-supervisor spec: admin delete -> worker task removes the backup copy (BACKUP_DIR is read-only here)
     delete_backup_copy: Callable[[int, str], None] | None = None
+    # part 4 (spec 2026-11-16-priority-no-followup): forward to a branch supervisor. enabled = CS_API_KEY and
+    # CS_USER_GUID are set (the API never reads the key itself); send = ask the worker to send now
+    forward_enabled: Callable[[], bool] = lambda: False
+    forward_send: Callable[[], None] | None = None
 
 
 class LoginIn(BaseModel):
@@ -578,7 +582,17 @@ def _app_from_env() -> FastAPI:
         health=_health_from_env(), live=_live_from_env(),
         listen_enabled=lambda: os.getenv("LISTEN_ENABLED", "false").strip().lower() in ("1", "true", "yes"),
         listen_client=lambda: _listen_adapter(), live_lookup=_live_lookup_from_env(),
-        delete_backup_copy=_send_backup_delete))
+        delete_backup_copy=_send_backup_delete, forward_enabled=_forward_enabled, forward_send=_send_forward))
+
+
+def _forward_enabled() -> bool:
+    from ..cs_api import enabled_from_env
+    return enabled_from_env()
+
+
+def _send_forward() -> None:
+    from ..jobs import FORWARD_TASK, celery
+    celery.send_task(FORWARD_TASK, queue="ingest")
 
 
 def _send_backup_delete(call_id: int, rel_path: str) -> None:

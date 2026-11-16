@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from .config import RIYADH
-from .db.models import AppSetting, AppUser, Call, CallFollowup, CallFollowupNote, norm_number
+from .db.models import AppSetting, AppUser, Call, CallFollowup, CallFollowupNote, ForwardPerson, norm_number
 from .ingest.service import day_bounds
 
 MIN_TALK_SECONDS = 20          # talk must be MORE than this
@@ -36,16 +36,21 @@ CAME_BACK = timedelta(hours=72)
 SETTING_START = "followup_start"
 SETTING_KPI = "followup_kpi_since"
 SETTINGS = (SETTING_START, SETTING_KPI)
-RESPONSIBLE_KINDS = ("user", "customer", "other_department")
+RESPONSIBLE_KINDS = ("user", "customer", "other_department", "forward")   # forward: part 4, first form only
 CALLBACK_STATES = ("waiting", "on_time", "late", "missed", "no_number")
 # steps of one call (spec 2026-11-15-followup-stages), computed on read, never stored
 STEPS = ("required", "overdue", "no_followup", "solved_first", "waiting_callback", "callback_missed",
-         "note_needed", "solved_after", "no_number", "waiting_solution", "solution_overdue")
+         "note_needed", "solved_after", "no_number", "waiting_solution", "solution_overdue",
+         "forwarded", "forward_overdue")
 # not solved WITHOUT a callback time (callback is optional): waiting until the expected solve time, then overdue
 NO_CB_STEPS = ("waiting_solution", "solution_overdue")
-NOTE_STEPS = ("note_needed", *NO_CB_STEPS)         # steps where a note may be added
-OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number", *NO_CB_STEPS)   # list view "open"
-KPI_OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", *NO_CB_STEPS)
+# forwarded to a branch supervisor (part 4): with them until the expected solve time, then late with them
+FORWARD_STEPS = ("forwarded", "forward_overdue")
+NOTE_STEPS = ("note_needed", *NO_CB_STEPS, *FORWARD_STEPS)        # steps where a note may be added
+OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number", *NO_CB_STEPS,
+              *FORWARD_STEPS)   # list view "open"
+KPI_OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", *NO_CB_STEPS, *FORWARD_STEPS)
+FORWARD_NOTE_MAX = 500
 ACTION_STEPS = ("required", "overdue", "note_needed", "callback_missed", "solution_overdue")
 # + waiting_callback / waiting_solution due by today
 
@@ -219,6 +224,7 @@ class Row:
     cb_calls: dict[int, Call] = field(default_factory=dict)          # round-1 cb + notes' cb_call_id -> call
     current_cb: Callback | None = None   # rounds >= 2: callback of the latest open note (looked up in rows())
     early: list[Call] = field(default_factory=list)   # team calls to this customer after the call that did NOT count
+    person: ForwardPerson | None = None  # forwarded (part 4): the branch supervisor of the first form
 
     # ----- rounds -----
 
@@ -267,6 +273,9 @@ class Row:
         last = self.notes[-1] if self.notes else f
         if last.solved is True:
             return "solved_after" if self.notes else "solved_first"
+        if f.responsible_kind == "forward" and last.callback_at is None:     # with the supervisor (part 4)
+            due = f.expected_at                  # the time sent to the supervisor, whatever later notes say
+            return "forward_overdue" if due is not None and now > due + GRACE else "forwarded"
         if last.callback_at is None:                     # no callback asked: wait for the expected solve time
             due = last.expected_at
             return "solution_overdue" if due is not None and now > due + GRACE else "waiting_solution"
@@ -293,8 +302,8 @@ class Row:
             "form": form_dict(f) if f else None,
             "step": step, "round": rnd,
             "note_deadline": after_deadline(cur.end).isoformat() if step == "note_needed" and cur else None,
-            "solve_by": (self.notes[-1] if self.notes else f).expected_at.isoformat()
-            if step in NO_CB_STEPS and (self.notes[-1] if self.notes else f).expected_at else None,
+            "solve_by": _solve_by(self, step),
+            "forward": forward_dict(f, self.person) if f is not None else None,
             "history": self.history(now, users or {}),
             "callback": None if cb_state is None else {
                 "at": open_.callback_at.isoformat(), "due": (open_.callback_at + GRACE).isoformat(),
@@ -324,7 +333,8 @@ class Row:
                 "round": rnd, "what_happened": e.what_happened, "solved": e.solved, "no_followup": bool(nofu),
                 **priority_fields(e.priority if rnd == 1 else None),       # set once, in the first form
                 "responsible_kind": e.responsible_kind, "responsible_user_id": e.responsible_user_id,
-                "responsible": users.get(e.responsible_user_id or -1),
+                "responsible": (self.person.name if e.responsible_kind == "forward" and self.person
+                                else users.get(e.responsible_user_id or -1)),
                 "expected_at": e.expected_at.isoformat() if e.expected_at else None,
                 "callback_at": e.callback_at.isoformat() if e.callback_at else None,
                 "at": at_.isoformat(), "by": users.get(by),
@@ -371,6 +381,23 @@ class Row:
         return out
 
 
+def _solve_by(r: Row, step: str) -> str | None:
+    e = r.form if step in FORWARD_STEPS else (r.notes[-1] if r.notes else r.form)
+    if step not in (*NO_CB_STEPS, *FORWARD_STEPS) or e is None or e.expected_at is None:
+        return None
+    return e.expected_at.isoformat()
+
+
+def forward_dict(f: CallFollowup, person: ForwardPerson | None) -> dict | None:
+    """Part 4: who the problem went to and whether the ticket was made (never the ticket's guid or the key)."""
+    if f.responsible_kind != "forward":
+        return None
+    return {"person_id": f.forward_person_id, "name": person.name if person else None,
+            "branch": person.branch if person else None, "ext": person.ext if person else None,
+            "note": f.forward_note, "status": f.forward_status, "ticket_number": f.forward_ticket_number,
+            "forwarded_at": f.forwarded_at.isoformat() if f.forwarded_at else None, "error": f.forward_error}
+
+
 def priority_fields(code: str | None) -> dict:
     return {"priority": code, "priority_ar": PRIORITIES.get(code or "")}
 
@@ -379,6 +406,7 @@ def form_dict(f: CallFollowup) -> dict:
     return {"no_followup": f.no_followup, "what_happened": f.what_happened, "solved": f.solved,
             **priority_fields(f.priority),
             "responsible_kind": f.responsible_kind, "responsible_user_id": f.responsible_user_id,
+            "forward_person_id": f.forward_person_id, "forward_note": f.forward_note,
             "expected_at": f.expected_at.isoformat() if f.expected_at else None,
             "callback_at": f.callback_at.isoformat() if f.callback_at else None,
             "first_filled_at": f.first_filled_at.isoformat(), "updated_at": f.updated_at.isoformat()}
@@ -450,9 +478,12 @@ def rows(s: Session, exts, start: date, lo: datetime, hi: datetime, call_ids: li
     need = {r.cb_id for r in out if r.cb_id} | {n.cb_call_id for ns in notes.values() for n in ns if n.cb_call_id}
     calls = {c.id: c for c in s.scalars(select(Call).where(Call.id.in_(need)))} if need else {}
     early = _early_calls(s, [r for r in out if r.call.id in with_form], callers)
+    pids = {r.form.forward_person_id for r in out if r.form is not None and r.form.forward_person_id}
+    people = {p.id: p for p in s.scalars(select(ForwardPerson).where(ForwardPerson.id.in_(pids)))} if pids else {}
     for r in out:
         r.notes = notes.get(r.call.id, [])
         r.cb_calls = calls
+        r.person = people.get(r.form.forward_person_id or -1) if r.form is not None else None
         r.early = [c for c in early.get(_digits9(r.call.customer_number), []) if c.start_time > r.call.end_time]
         f = r.form
         if (f.solved is False and r.cb_time is not None and r.cb_time <= f.first_filled_at) if f else False:
@@ -477,8 +508,8 @@ def one(s: Session, call: Call, exts, start: date | None) -> Row | None:
 
 # "تحتاج حل" (spec 2026-11-16-priority-no-followup, requirement 11): open problems, whatever من/إلى say
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}          # no priority (old form) comes last
-UNSOLVED_URGENCY = {"callback_missed": 0, "solution_overdue": 1, "note_needed": 2, "waiting_callback": 3,
-                    "waiting_solution": 3, "no_number": 4}
+UNSOLVED_URGENCY = {"callback_missed": 0, "solution_overdue": 1, "forward_overdue": 1, "note_needed": 2,
+                    "waiting_callback": 3, "waiting_solution": 3, "forwarded": 3, "no_number": 4}
 
 
 def unsolved(s: Session, exts, start: date, now: datetime, *, callers, priority: str | None = None,
@@ -595,7 +626,8 @@ def add_note(s: Session, call: Call, data: dict, user: AppUser, exts, now: datet
     rnd = len(row.notes) + 2                              # form = round 1, the note opens the next round
     if data.get("round") != rnd:
         raise NoteConflict("تغيّرت حالة المتابعة، أعد تحميل الصفحة")
-    clean = validate(s, {**data, "no_followup": False}, call, now, priority=row.form.priority)
+    clean = validate(s, {**data, "no_followup": False}, call, now, priority=row.form.priority,
+                     forwarded=row.form.responsible_kind == "forward")
     last = row.notes[-1] if row.notes else row.form
     cb = row.cb_of_round(rnd - 1) if last.callback_at is not None else None     # no callback asked: none to report
     n = CallFollowupNote(call_id=call.id, round=rnd, cb_call_id=cb.id if cb else None,
@@ -625,15 +657,21 @@ class FormError(ValueError):
 FORM = object()      # validate(priority=FORM): the first form, whose own `priority` field is checked and kept
 
 
+NO_FORWARD = {"forward_person_id": None, "forward_note": None}
+
+
 def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: datetime | None = None,
-             real_now: datetime | None = None, *, priority=FORM) -> dict:
+             real_now: datetime | None = None, *, priority=FORM, forward_ok: bool = False,
+             forwarded: bool = False) -> dict:
     """Server-side checks of a submitted form (priority=FORM) or note (priority = the first form's priority, which
-    sets the solve-time limit); returns the clean fields. A note's clean fields never carry a priority."""
+    sets the solve-time limit); returns the clean fields. A note's clean fields never carry a priority.
+    Part 4: forward_ok = the link to the customer-service system is on (form only); forwarded = this note belongs to
+    a forwarded problem (only the supervisor closes it; the note keeps kind "forward")."""
     is_form = priority is FORM
     if data.get("no_followup"):
         out = {"no_followup": True, "what_happened": None, "solved": None, "responsible_kind": None,
                "responsible_user_id": None, "expected_at": None, "callback_at": None}
-        return {**out, "priority": None} if is_form else out          # nothing to rank (spec decision)
+        return {**out, "priority": None, **NO_FORWARD} if is_form else out    # nothing to rank (spec decision)
     text = (data.get("what_happened") or "").strip()
     if not text:
         raise FormError("اكتب ما حدث في المكالمة")
@@ -646,15 +684,34 @@ def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: d
     solved = data.get("solved")
     if solved not in (True, False):
         raise FormError("اختر: هل حُلّت المشكلة؟")
+    if forwarded and solved is True:
+        raise FormError("المشكلة محوّلة لمشرف الفرع: هو من يغلقها")
     clean = {"no_followup": False, "what_happened": text, "solved": solved, "responsible_kind": None,
              "responsible_user_id": None, "expected_at": None, "callback_at": None}
     if is_form:
-        clean["priority"] = priority
+        clean.update(priority=priority, **NO_FORWARD)
     if solved:
         return clean
     kind = data.get("responsible_kind")
     if kind not in RESPONSIBLE_KINDS:
         raise FormError("اختر المسؤول عن الحل")
+    if forwarded and kind != "forward":
+        raise FormError("المشكلة محوّلة لمشرف الفرع: لا يتغيّر المسؤول")
+    if kind == "forward" and not forwarded:
+        if not is_form:
+            raise FormError("التحويل لمشرف فرع من النموذج الأول فقط")
+        if not forward_ok:
+            raise FormError("التحويل لمشرف فرع غير مفعّل")
+        if not _has_number(call.customer_number):
+            raise FormError("لا يوجد رقم للعميل: لا يمكن التحويل")
+        from .forward import choosable
+        person = choosable(s, data.get("forward_person_id"))
+        if person is None:
+            raise FormError("اختر مشرف الفرع")
+        fnote = (data.get("forward_note") or "").strip()
+        if len(fnote) > FORWARD_NOTE_MAX:
+            raise FormError("ملاحظة المسؤول أطول من 500 حرف")
+        clean.update(forward_person_id=person.id, forward_note=fnote or None)
     uid = data.get("responsible_user_id")
     if kind == "user":
         u = s.get(AppUser, uid) if isinstance(uid, int) else None
@@ -686,12 +743,19 @@ def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: d
     return clean
 
 
-def save(s: Session, call: Call, data: dict, user: AppUser, now: datetime | None = None) -> CallFollowup:
+def save(s: Session, call: Call, data: dict, user: AppUser, now: datetime | None = None, *,
+         forward_ok: bool = False) -> CallFollowup:
     now = now or _utcnow()
-    f = s.scalars(select(CallFollowup).where(CallFollowup.call_id == call.id)).first()
+    # locked: the send job (part 4) must not make a ticket while this edit changes the form
+    f = s.scalars(select(CallFollowup).where(CallFollowup.call_id == call.id).with_for_update()).first()
+    if f is not None and f.forward_status == "sent":
+        raise FormError("حُوّلت المشكلة لمشرف الفرع: لا يمكن تعديل النموذج")
     keep = f.expected_at if f is not None else None
-    clean = (validate(s, data, call, now, keep) if not _same_callback(f, data)
-             else _validate_keep(s, data, call, now, f))
+    clean = (validate(s, data, call, now, keep, forward_ok=forward_ok) if not _same_callback(f, data)
+             else _validate_keep(s, data, call, now, f, forward_ok))
+    # forward: (re)send on every save while not sent; any other answer drops a waiting / failed send
+    clean.update(forward_status="pending" if clean["responsible_kind"] == "forward" else None,
+                 forward_error=None, forward_tries=0)
     if f is None:
         f = CallFollowup(call_id=call.id, owner_ext=call.agent_ext, filled_by=user.id, first_filled_at=now,
                          updated_by=user.id, updated_at=now, **clean)
@@ -713,6 +777,8 @@ def _same_callback(f: CallFollowup | None, data: dict) -> bool:
             and data.get("solved") is False and data.get("callback_at") == f.callback_at)
 
 
-def _validate_keep(s: Session, data: dict, call: Call, now: datetime, f: CallFollowup) -> dict:
+def _validate_keep(s: Session, data: dict, call: Call, now: datetime, f: CallFollowup, forward_ok: bool = False
+                   ) -> dict:
     """Editing a form without moving its callback time: the old time may be in the past by now (still valid)."""
-    return validate(s, data, call, min(now, f.callback_at - timedelta(seconds=1)), f.expected_at, now)
+    return validate(s, data, call, min(now, f.callback_at - timedelta(seconds=1)), f.expected_at, now,
+                    forward_ok=forward_ok)
