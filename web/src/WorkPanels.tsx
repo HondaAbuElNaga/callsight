@@ -238,9 +238,10 @@ function History({ items }: { items: HistoryEntry[] }) {
 }
 
 /** The training look-up (spec "Part 4: the training lookup"): who the caller is in the training system. */
-function StudentBox({ d }: { d: StudentLookup }) {
+function StudentBox({ d, picked }: { d: StudentLookup; picked: boolean }) {
   if (d.error === "unavailable") return <p className="muted small">نظام التدريب لا يرد الآن: اختر المسؤول بنفسك.</p>;
-  if (d.error || d.students.length === 0) return <p className="muted small">الرقم غير مسجل لطالب في نظام التدريب.</p>;
+  if (d.error === "not_mobile") return <p className="muted small">الرقم ليس جوالًا: لم يُبحث عنه في نظام التدريب.</p>;
+  if (d.students.length === 0) return <p className="muted small">الرقم غير مسجل لطالب في نظام التدريب.</p>;
   return (
     <div className="student-box">
       {d.students.map((st, i) => <div key={i}>
@@ -250,7 +251,7 @@ function StudentBox({ d }: { d: StudentLookup }) {
           <br />المدرب: {p.trainers.length ? p.trainers.join("، ") : "غير محدد بعد"}
         </p>)}
       </div>)}
-      {d.suggestion && <p className="small">المقترح للتحويل: <b>{d.suggestion.name}</b>
+      {picked && d.suggestion && <p className="small">المقترح للتحويل: <b>{d.suggestion.name}</b>
         {d.suggestion.kind === "trainer" ? " (المدرب)" : " (مشرف فرع الطالب)"}. يمكنك تغييره.</p>}
     </div>
   );
@@ -287,7 +288,9 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
       expected: toRiyadhInput(f.expected_at), callback: toRiyadhInput(f.callback_at), fnote: f.forward_note ?? "" });
   };
   useEffect(() => { api.followup(callId).then(load).catch(fail); /* eslint-disable-next-line */ }, [callId]);
-  const lookUp = !!view?.needed && !!view.training_enabled;
+  // the agent's own open first form (or one re-opened after a failed forward): staff never see the box
+  const lookUp = !staff && !!view?.needed && !!view.training_enabled && view.can_edit
+    && (!view.form || view.step === "forward_failed");
   useEffect(() => {     // the box only: an error here never blocks the form
     setStudent(null);
     if (lookUp) api.student(callId).then(setStudent).catch((e) => { if (e instanceof Unauthorized) onExpired(); });
@@ -372,7 +375,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
 
       <History items={view.history} />
 
-      {formOpen && student && <StudentBox d={student} />}
+      {formOpen && student && <StudentBox d={student} picked={sugOk} />}
       {formOpen && <>
         {ro && view.lock_reason && <p className="muted small">لا يمكنك التعديل: {lockText(view.lock_reason)}</p>}
         <fieldset disabled={ro} className="form">

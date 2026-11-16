@@ -8,6 +8,8 @@ The answer is never stored: it is shown on the form and kept in memory for a few
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 import threading
 import time
@@ -15,8 +17,15 @@ from dataclasses import dataclass
 
 import httpx
 
+logging.getLogger("httpx").setLevel(logging.WARNING)     # its INFO line holds the URL, so the phone (T4)
+
 DEFAULT_URL = "https://training.sstli.com/api/v1"
-TIMEOUT = 8.0                      # the form waits for this box only; it never blocks saving
+TIMEOUT = 8.0                      # whole request, however slowly the answer comes (review)
+CONNECT_TIMEOUT = 3.0
+MAX_BYTES = 256_000                # a bigger answer is refused (the real one is a few KB)
+FAIL_SECONDS = 60                  # after a failure: answer "unavailable" at once for a minute (no 8 s waits)
+MAX_RUNNING = 4                    # look-ups at the same time; more = "unavailable" (API threads stay free)
+PER_MINUTE = 60                    # all look-ups together (the other side allows 120 a minute)
 CACHE_SECONDS = 600
 CACHE_MAX = 500
 MAX_STUDENTS = 5                   # one number -> a few students at most (siblings on one phone)
@@ -49,7 +58,9 @@ def local_mobile(number: str | None) -> str | None:
     """The caller number as the training system writes phones (05xxxxxxxx), or None when it is not a Saudi mobile
     (a landline or an extension: no look-up)."""
     d = "".join(ch for ch in (number or "") if ch.isdigit())
-    for prefix in ("00966", "966"):
+    if len(d) == 11 and d.startswith("905"):          # a trunk digit before the number
+        d = d[1:]
+    for prefix in ("00966", "0966", "966"):
         if d.startswith(prefix):
             d = "0" + d[len(prefix):]
             break
@@ -101,28 +112,64 @@ class TrainingClient:
         self._transport = transport
         self._cache: dict[str, tuple[float, list[dict]]] = {}
         self._lock = threading.Lock()
+        self._running = threading.BoundedSemaphore(MAX_RUNNING)
+        self._failed_at: float | None = None
+        self._sent: list[float] = []              # times of the requests of the last minute
+
+    def _may_send(self, now: float) -> bool:
+        with self._lock:
+            if self._failed_at is not None and now - self._failed_at < FAIL_SECONDS:
+                return False
+            self._sent = [x for x in self._sent if now - x < 60]
+            if len(self._sent) >= PER_MINUTE:
+                return False
+            self._sent.append(now)
+            return True
+
+    def _fetch(self, phone: str) -> list[dict]:
+        deadline = time.monotonic() + TIMEOUT
+        with httpx.Client(base_url=self.cfg.url, transport=self._transport,
+                          timeout=httpx.Timeout(TIMEOUT, connect=CONNECT_TIMEOUT),
+                          headers={"X-Api-Key": self.cfg.key, "Accept": "application/json"}) as http:
+            with http.stream("GET", "/students/responsible-trainer", params={"q": phone}) as r:
+                if r.status_code != 200:
+                    raise TrainingUnavailable(f"HTTP {r.status_code}")
+                body = bytearray()
+                for chunk in r.iter_bytes():
+                    body += chunk
+                    if len(body) > MAX_BYTES:
+                        raise TrainingUnavailable("answer too big")
+                    if time.monotonic() > deadline:
+                        raise TrainingUnavailable("too slow")
+        try:
+            return parse(json.loads(bytes(body)))
+        except ValueError:
+            raise TrainingUnavailable("answer is not JSON") from None
 
     def students(self, phone: str) -> list[dict]:
         """The students with this phone (05xxxxxxxx). Answers are kept CACHE_SECONDS in memory (the form is opened
-        again and again; the other side allows 120 requests a minute)."""
+        again and again); a failure, too many look-ups at once or in the minute = TrainingUnavailable at once."""
         now = time.monotonic()
         with self._lock:
             hit = self._cache.get(phone)
             if hit and now - hit[0] < CACHE_SECONDS:
                 return hit[1]
+        if not self._may_send(now):
+            raise TrainingUnavailable("paused")
+        if not self._running.acquire(blocking=False):
+            raise TrainingUnavailable("busy")
         try:
-            with httpx.Client(base_url=self.cfg.url, timeout=TIMEOUT, transport=self._transport,
-                              headers={"X-Api-Key": self.cfg.key, "Accept": "application/json"}) as http:
-                r = http.get("/students/responsible-trainer", params={"q": phone})
-        except httpx.HTTPError as exc:
+            got = self._fetch(phone)
+        except (httpx.HTTPError, TrainingUnavailable) as exc:
+            with self._lock:
+                self._failed_at = time.monotonic()
+            if isinstance(exc, TrainingUnavailable):
+                raise
             raise TrainingUnavailable(type(exc).__name__) from None      # never the URL: it holds the number
-        if r.status_code != 200:
-            raise TrainingUnavailable(f"HTTP {r.status_code}")
-        try:
-            got = parse(r.json())
-        except ValueError:
-            raise TrainingUnavailable("answer is not JSON") from None
+        finally:
+            self._running.release()
         with self._lock:
+            self._failed_at = None
             if len(self._cache) >= CACHE_MAX:
                 self._cache = {k: v for k, v in self._cache.items() if now - v[0] < CACHE_SECONDS}
                 if len(self._cache) >= CACHE_MAX:

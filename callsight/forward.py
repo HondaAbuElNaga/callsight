@@ -206,52 +206,66 @@ def options(s: Session) -> list[dict]:
              "manager": r.is_manager} for r in rows]
 
 
-def _words(t: str) -> set[str]:
-    return {w[2:] if w.startswith("ال") and len(w) > 3 else w for w in _tokens(t)}
+def _wlist(t: str) -> list[str]:
+    return [w[2:] if w.startswith("ال") and len(w) > 3 else w for w in re.findall(r"\w+", norm_ar(t))]
+
+
+_SIDE_WORDS = {"رجال", "رجالي", "نساء", "نسائي", "بنات", "طالبات", "طلاب"}
 
 
 def _gender(branch: str, grp: str | None = None) -> str | None:
-    w = set(re.findall(r"\w+", norm_ar(branch)))           # "(رجال)" -> رجال
-    if "رجال" in w or grp == "men":
+    w = set(_wlist(branch))                                  # "(رجال)" / "الرجال" -> رجال
+    if w & {"رجال", "رجالي", "طلاب"} or grp == "men":
         return "m"
-    if w & {"نساء", "بنات"} or grp == "women":
+    if w & {"نساء", "نسائي", "بنات", "طالبات"} or grp == "women":
         return "f"
     return None
 
 
+def _same_person(trainer: str, r: ForwardPerson) -> bool:
+    """The trainer's name (two words at least) inside the employee's name, in order, starting with the same first
+    name: "صالح الغامدي" = "صالح أحمد الغامدي", never "أحمد صالح الغامدي" (review)."""
+    want = _wlist(trainer)
+    if len(want) < 2:
+        return False
+    for name in {r.full_name or "", r.name}:
+        have = _wlist(name)
+        if not have or have[0] != want[0]:
+            continue
+        it = iter(have)
+        if all(w in it for w in want):                       # subsequence: same order
+            return True
+    return False
+
+
 def suggest(s: Session, students: list[dict]) -> dict | None:
-    """The person the form proposes for a student's problem (training look-up): the responsible trainer when exactly
-    one employee in the forward list carries his name, else the supervisor of the student's branch (most branch words
-    in common, same men / women side; a tie = no guess). Placements still running ("مستمر") are tried first.
+    """The person the form proposes for a student's problem (spec "Part 4: the training lookup", T2). One student
+    only (several on one phone: we do not know which one calls). Placements in order, running ("مستمر") first; for
+    each: its trainer when exactly one employee in the forward list is him, else the supervisor of its branch: every
+    word of the supervisor's branch (without فرع / رجال / نساء...) is in the student's branch, same men / women side,
+    exactly one such supervisor. Nothing found = None (the agent picks).
     -> {"person_id", "kind": "trainer" | "branch_supervisor", "name"} or None."""
+    if len(students) != 1:
+        return None
     rows = list(s.scalars(select(ForwardPerson).where(ForwardPerson.active.is_(True), ForwardPerson.guid.is_not(None))))
-    places = [p for st in students for p in st.get("placements", [])]
-    places.sort(key=lambda p: norm_ar(p.get("status", "")) != norm_ar("مستمر"))
+    sups = [r for r in rows if r.is_supervisor]
+    places = sorted(students[0].get("placements", []), key=lambda p: norm_ar(p.get("status", "")) != norm_ar("مستمر"))
     for p in places:
         for t in p.get("trainers", []):
-            want = _words(t)
-            if len(want) < 2:                       # one word is never enough to name a person
-                continue
-            hits = [r for r in rows if want <= _words(r.full_name or r.name) or want <= _words(r.name)]
+            hits = [r for r in rows if _same_person(t, r)]
             if len(hits) == 1:
                 return {"person_id": hits[0].id, "kind": "trainer", "name": hits[0].name}
-    sups = [r for r in rows if r.is_supervisor]
-    for p in places:
-        bw, g = _branch_words(p.get("branch", "")), _gender(p.get("branch", ""))
+        bw, g = set(_wlist(p.get("branch", ""))) - _GENERIC - _SIDE_WORDS, _gender(p.get("branch", ""))
         if not bw:
             continue
-        scored = []
+        top = []
         for r in sups:
             rg = _gender(r.branch, r.grp)
             if g and rg and g != rg:
                 continue
-            n = len(bw & _branch_words(r.branch))
-            if n:
-                scored.append((n, r))
-        if not scored:
-            continue
-        best = max(n for n, _ in scored)
-        top = [r for n, r in scored if n == best]
+            rw = set(_wlist(r.branch)) - _GENERIC - _SIDE_WORDS
+            if rw and rw <= bw:
+                top.append(r)
         if len(top) == 1:
             return {"person_id": top[0].id, "kind": "branch_supervisor", "name": top[0].name}
     return None

@@ -8,6 +8,10 @@ from sqlalchemy import select, text
 from callsight import forward
 from callsight.api.main import ApiConfig, create_app
 from callsight.db.models import Call, ForwardPerson
+from datetime import datetime, timedelta, timezone
+
+from callsight import training_api
+from callsight.db.models import CallFollowup
 from callsight.training_api import (TrainingClient, TrainingConfig, TrainingUnavailable, local_mobile, parse)
 from test_agent_supervisor_api import env, login, switch_on  # noqa: F401
 from test_api import SECRET, TEAM, engine  # noqa: F401
@@ -27,7 +31,8 @@ def answer(trainers=(), branch="فرع الدمام حي الزهور (رجال)
 
 @pytest.mark.parametrize("raw,want", [
     ("0551234567", "0551234567"), ("966551234567", "0551234567"), ("+966 55 123 4567", "0551234567"),
-    ("00966551234567", "0551234567"), ("551234567", "0551234567"),
+    ("00966551234567", "0551234567"), ("551234567", "0551234567"), ("0966551234567", "0551234567"),
+    ("90551234567", "0551234567"),
     ("0138123456", None), ("119", None), (None, None), ("", None)])
 def test_local_mobile(raw, want):
     assert local_mobile(raw) == want
@@ -83,6 +88,56 @@ def test_client_network_error_and_https_only():
         TrainingClient(TrainingConfig(url="http://x", key="k"))
 
 
+def test_failure_pauses_lookups_and_a_good_answer_ends_the_pause(monkeypatch):
+    calls, state = [], {"code": 500}
+
+    def handler(req):
+        calls.append(1)
+        return httpx.Response(state["code"], json=answer())
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(training_api.time, "monotonic", lambda: clock["t"])
+    c = TrainingClient(CFG, transport=httpx.MockTransport(handler))
+    with pytest.raises(TrainingUnavailable):
+        c.students("0551234567")
+    with pytest.raises(TrainingUnavailable):
+        c.students("0559999999")                      # another number: paused, not sent
+    assert len(calls) == 1
+    clock["t"] += training_api.FAIL_SECONDS + 1
+    state["code"] = 200
+    assert c.students("0559999999")
+    assert len(calls) == 2
+
+
+def test_per_minute_limit_and_cache_expiry(monkeypatch):
+    calls = []
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(training_api.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(training_api, "PER_MINUTE", 2)
+    c = TrainingClient(CFG, transport=httpx.MockTransport(lambda req: calls.append(1) or httpx.Response(200, json=answer())))
+    c.students("0550000001")
+    c.students("0550000002")
+    with pytest.raises(TrainingUnavailable):
+        c.students("0550000003")
+    clock["t"] += 61
+    c.students("0550000003")
+    c.students("0550000001")                          # still cached (10 min)
+    assert len(calls) == 3
+    clock["t"] += training_api.CACHE_SECONDS
+    c.students("0550000001")
+    assert len(calls) == 4
+
+
+def test_too_many_at_once_and_too_big(monkeypatch):
+    c = TrainingClient(CFG, transport=httpx.MockTransport(lambda req: httpx.Response(200, json=answer())))
+    for _ in range(training_api.MAX_RUNNING):
+        c._running.acquire()
+    with pytest.raises(TrainingUnavailable):
+        c.students("0551234567")
+    big = httpx.MockTransport(lambda req: httpx.Response(200, content=b" " * (training_api.MAX_BYTES + 1)))
+    with pytest.raises(TrainingUnavailable):
+        TrainingClient(CFG, transport=big).students("0551234567")
+
+
 def test_config_from_env(monkeypatch):
     monkeypatch.delenv("TRAINING_API_URL", raising=False)
     monkeypatch.setenv("TRAINING_API_KEY", " ")
@@ -131,6 +186,33 @@ def test_women_branch_never_gets_a_men_supervisor_and_no_branch_no_guess(fs):  #
 def test_two_branches_equally_close_is_no_guess(fs):  # noqa: F811
     s = synced(fs)       # "الزهور" -> رجال الزهور, "مدينة" -> رجال المدينة: one word each
     assert forward.suggest(s, parse(answer(branch="فرع الدمام حي الزهور مدينة الأعمال1 (رجال)"))) is None
+
+
+def test_trainer_name_order_and_first_name_matter(fs):  # noqa: F811
+    s = synced(fs)
+    got = forward.suggest(s, parse(answer(trainers=["أحمد صالح الغامدي"])))      # not "صالح أحمد الغامدي"
+    assert got["kind"] == "branch_supervisor"
+    got = forward.suggest(s, parse(answer(trainers=["صالح أحمد"])))
+    assert got == {"person_id": pid(s, "G-STAFF"), "kind": "trainer", "name": "صالح أحمد الغامدي"}
+
+
+def test_several_students_on_one_phone_no_suggestion(fs):  # noqa: F811
+    s = synced(fs)
+    d = answer(trainers=["صالح أحمد"])
+    d["data"].append(answer()["data"][0])
+    assert forward.suggest(s, parse(d)) is None
+
+
+def test_running_placement_supervisor_beats_a_finished_placement_trainer(fs):  # noqa: F811
+    s = synced(fs)
+    d = answer(branch="فرع الواحة (رجال)", status="منسحب", trainers=["صالح أحمد"])
+    d["data"][0]["placements"].append(answer(branch="فرع المدينة (رجال)")["data"][0]["placements"][0])
+    assert forward.suggest(s, parse(d))["person_id"] == pid(s, "G-FIXED")
+
+
+def test_one_shared_city_word_is_not_a_branch(fs):  # noqa: F811
+    s = synced(fs)       # "رجال الزهور" needs زهور; a branch of another district must not get him
+    assert forward.suggest(s, parse(answer(branch="فرع الرياض حي النسيم (رجال)"))) is None
 
 
 def test_running_placement_first(fs):  # noqa: F811
@@ -200,6 +282,24 @@ def test_api_other_agent_and_outage_and_landline(tenv):
         s.commit()
     assert client.get(f"/api/calls/{ids['own']}/student").json()["error"] == "not_mobile"
     assert len(asked) == 1                                         # a landline is never sent
+
+
+def test_api_no_form_404_and_closed_form_403(tenv):
+    client, Session, ids, asked, state = tenv
+    login(client, "ali")                                           # follow-ups not switched on: no form
+    assert client.get(f"/api/calls/{ids['own']}/student").status_code == 404
+    switch_on(client)
+    login(client, "ali")
+    with Session() as s:
+        ali = ids["ali"]
+        now = datetime.now(timezone.utc)
+        s.add(CallFollowup(call_id=ids["own"], owner_ext="119", what_happened="x", solved=False, priority="low",
+                           responsible_kind="customer", expected_at=now + timedelta(hours=5),
+                           callback_at=now - timedelta(minutes=1), filled_by=ali, first_filled_at=now,
+                           updated_by=ali, updated_at=now))
+        s.commit()
+    assert client.get(f"/api/calls/{ids['own']}/student").status_code == 403   # callback time passed: closed
+    assert asked == []
 
 
 def test_api_off_and_followups_not_switched_on(env, tmp_path):  # noqa: F811

@@ -393,16 +393,30 @@ system fills them later, so the trainer item's fields are not known: a string or
 
 **Requirements (user's choice "Suggest trainer"):**
 - T1. On a call that needs the follow-up form, the form shows the caller's student record (name, diploma, level,
-  section, branch, status, trainers). Only the call's agent and staff can read it (`GET /api/calls/{id}/student`).
+  section, branch, status, trainers). Only the call's agent and staff can read it (`GET /api/calls/{id}/student`),
+  and only while the form is open for them (closed form = 403); the agent's page asks only for the first form (or one
+  re-opened after a failed forward), staff pages never ask.
 - T2. When the agent answers "not solved" in the first form and has not picked anyone, the suggested person is
-  pre-picked in "من يجب أن يحلّها؟"; the agent can change it. Suggestion = the trainer when exactly one active
-  employee of the forward list has every word of his name (two words at least); else the supervisor of the student's
-  branch (most branch words in common, same men / women side; a tie = no suggestion). Running placements ("مستمر")
-  are tried first. No suggestion when the forward link is off.
+  pre-picked in "من يجب أن يحلّها؟"; the agent can change it. Only one student on the number (several = no
+  suggestion). Placements one by one, running ("مستمر") first; for each: the trainer when exactly one active employee
+  of the forward list is him (two words at least, same first name, the words in the same order), else the supervisor
+  of that branch (every word of the supervisor's branch, without فرع / حي / رجال / نساء..., is in the student's
+  branch, same men / women side, exactly one such supervisor). Nothing found = no suggestion. No suggestion when the
+  forward link is off. The "المقترح" line shows only when the person was really pre-picked.
 - T3. Only Saudi mobiles are looked up (`05xxxxxxxx`; `966…` turned into `05…`); a landline is never sent.
-- T4. The answer is never stored in the database; kept in the API's memory 10 minutes (max 500 numbers). Timeout 8 s;
-  an outage or a bad key only shows "نظام التدريب لا يرد الآن" and never blocks the form. Logs never hold the number.
+- T4. The answer is never stored in the database; kept in the API's memory 10 minutes (max 500 numbers). 8 s for the
+  whole request (connect 3 s), answers over 256 KB refused, https only; after a failure every look-up answers
+  "unavailable" at once for 60 s; at most 4 at the same time and 60 a minute in all (the other side allows 120).
+  An outage or a bad key only shows "نظام التدريب لا يرد الآن" and never blocks the form; a landline shows "الرقم ليس
+  جوالًا". Logs never hold the number (httpx logger at WARNING). Answer caps: 5 students, 5 placements, 10 trainers.
 - Out: looking up by national id from the form, trainers as a new level of the forward chain, storing the student.
+
+**Review 2026-11-16 (3 agents, commit 6d51d6a):** 0 critical / high. Bugs 10, security 4, accuracy 9 (several the
+same): all confirmed and fixed (stricter trainer and branch rules, one student only, placement by placement, men /
+women spellings, staff and closed forms never look up, total timeout, failure pause, limits, size cap, httpx log
+level, landline text, "المقترح" only when pre-picked, trunk-digit numbers). Left: no automatic test of the web
+pre-pick (the project has no web tests); a branch of the same district name in two cities still matches both = no
+suggestion.
 
 ## Build decisions (3-agent reviews per part, 2026-11-16)
 - An **unchanged** expected solve time is not re-checked against the 2-day limit when a form is saved again (forms from

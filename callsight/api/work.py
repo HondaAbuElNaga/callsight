@@ -149,8 +149,11 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         if cfg.training_lookup is None:
             return {"enabled": False, "students": [], "suggestion": None, "error": None}
         own = staff(user) or (user.ext is not None and c.agent_ext == user.ext)
-        if not own or fu.one(s, c, team_exts(), fu.get_setting(s, fu.SETTING_START)) is None:
+        row = fu.one(s, c, team_exts(), fu.get_setting(s, fu.SETTING_START)) if own else None
+        if row is None:
             raise HTTPException(404, "no follow-up form on this call")
+        if may_edit(row.form, c, user, _now()) is not None:     # shown on an open form only (review)
+            raise HTTPException(403, "the form is closed")
         from .. import training_api
         phone = training_api.local_mobile(c.customer_number)
         if phone is None:
