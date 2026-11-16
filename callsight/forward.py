@@ -381,7 +381,8 @@ def store_ticket(s: Session, h: ForwardHop, data: dict, now: datetime) -> int:
         res = s.execute(pg_insert(ForwardEvent).values(
             call_id=h.call_id, ext_key=key, kind=str(x.get("kind") or "")[:20] or "event",
             type=str(x.get("type") or "")[:30] or "unknown", note=(str(x.get("note") or "")[:1000] or None),
-            at=parse_time(x.get("at")), actor=(str(x.get("actorName") or "")[:200] or None), seen_at=now)
+            at=parse_time(x.get("at")), actor=(str(x.get("actorName") or "")[:200] or None), seen_at=now,
+            hop_id=h.id)
             .on_conflict_do_nothing(index_elements=["call_id", "ext_key"])   # another poll run got it first
             .returning(ForwardEvent.id))
         new += res.scalar() is not None
@@ -527,10 +528,12 @@ def _pass_on(s, client, h, person, level, nxt, now, done) -> None:
         if closed(h) and was is None:
             return                                  # closed in the meantime: the next run checks it as a solve
         if h.closed_at is not None:                 # closed (not solved, or stale): open it again first
+            his = (h.closed_at, h.solution) if closed(h) else (None, None)
             client.reopen(h.ticket_guid, note)
             store_ticket(s, h, client.get_ticket(h.ticket_guid), now)
             if h.closed_at is not None:
                 raise CsError(409, "تعذّر إعادة فتح التذكرة")
+            h.closed_at, h.solution = his           # his own close stays on his record (story + numbers)
         client.forward_ticket(h.ticket_guid, nxt[0].guid, note)
     except CsAuthError:
         h.error = ERR_AUTH

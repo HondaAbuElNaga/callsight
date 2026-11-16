@@ -47,6 +47,10 @@ def upgrade() -> None:
     )
     op.create_index('ix_forward_hop_call_id', 'forward_hop', ['call_id'])
     op.create_index('ix_forward_hop_result', 'forward_hop', ['result'])
+    # which hop (person) held the ticket when a timeline item was first read: the supervisors' story page
+    op.add_column('forward_event', sa.Column('hop_id', sa.BigInteger(), nullable=True))
+    op.create_foreign_key('fk_forward_event_hop', 'forward_event', 'forward_hop', ['hop_id'], ['id'],
+                          ondelete='SET NULL')
     # forwards sent before the chain (D1/D2: always to a branch supervisor) get their level-2 hop, so they are
     # still read back, checked and erased with the call (review DC)
     op.execute("""
@@ -61,6 +65,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_constraint('fk_forward_event_hop', 'forward_event', type_='foreignkey')
+    op.drop_column('forward_event', 'hop_id')
     op.drop_index('ix_forward_hop_result', table_name='forward_hop')
     op.drop_index('ix_forward_hop_call_id', table_name='forward_hop')
     op.drop_table('forward_hop')

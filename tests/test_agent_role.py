@@ -47,6 +47,7 @@ STAFF_ONLY = {
     ("GET", "/api/admin/users"), ("POST", "/api/admin/users"), ("PATCH", "/api/admin/users/{user_id}"),
     ("POST", "/api/admin/users/{user_id}/password"), ("GET", "/api/admin/settings"), ("PUT", "/api/admin/settings"),
     ("GET", "/api/admin/log"), ("POST", "/api/calls/{call_id}/delete-content"),
+    ("GET", "/api/forwards"), ("GET", "/api/forwards/{call_id}"),      # forwards page: staff only
 }
 CATCH_ALL = {("GET", "/api/{rest:path}")}       # plain 404 for unknown /api paths
 ORIGIN = "http://testserver"                     # live WebSocket Origin allowlist in these tests

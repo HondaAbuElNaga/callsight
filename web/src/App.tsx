@@ -6,13 +6,14 @@ import { Login } from "./Login";
 import { CallsPage } from "./CallsPage";
 import { GoldsetPage } from "./GoldsetPage";
 import { KpiPage } from "./KpiPage";
+import { ForwardsPage } from "./ForwardsPage";
 import { HealthPage } from "./HealthPage";
 import { RatingPage } from "./RatingPage";
 import { LivePage } from "./LivePage";
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = still checking
-  const [view, setView] = useState<"calls" | "goldset" | "kpi" | "health" | "live" | "rating" | "followups" | "users">("calls");
+  const [view, setView] = useState<"calls" | "goldset" | "kpi" | "health" | "live" | "rating" | "followups" | "users" | "forwards">("calls");
   const [openCall, setOpenCall] = useState<number | null>(null);   // follow-ups page -> open that call's panel
   const [problems, setProblems] = useState(0);
   const isAdmin = me?.role === "admin";
@@ -58,6 +59,8 @@ export function App() {
     page = <FollowupsPage me={me} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "followups")   // a call clicked here opens in the side panel on the same page
     page = <FollowupsPage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
+  else if (view === "forwards" && isStaff)
+    page = <ForwardsPage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "kpi" && isStaff)
     page = <KpiPage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else
@@ -68,6 +71,7 @@ export function App() {
         onExpired={() => setMe(null)}
         onGoldset={isAdmin ? () => setView("goldset") : undefined}
         onKpi={isStaff ? () => setView("kpi") : undefined}
+        onForwards={isStaff ? () => setView("forwards") : undefined}
         onLive={isStaff ? () => setView("live") : undefined}
         onHealth={isAdmin ? () => setView("health") : undefined}
         onRating={isStaff ? () => setView("rating") : undefined}

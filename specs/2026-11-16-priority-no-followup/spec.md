@@ -344,6 +344,26 @@ the call check (proof) is for the **branch supervisors only**; an employee's or 
 - **KPI (req 20, D4):** each hop that ran out of 24 h counts as a late hop for that person.
 - **Not changed:** questions/answers (D3), hiding and erasing of the proof calls (D2).
 
+## Part 4: forwards page (user 2026-11-16, approved)
+User: "supervisor sees what happened to each forward: what the agent sent, what the employee did to solve it (text),
+solved or not; the branch supervisor's steps, solved or not; the managers' solution; after closing it is kept in one
+place so we extract insights: how often each employee did not solve, how often branch supervisors did not, how often
+solved, the times".
+- Page **"التحويلات"** (supervisors + admins only, link in the top bar): every forwarded problem of the chosen dates
+  (by forward day, at most 1 year), open and closed (closed ones stay: the archive, until erased under the data rules).
+  Filters: state (open / solved / not solved), how far it went (employee / branch supervisor / managers), branch,
+  person. A line: time, customer, agent, priority, first person, level reached, state, who solved it, time to solve.
+- **Story** of one problem (click a line): the agent's text + note + time → for each person in order: when he got
+  it, everything written on the ticket while he held it (with times and who wrote it), his calls to the customer
+  (branch supervisors: answered? seconds? score? accepted or why not), his close + solution, solved / not solved in
+  24 h / solved by another manager.
+- **Numbers** for the dates: totals (forwarded, solved by employee / branch supervisor / managers, open, not
+  solved, average time to solve); per employee (received, solved, not solved in 24 h, open now, average time); per
+  branch supervisor (+ closed without a good call); per manager (received, solved, solved by another one); per branch
+  (received, solved inside the branch, went to the managers).
+- Data: `forward_event.hop_id` = the person holding the ticket when the item was first read; a supervisor's own close
+  stays on his record when the ticket is reopened for the managers. Read-only page (changes nothing there).
+
 ## Build decisions (3-agent reviews per part, 2026-11-16)
 - An **unchanged** expected solve time is not re-checked against the 2-day limit when a form is saved again (forms from
   before the 2-day rule may hold a later time); the 1-day limit of عالية is checked every time.

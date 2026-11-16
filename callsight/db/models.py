@@ -498,6 +498,8 @@ class ForwardEvent(Base):
     at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     actor: Mapped[str | None] = mapped_column(String(200))
     seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))       # when we first read it
+    # the hop (person) that held the ticket when it was first read (forward chain story page)
+    hop_id: Mapped[int | None] = mapped_column(ForeignKey("forward_hop.id", ondelete="SET NULL"))
 
 
 class ForwardPerson(Base):

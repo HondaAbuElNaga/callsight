@@ -415,6 +415,12 @@ export const api = {
     return r.json() as Promise<GoldClip>;
   },
   logout: () => fetch("/api/logout", { method: "POST", credentials: "same-origin" }),
+  forwards: (p: { from?: string; to?: string; state?: string; level?: string; branch?: string; person?: string }) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(p)) if (v) q.set(k, v);
+    return get<ForwardsList>(`/api/forwards?${q.toString()}`);
+  },
+  forwardStory: (id: number) => get<ForwardStory>(`/api/forwards/${id}`),
   followup: (id: number) => get<FollowupView>(`/api/calls/${id}/followup`),
   saveFollowup: (id: number, body: FollowupIn) => send<FollowupView>("PUT", `/api/calls/${id}/followup`, body),
   myNote: (id: number, text: string) => send<{ call_id: number; text: string | null }>("PUT", `/api/calls/${id}/my-note`, { text }),
@@ -458,3 +464,41 @@ export const api = {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
   },
 };
+
+// ---------- the forwards page (staff): archive, story, numbers ----------
+export type ForwardState = "open" | "solved" | "unsolved";
+export interface ForwardLineItem {
+  call_id: number; customer_number: string | null; agent_ext: string | null; agent_name: string;
+  priority: string | null; ticket_number: number | null; forwarded_at: string | null; state: ForwardState;
+  level: 1 | 2 | 3 | null; first: { name: string | null; branch: string | null }; holders: string[];
+  solved_by: { name: string | null; level: number } | null; solved_at: string | null; seconds_to_solve: number | null;
+}
+export interface ForwardPersonStats {
+  person_id: number; name: string | null; branch: string | null; received: number; solved: number;
+  not_solved_24h: number; closed_no_good_call: number; closed_by_other: number; open: number; failed: number;
+  avg_seconds_to_solve: number | null;
+}
+export interface ForwardInsights {
+  totals: { forwarded: number; open: number; unsolved: number; solved_1: number; solved_2: number; solved_3: number;
+    avg_seconds_to_solve: number | null };
+  employees: ForwardPersonStats[]; supervisors: ForwardPersonStats[]; managers: ForwardPersonStats[];
+  branches: { branch: string; received: number; solved_in_branch: number; went_to_managers: number }[];
+}
+export interface ForwardsList {
+  items: ForwardLineItem[]; truncated: boolean; insights: ForwardInsights; from: string; to: string;
+  filters: { branches: string[]; people: { id: number; name: string; branch: string }[] };
+}
+export interface ForwardStoryHop {
+  level: 1 | 2 | 3; name: string | null; branch: string | null; ticket_number: number | null;
+  result: "pending" | "open" | "solved" | "passed_on" | "closed_by_other" | "failed";
+  sent_at: string | null; closed_at: string | null; ended_at: string | null; solution: string | null;
+  error: string | null;
+  items: { kind: string; type: string; note: string | null; at: string | null; actor: string | null }[];
+  calls: ForwardProof["calls"] | null; proof: ForwardProof | null;
+}
+export interface ForwardStory {
+  call_id: number; customer_number: string | null; priority: string | null; state: ForwardState;
+  agent: { ext: string | null; name: string; what_happened: string | null; note: string | null;
+    forwarded_at: string | null; ticket_number: number | null; call_time: string | null };
+  hops: ForwardStoryHop[];
+}
