@@ -22,6 +22,7 @@ on:
           - main-status
           - gpu-cmd
           - nlp-on
+          - main-ps
       value:
         description: "start-date: YYYY-MM-DD  |  gpu-cmd: one command run on the GPU server"
         required: false
@@ -134,6 +135,14 @@ jobs:
               grep '^NLP_ENABLED=' .env
               docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml up -d
               "${G[@]}" "cd /opt/callsight && { grep -q '^NLP_ENABLED=' .env                 && sed -i 's/^NLP_ENABLED=.*/NLP_ENABLED=true/' .env || echo 'NLP_ENABLED=true' >> .env; }                 && grep '^NLP_ENABLED=' .env && $GC up -d && $GC ps" ;;
+
+            main-ps)
+              cd "$M"
+              MC=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml)
+              "${MC[@]}" ps --format '{{.Service}} {{.Image}} {{.CreatedAt}} {{.Command}}'
+              docker images --format '{{.Repository}}:{{.Tag}} {{.CreatedAt}}' | head -20
+              git -C "$M" log -1 --format='%h %ci %s' || true
+              for svc in worker beat; do "${MC[@]}" logs --since 90m "$svc" 2>&1 | grep -i -E "queue_analyses|blind" | tail -8; done ;;
 
             gpu-cmd)
               [ -n "$VALUE" ] || { echo "value: the command to run" >&2; exit 1; }
