@@ -38,6 +38,10 @@
   flags --recompute [--call ID]    re-match config/rules.yaml on the transcripts (after editing the word lists)
   blindset create [--n 100 --min-pool 100]   freeze the blind test set once (it never changes afterwards)
   blindset status                  blind set size and rating progress
+  rating-set create --days D1,D2,... [--n 500]   pick the rating set once from these days (spread over days and
+                                   agents) and queue their transcripts; fetch the days first (reconcile --date D)
+  rating-set queue                 queue transcripts again for picked calls without one
+  rating-set status                per day: picked / transcribed / analysed / rated
   pbx-unblock            allow PBX logins again after a refused login / token limit set pbx:auth_blocked
                          (fix the cause first: Client ID/Secret, PBX API IP allow-list, other programs' logins)
   gpu-work [--queue]     AWS: how many calls still wait for a transcript or an analysis (one number; 0 = the
@@ -107,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
     fl.add_argument("--call", type=int)
     bs = sub.add_parser("blindset"); bs.add_argument("action", choices=("create", "status"))
     bs.add_argument("--n", type=int, default=100); bs.add_argument("--min-pool", type=int, default=100)
+    rs = sub.add_parser("rating-set"); rs.add_argument("action", choices=("create", "queue", "status"))
+    rs.add_argument("--days", default=""); rs.add_argument("--n", type=int, default=500)
     sub.add_parser("pbx-unblock")
     gw = sub.add_parser("gpu-work"); gw.add_argument("--queue", action="store_true")
     sub.add_parser("live")
@@ -140,6 +146,8 @@ def main(argv: list[str] | None = None) -> int:
         return _flags(a)
     if a.cmd == "blindset":
         return _blindset(a)
+    if a.cmd == "rating-set":
+        return _rating_set(a)
     if a.cmd in ("create-user", "set-password", "disable-user", "set-ext"):
         return _users(a)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -311,6 +319,43 @@ def _flags(a: argparse.Namespace) -> int:
     with wiring.session_factory()() as s:
         n = flags.recompute(s, rules, os.getenv("ASR_MODEL", "whisper-large-v3").strip(), call_id=a.call)
     print(f"flags recomputed for {n} call(s) (rules {rules.version})")
+    return 0
+
+
+def _rating_set(a: argparse.Namespace) -> int:
+    from . import jobs
+    from .analysis import ratingset
+    from .asr.queueing import AsrConfig
+    cfg, now = AsrConfig.from_env(), datetime.now(RIYADH)
+    with wiring.session_factory()() as s:
+        try:
+            if a.action == "create":
+                got = ratingset.create(s, ratingset.parse_days(a.days), a.n, cfg, now)
+                print(f"rating set: {got['picked']} calls picked")
+                for d, k in got["per_day"].items():
+                    print(f"  {d}: {k}")
+            if a.action in ("create", "queue"):
+                ids = ratingset.queue_transcripts(s, cfg, now)
+            else:
+                st = ratingset.status(s)
+                for d in st["days"]:
+                    print(f"  {d['day']}: picked {d['picked']}, transcribed {d['transcribed']}, "
+                          f"analysed {d['analysed']}, rated {d['rated']}")
+                t = st["total"]
+                print(f"total: picked {t['picked']}, transcribed {t['transcribed']}, analysed {t['analysed']}, "
+                      f"rated {t['rated']}")
+                return 0
+        except ValueError as exc:
+            print("ERROR:", exc, file=sys.stderr)
+            return 1
+    try:
+        for cid in ids:
+            jobs.send_transcribe(cid, cfg.model)
+    except Exception as exc:                              # noqa: BLE001
+        print(f"ERROR: queue not reachable ({type(exc).__name__}); rows stay queued and the reaper re-sends "
+              "them once Redis is back", file=sys.stderr)
+        return 1
+    print(f"{len(ids)} call(s) sent to the asr queue for {cfg.model} (the GPU server does them on its next wake-up)")
     return 0
 
 

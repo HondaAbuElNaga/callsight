@@ -402,6 +402,18 @@ class BlindSet(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class RatingPick(Base):
+    """The rating set (spec 2026-11-16-rating-set): calls of days the user chose, picked once, rated first (after the
+    blind ones); the blind set is drawn from these when they exist."""
+    __tablename__ = "rating_pick"
+    call_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("call.id", ondelete="CASCADE"), primary_key=True)
+    rank: Mapped[int] = mapped_column(Integer)
+    day: Mapped[date] = mapped_column(Date)
+    agent_ext: Mapped[str | None] = mapped_column(String(16))
+    salt: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ListenAudit(Base):
     """Append-only audit of every Listen attempt (spec live-board, decision 4), including refused ones.
     kind 'attempt' (result pending / denied_*) is written BEFORE any PBX call; kind 'result' (ok / refused / error)

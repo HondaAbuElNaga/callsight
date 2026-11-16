@@ -16,7 +16,8 @@ from sqlalchemy import case, exists, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from ..db.models import (BlindSet, Call, CallAnalysis, CallAudioMetrics, CallFlag, SatisfactionLabel, Transcript)
+from ..db.models import (BlindSet, Call, CallAnalysis, CallAudioMetrics, CallFlag, RatingPick, SatisfactionLabel,
+                         Transcript)
 from . import blindset
 from .settings import rating_excluded
 
@@ -98,13 +99,16 @@ def _done_transcript():
 
 
 def rating_queue(session: Session, user_id: int) -> dict:
-    """Calls with a done transcript this user has not rated: blind calls first (by rank), then newest."""
+    """Calls with a done transcript this user has not rated: blind calls first (by rank), then the rating set (by
+    rank, spec 2026-11-16-rating-set), then newest."""
     mine = exists().where(SatisfactionLabel.call_id == Call.id, SatisfactionLabel.user_id == user_id)
     rows = session.execute(
         select(Call.id, Call.start_time, Call.talk_seconds, BlindSet.rank)
         .outerjoin(BlindSet, BlindSet.call_id == Call.id)
+        .outerjoin(RatingPick, RatingPick.call_id == Call.id)
         .where(_done_transcript(), ~mine, Call.status == "answered", Call.id.not_in(rating_excluded()))
-        .order_by(BlindSet.rank.asc().nulls_last(), Call.start_time.desc(), Call.id.desc())
+        .order_by(BlindSet.rank.asc().nulls_last(), RatingPick.rank.asc().nulls_last(), Call.start_time.desc(),
+                  Call.id.desc())
         .limit(QUEUE_SIZE)).all()
     rated = session.scalar(select(exists().where(SatisfactionLabel.user_id == user_id)))
     return {"progress": {**blindset.progress(session), "mine": bool(rated)},

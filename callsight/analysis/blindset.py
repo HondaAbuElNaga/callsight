@@ -36,9 +36,11 @@ def pool(session: Session) -> list[tuple[int, str]]:
     rows = session.execute(select(Call.id, Call.agent_ext).where(
         Call.status == "answered", Call.direction.in_(CUSTOMER_DIRECTIONS), Call.agent_ext.is_not(None), done)
         .order_by(Call.id)).all()
+    from .ratingset import ids as rating_ids
     from .settings import rating_excluded
     skip = rating_excluded()                     # test calls: never in the blind set
-    return [(cid, ext) for cid, ext in rows if cid not in skip]
+    picks = rating_ids(session)                  # a rating set exists: the blind set comes from it (2026-11-16)
+    return [(cid, ext) for cid, ext in rows if cid not in skip and (not picks or cid in picks)]
 
 
 def sample(calls: list[tuple[int, str]], n: int, salt: str = DEFAULT_SALT) -> list[tuple[int, str]]:
