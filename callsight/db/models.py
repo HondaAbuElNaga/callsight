@@ -524,7 +524,7 @@ class ForwardPerson(Base):
 
 class ForwardHop(Base):
     """One person who held a forwarded problem (spec "Part 4 change: the forward chain"): level 1 the chosen
-    employee, 2 his branch supervisor, 3 a manager (all 4 managers get it: the first on the same ticket, the others a
+    employee, 2 his branch supervisor, 3 a manager (all the managers get it: the first on the same ticket, the others a
     copy ticket each). result: pending (copy ticket not made yet) / open / solved / passed_on (24 h ran out) /
     closed_by_other (another manager solved it) / failed. Levels 1 and 2 share the first ticket. The solution text
     is personal data: erased with the call's content."""

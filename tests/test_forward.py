@@ -124,7 +124,8 @@ def test_yaml_checks(tmp_path):
 
 def test_real_yaml_has_the_seven_supervisors():
     got = forward.load_people_yaml(forward.people_file())
-    assert sorted(p["ext"] for p in got) == ["101", "201", "301", "401", "501", "601", "901"]
+    assert sorted(p["ext"] for p in got if not p["manager"]) == ["101", "201", "301", "401", "501", "601", "901"]
+    assert [p["name"] for p in got if p["manager"]] == ["حسام تغيان", "عماد النمر", "احمد حطب"]   # user 2026-11-16
 
 
 def test_match_person_by_name_words_and_branch():
@@ -593,3 +594,11 @@ def test_rate_limit_on_the_ticket_is_retried(fs):
     forward.send_pending(s, Busy())
     s.refresh(f)
     assert (f.forward_status, f.forward_error) == ("pending", forward.ERR_UNAVAILABLE)
+
+
+def test_match_person_ignores_al_and_hamza():
+    from callsight.forward import match_person
+    sups = [{"name": "عماد نمر محمد", "branch": "الإدارة", "guid": "a"},
+            {"name": "أحمد حطب", "branch": "الإدارة", "guid": "b"}]
+    assert match_person({"name": "عماد النمر", "branch": ""}, sups)[0]["guid"] == "a"
+    assert match_person({"name": "احمد حطب", "branch": ""}, sups)[0]["guid"] == "b"

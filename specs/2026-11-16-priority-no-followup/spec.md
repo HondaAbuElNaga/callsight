@@ -344,6 +344,12 @@ the call check (proof) is for the **branch supervisors only**; an employee's or 
 - **KPI (req 20, D4):** each hop that ran out of 24 h counts as a late hop for that person.
 - **Not changed:** questions/answers (D3), hiding and erasing of the proof calls (D2).
 
+## Managers named (user 2026-11-16)
+- Level 3 = **3 managers**: حسام تغيان، عماد النمر، احمد حطب (config/forward_people.yaml `managers:`; all three get it,
+  first close wins).
+- **مروان حسني** sees everything: a supervisor login on our system (the forwards page: every forward, its story, the
+  numbers). He gets no tickets and closes nothing.
+
 ## Part 4: forwards page (user 2026-11-16, approved)
 User: "supervisor sees what happened to each forward: what the agent sent, what the employee did to solve it (text),
 solved or not; the branch supervisor's steps, solved or not; the managers' solution; after closing it is kept in one

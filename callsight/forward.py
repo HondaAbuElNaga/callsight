@@ -92,8 +92,10 @@ def _branch_words(text: str) -> set[str]:
 def match_person(p: dict, sups: list[dict]) -> tuple[dict | None, str]:
     """The supervisor whose name holds every word of the yaml name; several -> the one whose branch shares a word
     with the yaml branch. (match, why-not) — never a guess between two people."""
-    want = _tokens(p["name"])
-    named = [x for x in sups if want and all(w in _tokens(x["name"]) for w in want)]
+    def words(t: str) -> list[str]:                  # "النمر" == "نمر"
+        return [w[2:] if w.startswith("ال") and len(w) > 3 else w for w in _tokens(t)]
+    want = words(p["name"])
+    named = [x for x in sups if want and all(w in words(x["name"]) for w in want)]
     hits = named
     if len(named) > 1:
         bw = _branch_words(p["branch"])
