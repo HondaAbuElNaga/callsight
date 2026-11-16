@@ -313,27 +313,30 @@ system with "مشرف خدمة العملاء" rights (tickets are recorded unde
 ## Part 4 change: the forward chain (user 2026-11-16, replaces the D4 re-send / escalation)
 User: "the agent forwards to all employees, gives him 24 h to solve; if not solved it goes directly to the
 supervisor; if not solved directly to 4 persons". Answers: the 4 are fixed managers and **all 4 get it**; the branch
-supervisor also gets **24 h**; an employee whose PBX extension we do not know: **his close counts as solved**.
+supervisor also gets **24 h**. User 2026-11-16: "I can't track the employee's calls, only the supervisor's" →
+the call check (proof) is for the **branch supervisors only**; an employee's or a manager's close counts as solved.
 
 - **Who can be chosen:** every employee in `forward-targets` (all groups and branches, about 474), drop-down
   grouped by branch with a search box. The hourly sync stores them all in `forward_person` (+ branch,
   is_branch_supervisor). Extensions come only from `config/forward_people.yaml` (today the 7 supervisors).
-- **Level 1 – the employee:** 24 h from the ticket. Solved = closed there; when we know his extension, also the good
-  last call (answered, > 60 s, score > 7), as in D2.
+- **Level 1 – the employee:** 24 h from the ticket. Solved = closed there (no call check: his calls are not on our
+  PBX).
 - **Level 2 – his branch supervisor:** not solved after 24 h → the worker passes the **same ticket** on
   (`tickets/{guid}/reopen` first when it was closed without proof, then `tickets/{guid}/forward` to the supervisor
-  of that employee's branch, note "لم تُحل خلال 24 ساعة عند «name»"). 24 h again. When the employee is himself the
+  of that employee's branch, note "لم تُحل خلال 24 ساعة عند «name»"). 24 h again. Solved = closed there **and** his
+  good last call to the customer (answered, > 60 s, score > 7), as in D2; closed without it = not solved, so after
+  the 24 h it moves on to level 3. When the employee is himself the
   supervisor, or the branch has no supervisor, it goes straight to level 3.
 - **Level 3 – the 4 managers:** not solved after 24 h → the ticket goes to the first manager and a copy ticket is
   made for each of the other 3 (their API forwards to one person only). The first close wins; the other copies are
-  closed there with "حُلّت عند «name»". No further level; after 24 h the line shows "متأخر" in red.
+  closed there with "حُلّت عند «name»" (close = solved, no call check). No further level; after 24 h the line shows "متأخر" in red.
   The 4 are listed in `config/forward_people.yaml` under `managers:` (names from the user, matched like the 7).
 - **24 h = clock hours** (nights and weekends count), from the moment that level got the ticket.
 - **Steps:** "عند الموظف «name»" → "عند مشرف الفرع «name»" → "عند الإدارة"; the tracker (D3) shows every level
   with its time and who passed it on. The agent's own expected solve time stays as information only.
 - **Data:** a table `forward_hop` (call, level, person, ticket guid/number, sent_at, closed_at, solution, result:
-  solved / passed_on / closed_by_other); polling and the proof check run per hop. Supervisors' calls are watched for
-  the person holding the ticket (only when his extension is known).
+  solved / passed_on / closed_by_other); polling and the proof check run per hop. Calls are watched only while a branch
+  supervisor holds the ticket (his extension from `config/forward_people.yaml`).
 - **KPI (req 20, D4):** each hop that ran out of 24 h counts as a late hop for that person.
 - **Not changed:** questions/answers (D3), hiding and erasing of the proof calls (D2).
 
