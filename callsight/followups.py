@@ -488,7 +488,9 @@ def _empty() -> dict:
             "callbacks_rate": None, "came_back": 0,
             # follow-up stages spec
             "answered_forms": 0, "solved_first": 0, "first_rate": None, "solved_after": 0, "open": 0,
-            "rounds_to_solve": 0, "avg_rounds": None, "notes_due": 0, "notes_on_time": 0, "notes_rate": None}
+            "rounds_to_solve": 0, "avg_rounds": None, "notes_due": 0, "notes_on_time": 0, "notes_rate": None,
+            # spec 2026-11-16-priority-no-followup (show-only): "no follow-up" forms and their share of filled forms
+            "no_followup": 0, "no_followup_rate": None}
 
 
 def _rate(a: int, b: int) -> float | None:
@@ -529,6 +531,7 @@ def kpi(s: Session, lo: datetime, hi: datetime, exts: list[str], now: datetime |
                     b["notes_on_time"] += st_ == "on_time"
             if r.form is not None and not r.form.no_followup:
                 b["answered_forms"] += 1
+            b["no_followup"] += step == "no_followup"
             b["solved_first"] += step == "solved_first"
             if step == "solved_after":
                 b["solved_after"] += 1
@@ -541,6 +544,7 @@ def kpi(s: Session, lo: datetime, hi: datetime, exts: list[str], now: datetime |
         b["first_rate"] = _rate(b["solved_first"], b["answered_forms"])
         b["avg_rounds"] = _rate(b["rounds_to_solve"], b["solved_after"])
         b["notes_rate"] = _rate(b["notes_on_time"], b["notes_due"])
+        b["no_followup_rate"] = _rate(b["no_followup"], b["no_followup"] + b["answered_forms"])
     return out
 
 
@@ -633,10 +637,11 @@ def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: d
     t_now = real_now or now                      # _validate_keep moves `now` back for the callback only
     if expected != keep_expected and expected <= t_now:   # an unchanged old time may be in the past by now
         raise FormError("وقت الحل المتوقع يجب أن يكون في المستقبل")
-    # the limit is checked even for an unchanged time: a form edited to high must fit 1 day from now
+    # high: checked even for an unchanged time (a form edited to high must fit 1 day from now). The 2-day limit is
+    # not re-checked on an unchanged time: forms saved before that rule may hold a later time (review 2026-11-16)
     if priority == "high" and expected > t_now + MAX_SOLVE_HIGH:
         raise FormError("أقصى وقت لحل مشكلة عالية الأولوية يوم واحد")
-    if expected > t_now + MAX_SOLVE:
+    if expected != keep_expected and expected > t_now + MAX_SOLVE:
         raise FormError("أقصى وقت لحل المشكلة يومان")
     if callback is not None:                     # optional
         if callback <= now:

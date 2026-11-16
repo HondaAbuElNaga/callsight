@@ -401,7 +401,7 @@ def test_needs_action_shows_old_overdue_forms_and_counts_match(env):
     d = client.get("/api/followups", params={"from": (today - timedelta(days=1)).isoformat(),
                                              "to": today.isoformat()}).json()      # dates follow من/إلى
     assert [i["call_id"] for i in d["items"]] == [ids["own"]]
-    assert d["counts"] == {"forms": 1, "notes": 0, "callbacks_today": 0, "missed": 0} and d["linked"] is True
+    assert d["counts"] == {"forms": 1, "notes": 0, "callbacks_today": 0, "missed": 0, "no_followup": 0} and d["linked"] is True
     assert d["older_action"] == 1                                    # the 30-day-old form is not forgotten
     wide = client.get("/api/followups", params={"from": (today - timedelta(days=40)).isoformat(),
                                                 "to": today.isoformat()}).json()

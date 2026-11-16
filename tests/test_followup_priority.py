@@ -8,7 +8,7 @@ from sqlalchemy import select
 from callsight import followups as fu
 from callsight.db.models import CallFollowup
 from test_agent_supervisor_api import _callback_call, boss_id, env, iso, login, not_solved, switch_on  # noqa: F401
-from test_followups import at, form, mk, rows, s, start_on, user  # noqa: F401
+from test_followups import DAY, at, form, mk, rows, s, start_on, user  # noqa: F401
 from test_api import engine  # noqa: F401  (fixture)
 
 
@@ -118,3 +118,77 @@ def test_note_cannot_carry_a_priority(env):  # noqa: F811
     assert r.status_code == 200, r.text
     h = r.json()["history"]
     assert h[0]["priority"] == "high" and h[1]["priority"] is None
+
+
+# ---------- "no follow-up" visible (requirements 8, 9) ----------
+
+def test_kpi_counts_no_followup_and_its_share(s):  # noqa: F811
+    start_on(s)
+    u = user(s)
+    nf = mk(s, "nf", at(9))
+    form(s, nf, u, filled=at(9, 5), no_followup=True)
+    for n in range(3):
+        form(s, mk(s, f"p{n}", at(10 + n)), u, filled=at(10 + n, 5), solved=True)
+    mk(s, "empty", at(14), agent="104")                     # 104: a needed call, no form at all
+    k = fu.kpi(s, at(0), at(0, day=DAY + timedelta(days=1)), ["104", "116", "119"], callers=["104", "116", "119"],
+               now=at(12, day=DAY + timedelta(days=1)))
+    a = k["agents"]["119"]
+    assert (a["no_followup"], a["answered_forms"], a["no_followup_rate"]) == (1, 3, 0.25)
+    assert k["summary"]["no_followup"] == 1 and k["summary"]["no_followup_rate"] == 0.25
+    assert k["agents"]["104"]["no_followup"] == 0 and k["agents"]["104"]["no_followup_rate"] is None   # zero forms
+    assert k["agents"]["116"]["no_followup_rate"] is None
+    # nothing else moved: the old numbers of the same data
+    assert (a["forms_due"], a["solved_first"], a["first_rate"]) == (4, 3, 1.0)
+
+
+def test_pdf_stage_table_has_the_no_followup_columns(s):  # noqa: F811
+    from callsight.reports import pdf
+    start_on(s)
+    u = user(s)
+    form(s, mk(s, "nf", at(9)), u, filled=at(9, 5), no_followup=True)
+    form(s, mk(s, "p", at(10)), u, filled=at(10, 5), solved=True)
+    k = fu.kpi(s, at(0), at(0, day=DAY + timedelta(days=1)), ["119"], callers=["119"],
+               now=at(12, day=DAY + timedelta(days=1)))
+    html = pdf.followup_table(k, [{"ext": "119", "name": "علي"}])
+    assert "<th class=\"n\">لا تحتاج متابعة</th><th class=\"n\">نسبتها</th>" in html
+    assert "50.0%" in html
+
+
+def test_no_followup_counter_and_filter(env):  # noqa: F811
+    client, Session, ids, *_ = env
+    switch_on(client)
+    login(client, "ali")
+    assert client.put(f"/api/calls/{ids['own']}/followup", json={"no_followup": True}).status_code == 200
+    login(client, "sara")
+    assert client.put(f"/api/calls/{ids['other']}/followup", json=not_solved(boss_id(Session))).status_code == 200
+    login(client, "ali")
+    d = client.get("/api/followups", params={"state": "no_followup"}).json()
+    assert [i["call_id"] for i in d["items"]] == [ids["own"]] and d["counts"]["no_followup"] == 1
+    login(client, "sara")                          # an agent sees only their own
+    d = client.get("/api/followups", params={"state": "no_followup"}).json()
+    assert d["items"] == [] and d["counts"]["no_followup"] == 0
+    login(client, "boss")
+    d = client.get("/api/followups", params={"state": "no_followup"}).json()
+    assert [i["call_id"] for i in d["items"]] == [ids["own"]] and d["counts"]["no_followup"] == 1
+    assert client.get("/api/followups", params={"state": "no_followup", "agent": "104"}).json()["items"] == []
+    assert client.get("/api/followups", params={"state": ""}).json()["counts"]["no_followup"] == 1
+
+
+def test_unchanged_expected_time_on_edit(s):  # noqa: F811   (review 2026-11-16)
+    start_on(s)
+    u = user(s)
+    c = mk(s, "a", at(10))
+    t0 = at(11)
+    base = {"what_happened": "x", "solved": False, "responsible_kind": "customer", "callback_at": None}
+    fu.save(s, c, {**base, "priority": "medium", "expected_at": t0 + timedelta(hours=40)}, u, t0)
+    with pytest.raises(fu.FormError, match="يوم واحد"):        # edited to high, same time 40 h away: refused
+        fu.save(s, c, {**base, "priority": "high", "expected_at": t0 + timedelta(hours=40)}, u, t0 + timedelta(hours=1))
+    s.rollback()
+    # same time, later and after it passed: still accepted (only a CHANGED time must be in the future)
+    later = t0 + timedelta(hours=41)
+    assert fu.save(s, c, {**base, "priority": "low", "expected_at": t0 + timedelta(hours=40)}, u, later).priority == "low"
+    # an old form from before the 2-day rule (time 10 days away) can still be re-saved without moving it
+    f = s.scalars(select(CallFollowup)).one()
+    f.expected_at = later + timedelta(days=10)
+    s.commit()
+    assert fu.save(s, c, {**base, "priority": "medium", "expected_at": f.expected_at}, u, later).priority == "medium"
