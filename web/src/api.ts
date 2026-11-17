@@ -350,6 +350,7 @@ export interface AppUserRow {
   id: number; username: string; role: string; ext: string | null; active: boolean; locked: boolean;
   created_at: string | null;
 }
+export interface ApiClientRow { id: number; name: string; prefix: string; active: boolean; created_at: string | null; last_used_at: string | null }
 export interface AdminLogRow { id: number; user: string; action: string; target: string; reason: string | null; at: string }
 export interface FollowupKpiBucket {
   forms_due: number; forms_on_time: number; forms_rate: number | null;
@@ -495,6 +496,9 @@ export const api = {
   settings: () => get<Settings>("/api/admin/settings"),
   saveSettings: (s: Settings) => send<Settings>("PUT", "/api/admin/settings", s),
   adminLog: () => get<AdminLogRow[]>("/api/admin/log"),
+  apiClients: () => get<ApiClientRow[]>("/api/admin/api-clients"),
+  createApiClient: (name: string) => send<ApiClientRow & { key: string }>("POST", "/api/admin/api-clients", { name }),
+  disableApiClient: (id: number) => send<ApiClientRow>("POST", `/api/admin/api-clients/${id}/disable`),
   deleteContent: (id: number, reason: string, confirm: number) =>
     send<{ ok: true; deleted: string[] }>("POST", `/api/calls/${id}/delete-content`, { reason, confirm }),
   analysis: (id: number) => get<CallAnalysis>(`/api/calls/${id}/analysis`),

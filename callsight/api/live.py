@@ -154,6 +154,17 @@ class LiveConfig:
     clock: Callable[[], float] = time.time
 
 
+async def board_snapshot(cfg: LiveConfig) -> dict:
+    """The whole board now. Also served once over HTTP (GET /api/live/snapshot) for systems that poll."""
+    snap = await cfg.source.snapshot()
+    base = {"type": "snapshot", "server_time": round(cfg.clock(), 3)}
+    if snap is None:          # live service off / dead: "no live data" + when it was last seen
+        return {**base, "available": False, "seq": None, "status": "off", "calls": [],
+                "last_seen": await cfg.source.last_seen()}
+    return {**base, "available": True, "seq": snap.get("seq"), "status": snap.get("status"),
+            "calls": snap.get("calls") or [], "last_seen": snap.get("published_at")}
+
+
 def register(app, cfg: LiveConfig, session_factory, secret: str) -> LiveHub:
     hub = LiveHub(cfg.source, cfg.max_total, cfg.max_per_user, cfg.queue_size)
 
@@ -162,13 +173,7 @@ def register(app, cfg: LiveConfig, session_factory, secret: str) -> LiveHub:
             return auth.user_from_token(s, token, secret)
 
     async def snapshot_message() -> dict:
-        snap = await cfg.source.snapshot()
-        base = {"type": "snapshot", "server_time": round(cfg.clock(), 3)}
-        if snap is None:          # live service off / dead: "no live data" + when it was last seen
-            return {**base, "available": False, "seq": None, "status": "off", "calls": [],
-                    "last_seen": await cfg.source.last_seen()}
-        return {**base, "available": True, "seq": snap.get("seq"), "status": snap.get("status"),
-                "calls": snap.get("calls") or [], "last_seen": snap.get("published_at")}
+        return await board_snapshot(cfg)
 
     @app.websocket("/api/live")
     async def live_ws(ws: WebSocket) -> None:
