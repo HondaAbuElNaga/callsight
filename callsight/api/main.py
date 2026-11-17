@@ -151,6 +151,15 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
             yield s
 
     def current_user(request: Request, s: Annotated[Session, Depends(db)]) -> AppUser:
+        # Another system (spec 2026-11-18-erp-api): key + the CallSight user it acts for. The cookie is ignored then.
+        # A browser cannot send this header to another site without CORS, which this app never allows.
+        key = request.headers.get(auth.API_KEY_HEADER)
+        if key is not None:
+            user = auth.user_from_api_key(s, key, request.headers.get(auth.ACT_AS_HEADER))
+            if user is None:
+                raise HTTPException(401, "bad API key, or unknown/disabled user in X-Act-As")
+            request.state.api_key = True
+            return user
         user = auth.user_from_token(s, request.cookies.get(auth.COOKIE_NAME), cfg.secret)
         if user is None:
             raise HTTPException(401, "login required")
@@ -485,8 +494,13 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
 
     # ---------- live board (admin + supervisor) + Listen stub (OFF) ----------
 
-    live_ws.register(app, cfg.live or LiveConfig(origins=frozenset(), source=NoLiveSource()), session_factory,
-                     cfg.secret)
+    live_cfg = cfg.live or LiveConfig(origins=frozenset(), source=NoLiveSource())
+    live_ws.register(app, live_cfg, session_factory, cfg.secret)
+
+    @app.get("/api/live/snapshot")
+    async def live_snapshot(user: Manager) -> dict:
+        """The live board once (same data as the WebSocket's first message), for systems that poll."""
+        return await live_ws.board_snapshot(live_cfg)
 
     def listen_audit(s: Session, user: AppUser, ip: str | None, call_id: str, result: str, agent: str | None = None,
                      kind: str = "attempt", attempt_id: int | None = None) -> ListenAudit:
@@ -516,7 +530,9 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
                s: DB) -> dict:
         # client_ip: behind Docker's port mapping this is the bridge gateway, not the user's PC (user_id is the key)
         ip = request.client.host if request.client else None
-        if (request.headers.get("origin") or "").rstrip("/") not in listen_origins:
+        # The Origin rule stops other web pages from using a supervisor's cookie; a key request has no cookie.
+        if (not getattr(request.state, "api_key", False)
+                and (request.headers.get("origin") or "").rstrip("/") not in listen_origins):
             deny(s, user, ip, call_id, "denied_origin", 403, "request not from the CallSight page")
         if user.role not in auth.STAFF_ROLES:
             deny(s, user, ip, call_id, "denied_role", 403, "admin or supervisor only")

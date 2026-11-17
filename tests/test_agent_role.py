@@ -47,6 +47,9 @@ STAFF_ONLY = {
     ("GET", "/api/admin/users"), ("POST", "/api/admin/users"), ("PATCH", "/api/admin/users/{user_id}"),
     ("POST", "/api/admin/users/{user_id}/password"), ("GET", "/api/admin/settings"), ("PUT", "/api/admin/settings"),
     ("GET", "/api/admin/log"), ("POST", "/api/calls/{call_id}/delete-content"),
+    # erp-api spec: API keys (admin, by hand only) + the live board once over HTTP (staff)
+    ("GET", "/api/admin/api-clients"), ("POST", "/api/admin/api-clients"),
+    ("POST", "/api/admin/api-clients/{client_id}/disable"), ("GET", "/api/live/snapshot"),
 }
 CATCH_ALL = {("GET", "/api/{rest:path}")}       # plain 404 for unknown /api paths
 ORIGIN = "http://testserver"                     # live WebSocket Origin allowlist in these tests
