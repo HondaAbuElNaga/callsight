@@ -212,8 +212,7 @@ def test_share_flow(env):
     login(client, "ali")
     assert client.get(f"/api/calls/{ids['other']}").status_code == 200
     assert client.get(f"/api/calls/{ids['other']}/summary").status_code == 200
-    calls = client.get("/api/calls").json()["items"]
-    assert ids["other"] not in {c["id"] for c in calls}                    # never in the agent's call list
+    assert client.get("/api/calls").status_code == 403                      # agents have no call list at all
     assert client.get(f"/api/calls/{ids['other']}/followup").json()["needed"] is False
     assert client.put(f"/api/calls/{ids['other']}/followup", json={"no_followup": True}).status_code in (404, 409)
     lst = client.get("/api/shares").json()
@@ -452,7 +451,6 @@ def test_agent_hears_only_shared_calls(env):
     login(client, "ali")
     assert client.get(f"/api/calls/{ids['own']}").json()["has_recording"] is False
     assert client.get(f"/api/calls/{ids['own']}/recording").status_code == 404     # own call, not shared
-    assert all(not c["has_recording"] for c in client.get("/api/calls").json()["items"])
     login(client, "boss")
     assert client.get(f"/api/calls/{ids['own']}/recording").status_code == 200     # staff: always
     client.post(f"/api/calls/{ids['own']}/shares", json={"to_user_id": ids["ali"], "note": "استمع"})

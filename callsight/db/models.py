@@ -182,6 +182,7 @@ class ReportDownload(Base):
     archive_id: Mapped[int | None] = mapped_column(ForeignKey("report_archive.id", ondelete="SET NULL"))
     period_type: Mapped[str] = mapped_column(String(10))
     period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)     # last day, inclusive (0021; older rows: NULL)
     scope: Mapped[str] = mapped_column(String(60))
     downloaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

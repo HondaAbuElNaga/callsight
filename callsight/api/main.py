@@ -107,7 +107,7 @@ def audit_transcript(s: Session, user: AppUser, call_id: int, kind: str) -> None
 def audit_report(s: Session, user: AppUser, period: kpi.Period, scope: str, archive_id: int | None = None) -> None:
     """Every report download is logged (who, which report), like recording plays."""
     s.add(ReportDownload(user_id=user.id, archive_id=archive_id, period_type=period.kind, period_start=period.start,
-                         scope=scope))
+                         period_end=period.end - timedelta(days=1), scope=scope))
     s.commit()
 
 
@@ -283,13 +283,20 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         if f.words and user.role not in auth.STAFF_ROLES:   # word search: staff only
             raise HTTPException(403, "transcript search: admin or supervisor only")
 
+    def list_allowed(user: AppUser) -> None:
+        # the call list is a staff page (2026-11-15): agents work from المتابعات and open one call at a time
+        if user.role not in auth.STAFF_ROLES:
+            raise HTTPException(403, "the call list is for admin and supervisor only")
+
     @app.get("/api/calls")
     def calls(user: User, s: DB, f: Filter, page: Annotated[int, Query(ge=1, le=10_000)] = 1) -> dict:
+        list_allowed(user)
         search_allowed(user, f)
         return list_calls(s, f, page)
 
     @app.get("/api/calls/summary")
     def calls_summary(user: User, s: DB, f: Filter) -> dict:
+        list_allowed(user)
         search_allowed(user, f)
         return summary(s, f)
 

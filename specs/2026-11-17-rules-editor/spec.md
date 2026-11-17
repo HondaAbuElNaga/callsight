@@ -1,6 +1,6 @@
 # Spec: Rules editor — word lists and limits on a page
 
-**Status:** draft (2026-11-17) · **Plan step:** 6 of [finish plan](../../product/finish-plan.md)
+**Status:** approved (2026-11-18, user: "approve all" — every open question = the recommendation) · **Plan step:** 6 of [finish plan](../../product/finish-plan.md)
 **Roadmap items:** Phase 6 "Rules editor UI" (idea AN-6, approved; source Azure-Samples/tayra).
 
 ## Goal

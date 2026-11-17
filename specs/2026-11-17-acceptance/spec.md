@@ -1,6 +1,6 @@
 # Spec: Acceptance — check every "Done when", close the project
 
-**Status:** draft (2026-11-17) · **Plan step:** 10 of [finish plan](../../product/finish-plan.md) (last)
+**Status:** approved (2026-11-18, user: "approve all" — every open question = the recommendation) · **Plan step:** 10 of [finish plan](../../product/finish-plan.md) (last)
 **Roadmap items:** each phase's "Done when"; AWS spec tasks 17–18; overnight list step 7 (hand-check one week).
 
 ## Goal

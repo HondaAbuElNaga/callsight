@@ -15,4 +15,4 @@
     history no longer shows ring text next to 'answered'; PDF test checks the tables, not the footnote; API test checks
     agent access; spec numbers/wording fixed (91 = 55-70 s, 87 at 61-63 s; 44 = not answered). Re-test: 687 passed,
     9 skipped, 1 failed (known `.env` test); web build OK.
-- [ ] 10. Roadmap + memory update; push to `main` only on the user's yes (push = live).
+- [x] 10. Roadmap + memory update; push to `main` only on the user's yes (push = live). → live 2026-11-15 21:23 UTC.

@@ -2,31 +2,24 @@
 
 > Status: `[x]` done · `[~]` in progress · `[ ]` not started
 
-**Current position (2026-11-16) — START HERE in a new session:**
-- Priority + "لا تحتاج متابعة" visible + "تحتاج حل" section (parts 1–3 of
-  [spec](../specs/2026-11-16-priority-no-followup/spec.md)) are **built and reviewed on branch
-  `spec/2026-11-16-priority-no-followup`, NOT pushed** (push to `main` = live; waits for the user's "ok push"; migration
-  0015 runs on deploy). Part 4 (forward a problem to a person in another system) waits for that system's API (user
-  sends it 2026-11-17).
-- AWS main server (Frankfurt) live: https://calls.mohanadyehia.com, fixed address 63.184.90.120, accounts `admin` and
-  `supervisor` (ext 114). Pushing to `main` on GitHub (private repo `HondaAbuElNaga/callsight`) updates it automatically.
-- PBX link works through `sstli.ras.yeastar.com`: calls every 2 minutes, recordings download. Employee list loaded
-  (104 خدمة عملاء المعهد, 116 متابعه المبيعات, 119 خدمة العملاء محمود هشام); refreshes nightly at 03:00.
-- Live board ON on AWS (`LIVE_ENABLED=true`, "subscribed to PBX call events").
-- Phase 7 (agents + supervisor) is live, plus the KPI / agent changes of 2026-11-15 night (see Phase 7 list).
-- Server commands without SSH: GitHub → Actions → **Server task** (`.github/workflows/server-task.yml`: make-supervisor,
-  new passwords, live on/off/log, sync-agents). Starting two at once cancels the waiting one. A password printed in a
-  run log: delete that run after copying it. By hand: AWS console → EC2 Instance Connect (first add an SSH rule from
-  `3.120.181.40/29` to security group callsight-main, delete it afterwards).
-- Follow-up stages + agent page fixes are LIVE (PR #2 merged 2026-11-15; a clicked call opens in a side panel on
-  the follow-ups page). Still to do: check the agent page in the browser with a real agent account.
-- **Next:** (1) GPU server (user step A4c in [user-steps](../specs/2026-11-15-aws-deploy/user-steps.md), quota approved)
-  → transcription + analysis on AWS, then `ASR_START_DATE`; (2) create agent accounts on the users page, set the
-  follow-up start date; (3) stop the PC's old services; (4) the rest of the order list in `docs/overnight-report.md`.
-- Known small items: live board login waits a full 10 min when its wait ends exactly at the lock expiry
-  (`callsight/live/service.py` LoginGate); `/api/calls` still answers agents (own calls only, page hidden); the KPI
-  download log keeps only the start date of a chosen range.
-- Step-by-step state: [tasks](../specs/2026-11-15-aws-deploy/tasks.md), guide: [docs/aws.md](../docs/aws.md).
+**Current position (2026-11-18) — START HERE in a new session:**
+- **The plan to the end of the project:** [finish-plan.md](finish-plan.md), steps 0–10, every spec approved
+  2026-11-18 ("approve all": each open question = the recommendation). Build one at a time, 3-agent review, push to
+  `main` only on the user's "ok push" (push = live deploy).
+- **Step 0 live 2026-11-18:** priority, "لا تحتاج متابعة", "تحتاج حل", the forward chain to the customer-service
+  system (any of 473 employees → branch supervisor → 3 managers), questions/answers, forwards KPI, training lookup.
+  Keys on the server; the 7 supervisor exts linked. Left: one real test ticket from an agent (task D5).
+- **Step 1 (cleanup)** on branch `spec/2026-11-17-cleanup`.
+- **Running on AWS (Frankfurt):** https://calls.mohanadyehia.com (main server 63.184.90.120, accounts `admin`,
+  `supervisor`); PBX link through `sstli.ras.yeastar.com` (calls every 2 min, recordings); live board on, team only
+  (104, 116, 119, queue 6401); GPU server (g4dn.xlarge) wakes every 30 min: Whisper large-v3 transcripts + call
+  analysis (`NLP_ENABLED=true`), `ASR_START_DATE=2026-11-15`; rating set of 500 calls ready to rate.
+- **Server commands without SSH:** GitHub → Actions → **Server task** (`server-task.yml`: accounts, passwords, live
+  on/off/log, sync-agents, rating-*, link-keys, forward-sync) and **GPU setup** (`gpu-setup.yml`: main-status,
+  gpu-update, nlp-on, ...). After a deploy that changes code the GPU runs: run `gpu-update`.
+- **Waiting for the user:** test forward (D5); rate the 500 calls (step 5); list of agents (step 2); company / HR
+  answers (step 8).
+- Still on the PC: the old services (switched off in step 2).
 
 **Position before the AWS move (2026-11-14):** All Phase 1 items **built**: call ingest ([spec](../specs/2026-11-12-call-ingest/spec.md)) and
 web call list ([spec](../specs/2026-11-13-web-call-list/spec.md)), Arabic page on http://127.0.0.1:8080 (this PC only; accounts admin + supervisor 114).
@@ -152,7 +145,7 @@ the HR/legal OK.
   تم الاتصال – أضف ملاحظة → حُلّت بعد المتابعة or the next round; stage KPIs (first-call solve %, solved after
   follow-up, open, average rounds, notes on time %); agent page: needs-action view (62 days), counters, urgent
   rows, refresh 60 s, copy/call number, auto-seen notes, form first. Live 2026-11-15 (PR #2) (idea: user)
-- [~] Priority + no-follow-up visible + "تحتاج حل" ([spec](../specs/2026-11-16-priority-no-followup/spec.md)):
+- [x] Priority + no-follow-up visible + "تحتاج حل" + forward chain — **live 2026-11-18** ([spec](../specs/2026-11-16-priority-no-followup/spec.md)):
   parts 1–3 built (required priority عالية/متوسطة/منخفضة in the first form, 1 day to solve when عالية, priority
   filter + tag; "لا تحتاج متابعة" counter/filter + KPI/PDF columns; "تحتاج حل" side section whatever the dates;
   supervisor one-line view), 3-agent review per part, 705 tests — not pushed yet. Part 4 (forward to a person in

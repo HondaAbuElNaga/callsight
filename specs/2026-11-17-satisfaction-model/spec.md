@@ -1,6 +1,6 @@
 # Spec: Satisfaction model — a trusted 1–10 score
 
-**Status:** draft (2026-11-17) · **Plan step:** 5 of [finish plan](../../product/finish-plan.md)
+**Status:** approved (2026-11-18, user: "approve all" — every open question = the recommendation) · **Plan step:** 5 of [finish plan](../../product/finish-plan.md)
 **Roadmap items:** Phase 3 "Label ≥ 500 calls", "Fine-tune CAMeLBERT-DA", "nlp worker: tuned model's score".
 **Phase 3 Done when:** on the 100 blind calls, the score is within ±2 of the human on ≥ 80 % of calls.
 

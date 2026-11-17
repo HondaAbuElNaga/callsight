@@ -1,6 +1,6 @@
 # Spec: Listen — supervisor hears a live call silently
 
-**Status:** draft (2026-11-17) · **Plan step:** 9 of [finish plan](../../product/finish-plan.md) — only after step 8
+**Status:** approved (2026-11-18, user: "approve all" — every open question = the recommendation) · **Plan step:** 9 of [finish plan](../../product/finish-plan.md) — only after step 8
 **Roadmap items:** Phase 5 "Listen button"; Phase 5 "Done when": board updates within 2 s; Listen rings the
 supervisor's phone and connects silently.
 

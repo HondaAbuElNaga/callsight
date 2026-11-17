@@ -1,7 +1,7 @@
 # Spec: Outbound ring time and who hung up ("رن كام ثانية ومين قفل")
 
 **Roadmap item:** Phase 7 follow-on (idea: user, 2026-11-15).
-**Status:** done on the branch (not live); approved (user, 2026-11-15: "one time call but ring must be big 30 second, less this kpi of agent reduced")
+**Status:** done, live 2026-11-15; approved (user, 2026-11-15: "one time call but ring must be big 30 second, less this kpi of agent reduced")
 
 ## Goal
 Supervisors need to see whether an agent really tried to reach a customer, or rang for 1-10 seconds and hung up.

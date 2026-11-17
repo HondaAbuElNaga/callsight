@@ -11,7 +11,7 @@
 - [x] 7b. Tests first: `unsolved` (dates ignored, leaves when solved, agent/supervisor scope, order); then the SQL
         pre-filter + `fu.rows(call_ids=...)` in `api/work.py`.
 - [x] 8. Web: "تحتاج حل" side section (wide: side column, phone: above the list), plus: types, labels, priority select in the first form, tag in the list, counter + filter, KPI columns + text.
-- [ ] 8b. Part 4 (forward to a person): API received 2026-11-16 (spec "Part 4: the other system's API"); only send
+- [x] 8b. Part 4 (forward to a person): API received 2026-11-16 (spec "Part 4: the other system's API"); only send → built as D1–D4 + the chain.
         is covered, M1 (accountGuid by phone) blocks sending, M2–M4 block solved / questions / re-send. Waiting for the
         developer's answers + user approval. Then: write
         requirement 12 in full (endpoints, auth, solved callback), user approves, tests first, build. Parts 1–3 can go
@@ -49,14 +49,14 @@
         `forward.suggest`, `GET /api/calls/{id}/student`, student box + pre-pick in the form, `.env` keys. Tests
         `tests/test_training.py`. Review: 3 agents, 0 high, all findings fixed (spec "Part 4: the training
         lookup", Review). Real look-up tested: 200 with the key, `trainers` still empty on their side.
-- [ ] D5. On the server: put the key, sync people, one real test ticket, then live on the user's "ok push".
+- [~] D5. On the server: put the key, sync people, one real test ticket, then live on the user's "ok push". → live 2026-11-18 (main 012429c); keys on the server (server task link-keys); forward-sync: 473 employees, 18 branch supervisors, the 7 exts + 3 managers linked. Left: one real test ticket from an agent.
 - [x] 9. Verify: migration up/down/up, full pytest, web build; tick acceptance criteria with real output.
 - [x] 10. Review: 3 subagents (bugs, security, accuracy) per part. → A: 2 low (2-day limit re-checked on an
         unchanged old time; untested path) fixed. B: 1 low (priority filter emptied the no-follow-up view) fixed.
         C: 1 low security (unbounded unsolved query) fixed, 1 medium + 2 low accuracy (oldest-first tie-break not
         tested; no state tag in the side section; no time for no_number) fixed. 7 findings in all (all confirmed + fixed), 0 rejected.
         Verify: 705 passed, 1 known `.env` failure, 9 skipped; web build OK; migration up/down/up OK.
-- [ ] 11. Spec status done, roadmap "Current position", push to `main` only on the user's yes (push = live deploy).
+- [x] 11. Spec status done, roadmap "Current position", push to `main` only on the user's yes (push = live deploy). → live 2026-11-18 on the user\'s "ok push".
 
 ## How the user wants this built (2026-11-16)
 - Build part by part: (A) priority + filter + 1-day rule, (B) "لا تحتاج متابعة" counter + KPI column, (C) "تحتاج حل"

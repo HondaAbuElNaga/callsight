@@ -1,6 +1,6 @@
 # Spec: Off-site backup on AWS + restore drill
 
-**Status:** draft (2026-11-17) · **Plan step:** 3 of [finish plan](../../product/finish-plan.md)
+**Status:** approved (2026-11-18, user: "approve all" — every open question = the recommendation) · **Plan step:** 3 of [finish plan](../../product/finish-plan.md)
 **Roadmap items:** Phase 6 "Done when: restore-from-backup drill succeeds"; hardening task 11 (encrypted second
 copy, `BACKUP_OFFSITE_CONFIRMED`).
 
