@@ -1,6 +1,9 @@
 # One-off jobs on the AWS main server, started by hand: Actions -> Server task -> Run workflow.
 # Runs on the runner installed ON the main server. A new password is printed in this run's log:
 # copy it, then delete the run (the repository must stay PRIVATE).
+# One runner on the main server: jobs of all workflows run one at a time (never at the same moment). GitHub keeps
+# only ONE waiting run per concurrency group: starting a second one while one waits cancels the waiting one, so
+# check that every run you started really finished.
 name: Server task
 
 on:
@@ -82,7 +85,8 @@ jobs:
             link-keys)
               # Writes the customer-service + training API keys into the server .env (replaces old lines).
               umask 077
-              cp -p .env .env.before-link-keys
+              install -d -m 700 "$HOME/env-backups"            # outside /opt/callsight: the deploy rsync deletes extra files
+              cp -p .env "$HOME/env-backups/.env.before-link-keys.$(date +%Y%m%d-%H%M%S)"
               BEFORE=$(wc -l < .env)
               for NAME in CS_API_KEY CS_USER_GUID TRAINING_API_KEY; do
                 VAR="K_$NAME"; VAL="${!VAR}"

@@ -1,5 +1,7 @@
 # Rating set: 500 calls from chosen days (2026-11-16, approved "ok approve")
 
+**Status:** done, live 2026-11-16 (500 picked; the user rates them next)
+
 User: "I need to this day to make التقيم so 1, 2, 3/10/2026 and 20/10/2026 and 20/9/2026 and 1/11/2026 and some
 random day in month 8 and 7; let it 500 call to finish our model." (2 random days per month = our choice.)
 

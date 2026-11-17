@@ -53,6 +53,13 @@ class FakeRedis:
         self._check()
         return self.ttls.get(k, -2 if k not in self.data else -1)
 
+    def expire(self, k, seconds):
+        self._check()
+        if k not in self.data:
+            return False
+        self.ttls[k] = seconds
+        return True
+
     def publish(self, ch, msg):
         self._check()
         self.published.append((ch, msg))

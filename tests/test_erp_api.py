@@ -40,8 +40,10 @@ def test_acts_with_the_named_users_rights(env):
     client, _, ids, *_ = env
     key = make_key(client)
     assert client.get("/api/me", headers=h(key, "ali")).json() == {"username": "ali", "role": "agent", "ext": "119"}
-    agent_calls = client.get("/api/calls", headers=h(key, "ali")).json()
-    assert {c["id"] for c in agent_calls["items"]} == {ids["own"]}          # an agent: own calls only
+    # an agent: no call list (same rule as the web page, cleanup 2026-11-18), but opens own calls one by one
+    assert client.get("/api/calls", headers=h(key, "ali")).status_code == 403
+    assert client.get(f"/api/calls/{ids['own']}", headers=h(key, "ali")).status_code == 200
+    assert client.get(f"/api/calls/{ids['other']}", headers=h(key, "ali")).status_code == 404
     boss_calls = client.get("/api/calls", headers=h(key, "boss")).json()
     assert {c["id"] for c in boss_calls["items"]} == {ids["own"], ids["other"], ids["sales"]}
     assert client.get("/api/admin/users", headers=h(key, "boss")).status_code == 403   # supervisor is no admin

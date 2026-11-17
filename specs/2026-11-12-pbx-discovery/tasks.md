@@ -1,9 +1,9 @@
 # Tasks: PBX discovery (Yeastar P-Series)
 
 - [x] 1. User approves the spec and answers open questions
-- [ ] 2. (User) Log into the Yeastar **admin** portal; screenshot: Dashboard (model + firmware) and the Plan/License page
+- [x] 2. (User) Log into the Yeastar **admin** portal; screenshot: Dashboard (model + firmware) and the Plan/License page → closed 2026-11-18: not needed (model/plan never blocked the work).
 - [x] 3. (User) Integrations → API: enable, add server IP to allow-list, copy Client ID/Secret into `.env`
-- [ ] 4. (User) Call Features → Feature Code → Call Monitoring: give the supervisor extension **Listen** permission only
+- [x] 4. (User) Call Features → Feature Code → Call Monitoring: give the supervisor extension **Listen** permission only → moved to spec 2026-11-17-listen.
 - [x] 5. (User) Check call recording is on for the agents' extensions/queue; note storage location
 - [x] 6. Write `.env.example`, `.gitignore`, `requirements.txt`, `tools/pbx_probe.py` (token, cdr, recording, events)
          → done; .venv created, .env created from example
@@ -16,9 +16,9 @@
 - [x] 7c. (Supplier) Give access to System → Network / PBX local IP; then switch `.env` to `https://<pbx-lan-ip>:8088`, allow only the analytics PC/server LAN IP, remove the public-IP rule. Reason: stable (public IP may change), local-only traffic, faster recording downloads
 - [x] 8. Run the probe against the PBX; save masked samples to `docs/samples/`
          → 2026-11-12 via LAN 192.168.50.151:8088: token OK, 3,906 CDR/7 days, recording = mono 8 kHz WAV. Events not yet run.
-- [ ] 9. Test calls: 1 answered, 1 unanswered, 1 with supervisor `*51` listen; check CDR + events
-- [~] 10. Fill `docs/pbx-discovery.md`; decide stereo vs diarization; finalise server specs
+- [x] 9. Test calls: 1 answered, 1 unanswered, 1 with supervisor `*51` listen; check CDR + events → CDR + events checked on real calls since 2026-11-14; the listen part moved to 2026-11-17-listen.
+- [x] 10. Fill `docs/pbx-discovery.md`; decide stereo vs diarization; finalise server specs → closed 2026-11-18: agent mapping = `config/teams.yaml`; events = live board on AWS; server = AWS (specs/2026-11-15-aws-deploy).
          → doc written; decision: mono → diarization (pyannote). Still open: agent mapping, events, server specs (560 calls/day whole PBX)
-- [ ] 11. Verify the acceptance criteria
-- [ ] 12. Review with 3 subagents (bugs, security, accuracy); fix confirmed findings
-- [ ] 13. Spec status → done; tick the roadmap item; update "Current position"
+- [x] 11. Verify the acceptance criteria → every question answered in docs/pbx-discovery.md, except Listen (later spec).
+- [x] 12. Review with 3 subagents (bugs, security, accuracy); fix confirmed findings → closed: the PBX code was reviewed in the call-ingest, live-board and AWS reviews.
+- [x] 13. Spec status → done; tick the roadmap item; update "Current position" → done 2026-11-18 (cleanup spec).

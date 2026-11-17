@@ -5,4 +5,4 @@
 - [x] 4. CLI `rating-set create|queue|status`; server task buttons `rating-fetch`, `rating-create`, `rating-status`.
 - [x] 5. Tests `tests/test_rating_set.py`.
 - [x] 6. 3-agent review, fixes (only picked recordings downloaded, blind waits for the whole set, logs).
-- [ ] 7. On the user's "ok push": push to main (deploy), rating-status, rating-fetch, rating-create, NLP on, rating-status.
+- [x] 7. On the user's "ok push": push to main (deploy), rating-status, rating-fetch, rating-create, NLP on, rating-status. → live 2026-11-16; 500 picked, NLP on (main + GPU).

@@ -1,7 +1,7 @@
 # Spec: PBX discovery (Yeastar P-Series)
 
 **Roadmap item:** Phase 0, "PBX discovery & server"
-**Status:** approved
+**Status:** done (closed 2026-11-18; Listen moved to specs/2026-11-17-listen)
 
 ## Goal
 Prove we can get, from the Yeastar P-Series PBX, everything the mission needs:

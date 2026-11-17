@@ -7,7 +7,7 @@ Spec: [spec.md](spec.md) · Branch: `spec/2026-11-15-aws-deploy`
 
 ## User steps on AWS (guided one by one)
 - [x] A2. Region: Bahrain was enabled but does not answer → the user chose **Europe (Frankfurt)** 2026-11-15 (on by default, nothing to enable).
-- [ ] A3. Service Quotas → EC2 → "Running On-Demand G and VT instances" → 4 (wait for approval). Request sent 2026-11-15 in Frankfurt ("Case Opened"); not approved yet.
+- [x] A3. Service Quotas → EC2 → "Running On-Demand G and VT instances" → 4 (wait for approval). Request sent 2026-11-15 in Frankfurt ("Case Opened"); not approved yet. → approved (CloudShell printed 4.0, 2026-11-15).
 - [x] A3b. (done 2026-11-15: both image ids written into the template; GPU type offered in all three zones) Paste one command in AWS CloudShell and send the answer (image ids + zones that offer the GPU type).
 - [x] A4. (main server created 2026-11-15, CREATE_COMPLETE) Upload `deploy/aws/callsight.yaml` in CloudFormation (main server first), guided. A4c = GPU server, A6 = schedule on.
 - [x] A4b. DNS record added 2026-11-15: `calls.mohanadyehia.com` → 63.184.90.120 (Cloudflare, DNS only; the user's own domain).
@@ -47,12 +47,12 @@ Spec: [spec.md](spec.md) · Branch: `spec/2026-11-15-aws-deploy`
 - [x] 10. Main server installed 2026-11-15 (Docker 29.1.3, compose 2.40.3, NFS export, compose up). Let's Encrypt
          certificate issued for `calls.mohanadyehia.com`; from the PC: HTTPS 200 with a valid certificate, HTTP → 308 to
          HTTPS; ports 80/443 open, 22 open (allowed from the PC's address only), 5432/6379/2049/8080/5433 closed.
-- [ ] 11. Copy `config/` + new `.env`; create admin + supervisor accounts; set `ASR_START_DATE`; stop the PC services.
+- [x] 11. Copy `config/` + new `.env`; create admin + supervisor accounts; set `ASR_START_DATE`; stop the PC services. → done except "stop the PC services": moved to spec 2026-11-17-rollout.
          Done 2026-11-15: `config/` (with the code), new `.env` (new random passwords; PBX ID/secret left EMPTY so
          no login is tried before the supplier confirms), account `admin`. PBX ID/secret added later the same day (after
          the user reported A5 done). Open: supervisor account, `ASR_START_DATE` (go-live day), stopping the PC
          services (`docker compose stop` on the PC; they collect nothing anyway: the PC is off the office network).
-- [ ] 12. After A5: one PBX login through the FQDN; ingest runs; test the live board through the FQDN.
+- [x] 12. After A5: one PBX login through the FQDN; ingest runs; test the live board through the FQDN. → PBX login through the FQDN works since 2026-11-15; live board on (team-only since 2026-11-16).
          **2026-11-15: first login REFUSED, `errcode=70087 IP FORBIDDEN`** (1 failed attempt; 5 in a row = the PBX
          blocks the address). The server set `pbx:auth_blocked` and does not retry. Checked: the API answers through
          the FQDN with a valid certificate (errcode 10004 without a token); the server's outgoing address is
@@ -71,9 +71,9 @@ Spec: [spec.md](spec.md) · Branch: `spec/2026-11-15-aws-deploy`
          `callsight-main` on the main server, `.github/workflows/deploy.yml` → `deploy/aws/deploy-main.sh` on every
          push to `main` (code copy without `.env`, DB backup, build + restart, web check). First run OK (1m51s).
          The AWS branch was merged to `main` for this although the spec is still open. GPU server not covered yet.
-- [ ] 13. After A3: user updates the stack with GPU = yes; models + images; measure Whisper speed on the T4;
+- [x] 13. After A3: user updates the stack with GPU = yes; models + images; measure Whisper speed on the T4; → GPU server created 2026-11-16 (zone 2), Whisper ≈ 0.1× real time on the T4 (508 s call → 56 s).
          `setup-internet.sh off` + check that the GPU server reaches nothing but the main server.
-- [ ] 14. Turn on the schedule; the user makes one real test call with the GPU server stopped (acceptance).
+- [~] 14. Turn on the schedule; the user makes one real test call with the GPU server stopped (acceptance). → schedule on 2026-11-16 19:14 Riyadh; wake-up verified, the user sees texts on the website. Not yet recorded: the GPU server state `stopped` after an idle cycle (acceptance) — check in task 15.
 
 ## Finish
 - [ ] 15. Verify every acceptance criterion that does not need 7 days; full `pytest`.

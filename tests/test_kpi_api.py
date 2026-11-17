@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from callsight.api import auth
 from callsight.api.main import ApiConfig, create_app
-from callsight.db.models import ReportArchive, ReportDownload
+from callsight.db.models import AppUser, ReportArchive, ReportDownload
 from test_kpi import TEAM, engine, week  # noqa: F401  (engine is a fixture)
 
 SECRET = "x" * 40
@@ -141,7 +141,33 @@ def test_archive_download_is_audited_and_confined(env):
     assert client.get("/api/reports/999/pdf").status_code == 404
     with Session() as s:
         rows = s.scalars(select(ReportDownload)).all()
-        assert [(x.archive_id, x.scope, x.period_start) for x in rows] == [(lst[0]["id"], "all", date(2026, 11, 1))]
+        assert [(x.archive_id, x.scope, x.period_start, x.period_end) for x in rows] == [
+            (lst[0]["id"], "all", date(2026, 11, 1), date(2026, 11, 7))]
+
+
+def test_range_pdf_endpoint_logs_the_last_day(env, monkeypatch):
+    """Review 2026-11-18: through the real endpoint, a من/إلى download stores إلى as period_end."""
+    import callsight.reports.pdf as pdf
+    monkeypatch.setattr(pdf, "make_pdf", lambda *a, **k: b"%PDF-1.7 fake")
+    client, Session, _ = env
+    login(client)
+    r = client.get("/api/reports/pdf", params={"date_from": "2026-11-02", "date_to": "2026-11-09"})
+    assert r.status_code == 200 and r.content == b"%PDF-1.7 fake"
+    with Session() as s:
+        row = s.scalars(select(ReportDownload)).one()
+        assert (row.period_type, row.period_start, row.period_end) == ("range", date(2026, 11, 2), date(2026, 11, 9))
+
+
+def test_download_log_keeps_both_dates_of_a_range(env):
+    """Cleanup 2026-11-18: a من/إلى range keeps its last day too (before: only the first day)."""
+    from callsight import kpi
+    from callsight.api.main import audit_report
+    _, Session, _ = env
+    with Session() as s:
+        user = s.scalars(select(AppUser)).first()
+        audit_report(s, user, kpi.Period("range", date(2026, 11, 3), date(2026, 11, 18)), "all")
+        row = s.scalars(select(ReportDownload)).one()
+        assert (row.period_type, row.period_start, row.period_end) == ("range", date(2026, 11, 3), date(2026, 11, 17))
 
 
 def test_live_pdf_download_audited(env):

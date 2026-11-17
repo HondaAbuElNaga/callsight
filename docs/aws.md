@@ -189,11 +189,25 @@ Prices are from price-comparison sites for Bahrain, not from an AWS bill; Frankf
 2. CloudFormation → the stack → Delete.
 3. EC2 → Snapshots: delete the remaining `callsight` snapshots (they are kept on purpose when the stack goes).
 
-## 10. Not verified yet (checked during setup)
+## 10. What was verified, what is open, known risks (updated 2026-11-18)
 
-- The stack was created with the main server only (CREATE_COMPLETE, 2026-11-15). The GPU part of the template
-  (GPU server, wake-up schedule and its permission) has not been created by AWS yet.
-- Whether the AWS GPU image has Docker with the NVIDIA runtime ready (`install-gpu.sh` checks and stops if not).
-- T4 speed for Whisper large-v3; whether Whisper (3.2 GB) + qwen2.5:7b (~5 GB) work side by side as expected.
-- The live board (WebSocket) through `sstli.ras.yeastar.com`. The live board stays off on AWS until tested.
-- The shell scripts were syntax-checked only; `gpu_run.py` has tests with fake commands (`tests/test_gpu_work.py`).
+**Verified on the real servers (2026-11-15 / 16):** stack CREATE_COMPLETE (main), UPDATE_COMPLETE with the GPU part
+(zone 2: zone 1 had no g4dn.xlarge); the AWS GPU image runs Docker with the NVIDIA runtime (Tesla T4); Whisper
+large-v3 ≈ 0.1× real time (508 s call → 56 s) side by side with qwen2.5:7b; the live board through
+`sstli.ras.yeastar.com` (on since 2026-11-15, team-only since 2026-11-16); wake-up every 30 min (19:30 run finished
+the queue).
+
+**Still to check (AWS tasks 15, 17):** the GPU server state is `stopped` after an idle cycle; from outside only
+80/443 answer on 63.184.90.120; after 7 days: transcript delay and the real bill.
+
+**Rules of operation:**
+- One GitHub runner on the main server: jobs of Deploy, Server task and GPU setup run one at a time. GitHub keeps
+  only ONE waiting run per workflow group: a second waiting run cancels the first, so check each run finished.
+- A deploy updates the main server only. After a change to code the GPU runs (transcription, analysis), run
+  GPU setup → `gpu-update` (refuses unless started from `main`).
+- `gpu-cmd` logs are kept 90 days: never print the GPU `.env` (the task refuses `.env`, `env`, `compose config`).
+
+**Known and accepted risk:** the GPU server talks to Postgres and Redis on the main server without TLS. Both run
+only inside the private network (10.20.0.0/16), the ports are open only to the GPU server's security group, the
+GPU server has no internet (except during a build), and Redis has a password. Whoever could read that traffic
+would already be inside our AWS account. Revisit if a third server or another network is added.

@@ -1,7 +1,7 @@
 # Spec: Priority on the follow-up form + "لا تحتاج متابعة" made visible
 
 **Roadmap item:** Phase 7 follow-on (idea: user, 2026-11-16).
-**Status:** parts 1–3 **done** (2026-11-16, branch `spec/2026-11-16-priority-no-followup`, not pushed yet) — part 4 (requirements 12, 16–21): API received 2026-11-16, reviewed below; missing parts M1–M4 asked from its developer
+**Status:** **live 2026-11-18** (all parts incl. the forward chain; only the first real test ticket is left) — was: parts 1–3 done (2026-11-16) — part 4 (requirements 12, 16–21): API received 2026-11-16, reviewed below; missing parts M1–M4 asked from its developer
 
 ## Goal
 1. Every problem the agent records gets a **priority** (عالية / متوسطة / منخفضة), so the supervisor sees what is urgent and,

@@ -1,6 +1,6 @@
 # Spec: Rollout — agents on the system, the PC switched off
 
-**Status:** draft (2026-11-17) · **Plan step:** 2 of [finish plan](../../product/finish-plan.md)
+**Status:** approved (2026-11-18, user: "approve all" — every open question = the recommendation) · **Plan step:** 2 of [finish plan](../../product/finish-plan.md)
 **Roadmap items:** Phase 7 "Create the agent accounts, set the follow-up start date"; AWS spec task 11 "stop the PC
 services".
 

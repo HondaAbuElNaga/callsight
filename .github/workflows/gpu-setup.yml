@@ -21,8 +21,12 @@ on:
           - finish
           - main-status
           - gpu-cmd
+          - nlp-on
+          - main-ps
+          - gpu-update
+          - blind-reset
       value:
-        description: "start-date: YYYY-MM-DD  |  gpu-cmd: one command run on the GPU server"
+        description: "start-date: YYYY-MM-DD | blind-reset: yes-delete-blind-set | gpu-cmd: one command on the GPU server (never .env / compose config: the log is kept)"
         required: false
         default: ""
 
@@ -68,6 +72,7 @@ jobs:
 
             prepare)
               sudo bash "$M/deploy/aws/setup-internet.sh" on
+              trap 'sudo bash "$M/deploy/aws/setup-internet.sh" off' EXIT     # never left on, even on a failure
               "${G[@]}" 'sudo install -d -o ubuntu -g ubuntu /opt/callsight'
               git archive HEAD | "${G[@]}" 'tar -x -C /opt/callsight'
               "${G[@]}" 'sudo bash /opt/callsight/deploy/aws/install-gpu.sh'
@@ -84,6 +89,7 @@ jobs:
 
             build-models)
               sudo bash "$M/deploy/aws/setup-internet.sh" on
+              trap 'sudo bash "$M/deploy/aws/setup-internet.sh" off' EXIT     # never left on, even on a failure
               # Only the fp16 safetensors + small files: the repo also holds flax/fp32/.bin copies (~21 GB more),
               # which filled the 100 GB disk on the first try. "up -d" builds only images that are missing.
               "${G[@]}" "$GC --profile setup run --rm model-download openai/whisper-large-v3 \
@@ -126,7 +132,41 @@ jobs:
                 "select 'finished per hour (UTC)', date_trunc('hour', finished_at), count(*) from transcript
                  where finished_at > now() - interval '12 hours' group by 2 order by 2" ;;
 
+            nlp-on)             # automatic AI analysis on: main server (queues analyses) + GPU server (runs them)
+              cd "$M"
+              if grep -q '^NLP_ENABLED=' .env; then sed -i 's/^NLP_ENABLED=.*/NLP_ENABLED=true/' .env
+              else echo 'NLP_ENABLED=true' >> .env; fi
+              grep '^NLP_ENABLED=' .env
+              docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml up -d
+              "${G[@]}" "cd /opt/callsight && { grep -q '^NLP_ENABLED=' .env                 && sed -i 's/^NLP_ENABLED=.*/NLP_ENABLED=true/' .env || echo 'NLP_ENABLED=true' >> .env; }                 && grep '^NLP_ENABLED=' .env && $GC up -d && $GC ps" ;;
+
+            main-ps)
+              cd "$M"
+              MC=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml)
+              "${MC[@]}" ps --format '{{.Service}} {{.Image}} {{.CreatedAt}} {{.Command}}'
+              docker images --format '{{.Repository}}:{{.Tag}} {{.CreatedAt}}' | head -20
+              git -C "$M" log -1 --format='%h %ci %s' || true
+              for svc in worker beat; do "${MC[@]}" logs --since 90m "$svc" 2>&1 | { grep -i -E "queue_analyses|blind" || true; } | tail -8; done ;;
+
+            gpu-update)         # the GPU server's code = main (deploy.yml does not update it); internet only during the build
+              [ "$GITHUB_REF" = refs/heads/main ] || { echo "gpu-update: start it from main (the GPU must run reviewed code)" >&2; exit 1; }
+              echo "GPU code -> $(git log -1 --format='%h %s')"
+              sudo bash "$M/deploy/aws/setup-internet.sh" on
+              trap 'sudo bash "$M/deploy/aws/setup-internet.sh" off' EXIT
+              git archive HEAD | "${G[@]}" 'tar -x -C /opt/callsight'
+              "${G[@]}" "$GC up -d --build && $GC ps && ls /opt/callsight/callsight/analysis/ratingset.py && sudo docker image prune -f >/dev/null" ;;
+
+            blind-reset)        # undo a blind set frozen by old code; the main server freezes it again from the rating set
+              [ "$VALUE" = yes-delete-blind-set ] || { echo "blind-reset: value must be yes-delete-blind-set" >&2; exit 1; }
+              cd "$M"
+              PSQL=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml exec -T postgres psql -U callsight -d callsight -qAt -c)
+              RATED=$("${PSQL[@]}" "select count(*) from satisfaction_label l join blind_set b using (call_id)")
+              [ "$RATED" = 0 ] || { echo "blind-reset refused: $RATED blind calls are already rated (the test set must stay frozen)" >&2; exit 1; }
+              "${PSQL[@]}" "delete from blind_set returning call_id" | wc -l ;;
+
             gpu-cmd)
               [ -n "$VALUE" ] || { echo "value: the command to run" >&2; exit 1; }
+              # the run log is kept 90 days: never print the GPU .env (its passwords are not GitHub secrets)
+              if [[ "$VALUE" =~ \.env|compose.*config|printenv|(^|[^a-z])env([^a-z]|$) ]]; then echo "gpu-cmd refused: would print secrets" >&2; exit 1; fi
               "${G[@]}" "$VALUE" ;;
           esac

@@ -1,6 +1,6 @@
 # Spec: Legal steps — recording announcement, keep-days, HR OK
 
-**Status:** draft (2026-11-17) · **Plan step:** 8 of [finish plan](../../product/finish-plan.md)
+**Status:** approved (2026-11-18, user: "approve all" — every open question = the recommendation) · **Plan step:** 8 of [finish plan](../../product/finish-plan.md)
 **Roadmap items:** Phase 0 "Legal recording announcement (PDPL)"; overnight list step 10 "Legal decisions";
 Phase 7 "Done when: the admin switches the follow-up KPIs on after the HR/legal OK".
 

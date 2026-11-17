@@ -1,6 +1,6 @@
 # Spec: Cleanup — small bugs, open branches, docs up to date
 
-**Status:** draft (2026-11-17) · **Plan step:** 1 of [finish plan](../../product/finish-plan.md)
+**Status:** approved (2026-11-18, user: "approve all" — every open question = the recommendation) · **Plan step:** 1 of [finish plan](../../product/finish-plan.md)
 **Roadmap items:** known small items in "Current position"; Phase 5 live board "queue waiting".
 
 ## Goal

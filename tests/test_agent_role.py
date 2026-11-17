@@ -23,7 +23,7 @@ from test_api import SECRET, PASSWORD, TEAM, engine, wav_bytes  # noqa: F401  (e
 
 PUBLIC = {("POST", "/api/login"), ("POST", "/api/logout")}
 AGENT_ALLOWED = {
-    ("GET", "/api/me"), ("GET", "/api/agents"), ("GET", "/api/calls"), ("GET", "/api/calls/summary"),
+    ("GET", "/api/me"), ("GET", "/api/agents"),
     ("GET", "/api/calls/{call_id}"), ("GET", "/api/calls/{call_id}/recording"),
     ("GET", "/api/calls/{call_id}/transcript"), ("GET", "/api/calls/{call_id}/transcript.txt"),
     # agent-supervisor spec: own follow-up forms, calls shared with them, the summary of own/shared calls
@@ -36,6 +36,7 @@ AGENT_ALLOWED = {
     ("GET", "/api/calls/{call_id}/summary"),
 }
 STAFF_ONLY = {
+    ("GET", "/api/calls"), ("GET", "/api/calls/summary"),   # the call list: staff only (cleanup 2026-11-18)
     ("GET", "/api/kpi"),   # KPI page: admin + supervisor only (user's decision 2026-11-15)
     ("GET", "/api/reports/pdf"), ("GET", "/api/reports"), ("GET", "/api/reports/{report_id}/pdf"),
     ("GET", "/api/goldset"), ("GET", "/api/goldset/{clip_id}"), ("PUT", "/api/goldset/{clip_id}"),
@@ -210,30 +211,22 @@ def test_agent_routes_need_login(env):
 
 # ---------- own calls only ----------
 
-def test_list_shows_only_own_answered_calls(env):
+@pytest.mark.parametrize("params", [{}, {"agent": "104"}, {"agent": "119"}, {"q": "0500000001"},
+                                    {"status": "abandoned_queue"}])
+def test_agent_gets_no_call_list(env, params):
+    """Cleanup 2026-11-18: agents have no calls page; the list and its counts answer 403 whatever the filter."""
+    client, *_ = env
+    login(client)
+    for path in ("/api/calls", "/api/calls/summary"):
+        assert client.get(path, params={**today(), **params}).status_code == 403, (path, params)
+
+
+def test_agent_opens_only_own_answered_calls(env):
     client, _, ids, _ = env
     login(client)
-    items = client.get("/api/calls", params=today()).json()["items"]
-    assert {i["id"] for i in items} == {ids["own"], ids["own_out"]}     # not the missed ring (decision 1)
-    assert client.get("/api/calls/summary", params=today()).json()["total"] == 2
-
-
-@pytest.mark.parametrize("agent", ["104", "116", "119"])
-def test_agent_parameter_is_overridden(env, agent):
-    client, _, ids, _ = env
-    login(client)
-    items = client.get("/api/calls", params={**today(), "agent": agent}).json()["items"]
-    assert {i["id"] for i in items} == {ids["own"], ids["own_out"]}
-    assert client.get("/api/calls/summary", params={**today(), "agent": agent}).json()["total"] == 2
-
-
-def test_search_and_status_filters_stay_inside_scope(env):
-    client, _, ids, _ = env
-    login(client)
-    r = client.get("/api/calls", params={**today(), "q": "0500000001"}).json()
-    assert {i["id"] for i in r["items"]} == {ids["own"], ids["own_out"]}
-    r = client.get("/api/calls", params={**today(), "status": "abandoned_queue"}).json()
-    assert r["total"] == 0
+    for key in ("own", "own_out"):
+        assert client.get(f"/api/calls/{ids[key]}").status_code == 200, key
+    assert client.get(f"/api/calls/{ids['missed']}").status_code == 404     # not the missed ring (decision 1)
 
 
 def test_others_calls_are_404(env):
@@ -298,14 +291,14 @@ def test_agent_gets_no_kpis(env):
 
 
 def test_agent_whose_ext_left_the_team_gets_no_kpis(env):
-    client, Session, *_ = env
+    client, Session, ids, _ = env
     with Session() as s:
         s.add(AppUser(username="old", password_hash=auth.hash_password(PASSWORD), role="agent", ext="555",
                       active=True, token_version=0, failed_logins=0))
         s.commit()
     login(client, "old")
     assert client.get("/api/kpi").status_code == 403
-    assert client.get("/api/calls", params=today()).json()["total"] == 0
+    assert all(client.get(f"/api/calls/{i}").status_code == 404 for i in ids.values())
 
 
 # ---------- scope helper + accounts ----------
@@ -323,13 +316,13 @@ def test_visible_scope_denies_by_default():
 
 
 def test_agent_without_ext_sees_nothing(env):
-    client, Session, *_ = env
+    client, Session, ids, _ = env
     with Session() as s:
         s.add(AppUser(username="noext", password_hash=auth.hash_password(PASSWORD), role="agent", ext=None,
                       active=True, token_version=0, failed_logins=0))
         s.commit()
     login(client, "noext")
-    assert client.get("/api/calls", params=today()).json()["total"] == 0
+    assert all(client.get(f"/api/calls/{i}").status_code == 404 for i in ids.values())
     assert client.get("/api/agents").json() == []
 
 
@@ -355,4 +348,5 @@ def test_changing_ext_ends_open_logins(env):
         auth.set_ext(s, "ali", "104", TEAM.ext_team)
     assert client.get("/api/me").status_code == 401
     login(client)
-    assert {i["id"] for i in client.get("/api/calls", params=today()).json()["items"]} == {ids["other"]}
+    assert client.get(f"/api/calls/{ids['other']}").status_code == 200     # 104's call now
+    assert client.get(f"/api/calls/{ids['own']}").status_code == 404       # 119's call no more
