@@ -16,6 +16,13 @@ from callsight.db.models import BackupRun, JobRun, ReconcileRun
 from callsight.locks import MAINT_LOCK, maint_busy, maint_lock
 from test_api import PASSWORD, SECRET, TEAM, engine  # noqa: F401  (engine is a fixture)
 
+
+@pytest.fixture(autouse=True)
+def _forward_link_off(monkeypatch):
+    """These tests assume the customer-service link is off, whatever the machine's .env holds."""
+    monkeypatch.delenv("CS_API_KEY", raising=False)
+    monkeypatch.delenv("CS_USER_GUID", raising=False)
+
 NOW = datetime(2026, 11, 14, 12, 0, tzinfo=timezone.utc)
 Usage = namedtuple("Usage", "total used free")
 
