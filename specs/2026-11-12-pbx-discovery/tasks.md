@@ -17,7 +17,7 @@
 - [x] 8. Run the probe against the PBX; save masked samples to `docs/samples/`
          → 2026-11-12 via LAN 192.168.50.151:8088: token OK, 3,906 CDR/7 days, recording = mono 8 kHz WAV. Events not yet run.
 - [x] 9. Test calls: 1 answered, 1 unanswered, 1 with supervisor `*51` listen; check CDR + events → CDR + events checked on real calls since 2026-11-14; the listen part moved to 2026-11-17-listen.
-- [~] 10. Fill `docs/pbx-discovery.md`; decide stereo vs diarization; finalise server specs
+- [x] 10. Fill `docs/pbx-discovery.md`; decide stereo vs diarization; finalise server specs → closed 2026-11-18: agent mapping = `config/teams.yaml`; events = live board on AWS; server = AWS (specs/2026-11-15-aws-deploy).
          → doc written; decision: mono → diarization (pyannote). Still open: agent mapping, events, server specs (560 calls/day whole PBX)
 - [x] 11. Verify the acceptance criteria → every question answered in docs/pbx-discovery.md, except Listen (later spec).
 - [x] 12. Review with 3 subagents (bugs, security, accuracy); fix confirmed findings → closed: the PBX code was reviewed in the call-ingest, live-board and AWS reviews.

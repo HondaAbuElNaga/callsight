@@ -253,6 +253,16 @@ def test_login_gate_expiring_lock_retries_in_1_second_not_10_minutes(ttl):
     assert e.value.wait == 1
 
 
+def test_login_gate_lock_without_expiry_gets_one_and_waits_the_full_interval():
+    """Review 2026-11-18: a lock with no TTL (-1) never expires -> it gets the 600 s expiry and a full wait,
+    not a 1 s retry forever."""
+    r = FakeRedis()
+    r.data["live:login_lock"] = "1"                            # no ttl recorded = -1
+    with pytest.raises(LoginRateLimited) as e:
+        LoginGate(r)()
+    assert e.value.wait == 601 and r.ttls["live:login_lock"] == 600
+
+
 def test_token_store_reuses_tokens_younger_than_25_min(tmp_path):
     now = [1000.0]
     ts = TokenStore(tmp_path / "pbx_token.json", clock=lambda: now[0])

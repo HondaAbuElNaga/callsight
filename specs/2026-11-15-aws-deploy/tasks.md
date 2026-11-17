@@ -73,7 +73,7 @@ Spec: [spec.md](spec.md) · Branch: `spec/2026-11-15-aws-deploy`
          The AWS branch was merged to `main` for this although the spec is still open. GPU server not covered yet.
 - [x] 13. After A3: user updates the stack with GPU = yes; models + images; measure Whisper speed on the T4; → GPU server created 2026-11-16 (zone 2), Whisper ≈ 0.1× real time on the T4 (508 s call → 56 s).
          `setup-internet.sh off` + check that the GPU server reaches nothing but the main server.
-- [x] 14. Turn on the schedule; the user makes one real test call with the GPU server stopped (acceptance). → schedule on 2026-11-16 19:14 Riyadh; wake-up verified, the user sees texts on the website.
+- [~] 14. Turn on the schedule; the user makes one real test call with the GPU server stopped (acceptance). → schedule on 2026-11-16 19:14 Riyadh; wake-up verified, the user sees texts on the website. Not yet recorded: the GPU server state `stopped` after an idle cycle (acceptance) — check in task 15.
 
 ## Finish
 - [ ] 15. Verify every acceptance criterion that does not need 7 days; full `pytest`.

@@ -145,6 +145,19 @@ def test_archive_download_is_audited_and_confined(env):
             (lst[0]["id"], "all", date(2026, 11, 1), date(2026, 11, 7))]
 
 
+def test_range_pdf_endpoint_logs_the_last_day(env, monkeypatch):
+    """Review 2026-11-18: through the real endpoint, a من/إلى download stores إلى as period_end."""
+    import callsight.reports.pdf as pdf
+    monkeypatch.setattr(pdf, "make_pdf", lambda *a, **k: b"%PDF-1.7 fake")
+    client, Session, _ = env
+    login(client)
+    r = client.get("/api/reports/pdf", params={"date_from": "2026-11-02", "date_to": "2026-11-09"})
+    assert r.status_code == 200 and r.content == b"%PDF-1.7 fake"
+    with Session() as s:
+        row = s.scalars(select(ReportDownload)).one()
+        assert (row.period_type, row.period_start, row.period_end) == ("range", date(2026, 11, 2), date(2026, 11, 9))
+
+
 def test_download_log_keeps_both_dates_of_a_range(env):
     """Cleanup 2026-11-18: a من/إلى range keeps its last day too (before: only the first day)."""
     from callsight import kpi

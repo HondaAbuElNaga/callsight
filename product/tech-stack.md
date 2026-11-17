@@ -25,16 +25,16 @@ workers / a second GPU box, not a rewrite.
 ## Backend
 | Area | Choice | Status | Why |
 |---|---|---|---|
-| Language | Python 3.12 | 🔜 | Same language for API, ML and telephony |
-| API | FastAPI + WebSockets | 🔜 | Async, live board push, auto OpenAPI docs |
-| Database | PostgreSQL 16 | 🔜 | Calls, transcripts, scores, KPIs; full-text search; scales far beyond 200 calls/day |
-| ORM / migrations | SQLAlchemy 2 + Alembic, driver psycopg 3 | 🔜 | Added 2026-11-12 (call-ingest spec): typed models, versioned schema changes; standard with FastAPI + Postgres |
+| Language | Python 3.12 | ✅ | Same language for API, ML and telephony |
+| API | FastAPI + WebSockets | ✅ | Async, live board push, auto OpenAPI docs |
+| Database | PostgreSQL 16 | ✅ | Calls, transcripts, scores, KPIs; full-text search; scales far beyond 200 calls/day |
+| ORM / migrations | SQLAlchemy 2 + Alembic, driver psycopg 3 | ✅ | Added 2026-11-12 (call-ingest spec): typed models, versioned schema changes; standard with FastAPI + Postgres |
 | Transcript search | `pg_trgm` (Postgres contrib extension): trigram GIN index on `transcript.search_text` | ✅ | Added 2026-11-14 (transcript-view spec): fast `LIKE '%word%'` on Arabic text; trusted extension on PostgreSQL 16, so the DB owner creates it in migration 0007 (no superuser) |
-| Config files | PyYAML (`config/teams.yaml`) | 🔜 | Added 2026-11-12: team extensions/queues editable without code |
+| Config files | PyYAML (`config/teams.yaml`) | ✅ | Added 2026-11-12: team extensions/queues editable without code |
 | Dev runtime | Docker Desktop on the analytics PC (192.168.50.189) until the server arrives | ✅ | Same Compose file moves to the server unchanged |
-| Queue / workers | Redis + Celery (separate queues: `ingest`, `asr`, `nlp`, `reports`) | 🔜 | Each stage scales independently; GPU queue isolated |
+| Queue / workers | Redis + Celery (separate queues: `ingest`, `asr`, `nlp`, `reports`) | ✅ | Each stage scales independently; GPU queue isolated |
 | Audio storage | Local disk volume (path in DB), optional MinIO later | 🔜 | Simple; MinIO only if storage moves to another box |
-| Scheduler | Celery Beat | 🔜 | CDR polling, nightly reconcile, auto weekly/monthly reports |
+| Scheduler | Celery Beat | ✅ | CDR polling, nightly reconcile, auto weekly/monthly reports |
 
 ## AI / ML (all on the local GPU)
 | Area | Choice | Status | Why |
@@ -50,29 +50,29 @@ workers / a second GPU box, not a rewrite.
 ## Frontend & reports
 | Area | Choice | Status | Why |
 |---|---|---|---|
-| Web UI | React + Vite + TypeScript, RTL Arabic UI | 🔜 | Live board, call list, transcript player, report button |
+| Web UI | React + Vite + TypeScript, RTL Arabic UI | ✅ | Live board, call list, transcript player, report button |
 | Charts | Apache ECharts `echarts@6.1.0` (exact pin, npm) | ✅ | Adopted 2026-11-14 (kpi-reports spec). No native RTL: axes mirrored by hand, Arabic font set explicitly |
 | PDF reports | WeasyPrint `weasyprint==70.0` (HTML → PDF) + apt `libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0` in the app image; bundled IBM Plex Sans Arabic TTF (OFL, `callsight/reports/fonts/`, from the IBM plex GitHub release `@ibm/plex-sans-arabic@1.1.0`); charts are SVG bars drawn in Python | ✅ | Adopted 2026-11-14 (kpi-reports spec): proper Arabic shaping and RTL, no headless browser |
 | PDF test helper | `pypdf==6.21.0` (test only: extracts the Arabic text back from the PDF) | ✅ | Added 2026-11-14 (kpi-reports spec) |
-| Auth | Local users + roles (admin, supervisor, agent) with JWT | 🔜 | Agents see only their own calls |
-| Auth libraries | argon2-cffi (password hashing), PyJWT (signed login token in an HttpOnly cookie) | 🔜 | Added 2026-11-13 (web call list spec) |
-| Web server | uvicorn (runs the FastAPI app) | 🔜 | Added 2026-11-13; standard FastAPI server |
+| Auth | Local users + roles (admin, supervisor, agent) with JWT | ✅ | Agents see only their own calls |
+| Auth libraries | argon2-cffi (password hashing), PyJWT (signed login token in an HttpOnly cookie) | ✅ | Added 2026-11-13 (web call list spec) |
+| Web server | uvicorn (runs the FastAPI app) | ✅ | Added 2026-11-13; standard FastAPI server |
 | Frontend build | Node.js 22 inside the Docker build stage only (no Node on the PC) | ✅ | Added 2026-11-13; builds the React/Vite app |
 | Arabic font | IBM Plex Sans Arabic, bundled via `@fontsource/ibm-plex-sans-arabic` (served locally, nothing from the internet) | ✅ | Added 2026-11-13 (review finding: was missing here) |
 
 ## Infrastructure
 | Area | Choice | Status | Why |
 |---|---|---|---|
-| OS | Ubuntu Server 24.04 LTS | 🔜 | Best NVIDIA/Docker support |
-| Deploy | Docker Compose (later: same images on k3s if needed) | 🔜 | One command install; same images scale out |
+| OS | Ubuntu Server 24.04 LTS | ✅ | Best NVIDIA/Docker support |
+| Deploy | Docker Compose (later: same images on k3s if needed) | ✅ | One command install; same images scale out |
 | Server (to buy) | 1× NVIDIA GPU 16–24 GB VRAM (RTX 4060 Ti 16GB minimum, RTX 4090/5090 24GB+ comfortable), 8+ core CPU, 64 GB RAM, 1 TB NVMe (system/DB) + 4 TB HDD (audio) | 🔜 | 200 calls/day ≈ 10 h audio/day; one GPU transcribes that in well under an hour |
-| Backup | Our own `python -m callsight backup`: `pg_dump -Fc` (REPEATABLE READ snapshot, counts saved) + Python incremental copy of recordings/reports (sha256 manifest) into `BACKUP_DIR`; `backup verify` restores into the scratch DB `callsight_restore_check`. Needs **`postgresql-client-16`** (pg_dump/pg_restore, exact pin `16.16-1.pgdg13+1`; bump it when PGDG drops that build) from the PostgreSQL apt repo (PGDG, `apt.postgresql.org`) in the app image: Debian's own client is another major version, which cannot dump our v16 server | 🔜 | Adopted 2026-11-14 (hardening spec, decision 2): no new backup tool; restic/borg (dedup + encryption) = later idea. Target should be an encrypted second disk/NAS |
-| Locked Python deps | **pip-tools** (`pip-compile --generate-hashes --allow-unsafe`), run only inside a `python:3.12-slim` linux/amd64 container (not installed on the PC or in the image): `requirements.in` (ranges) → `requirements.lock` (exact + hashes); the app image installs with `pip install --require-hashes`. Test-only tools in `requirements-dev.in` / `requirements-dev.lock` | 🔜 | Adopted 2026-11-14 (hardening spec, decision 7): reproducible builds, changed wheels are rejected |
-| Cloud servers | **AWS EC2**, region `eu-central-1` (Frankfurt; first choice Bahrain `me-south-1` did not answer on 2026-11-15): `t3.medium` always on (Ubuntu 24.04, 100 GB gp3, Elastic IP) + `g4dn.xlarge` (T4 16 GB, "Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 24.04)", no public address) that is on only while it works. Replaces "Server (to buy)" | 🔜 | Adopted 2026-11-15 (aws-deploy spec): the user chose AWS over buying a server; GPU paid per working hour (≈ $110/month in total) |
-| GPU wake-up | **Amazon EventBridge Scheduler** (cron, timezone Asia/Riyadh) → `ec2:StartInstances` through an IAM role that may start that one server; the server powers itself off (`deploy/aws/gpu_run.py`, systemd, Python 3 standard library only) | 🔜 | Adopted 2026-11-15: no AWS key on any server, no extra code service |
-| AWS set-up as a file | **AWS CloudFormation** (`deploy/aws/callsight.yaml`), uploaded by hand in the AWS website. No AWS CLI and no AWS access key on the PC. Checked offline with **cfn-lint** (PyPI, run from a throw-away venv; not installed in the project or image) | 🔜 | Adopted 2026-11-15 (user answer 1: by hand, no access key) |
-| Disk snapshots | **Amazon Data Lifecycle Manager**: daily EBS snapshot of the main server, 7 kept | 🔜 | Adopted 2026-11-15: the second copy on AWS (the nightly `callsight backup` stays on the same disk) |
-| Cost alarm | **AWS Budgets**: email at 80 % of $150 / month and at a forecast above it | 🔜 | Adopted 2026-11-15 |
-| HTTPS | **Caddy 2** (`caddy:2.11.9-alpine`, pinned by digest, Apache-2.0) in front of the api on ports 80/443, automatic Let's Encrypt certificate; AWS main server only | 🔜 | Adopted 2026-11-15: the website is reachable from the internet, so it needs a real certificate |
-| Shared recordings | **NFS v4** inside the private AWS network: `nfs-kernel-server` on the main server (read-only export), Docker NFS volumes + `nfs-common` on the GPU server | 🔜 | Adopted 2026-11-15: the workers read plain files, so no code change |
+| Backup | Our own `python -m callsight backup`: `pg_dump -Fc` (REPEATABLE READ snapshot, counts saved) + Python incremental copy of recordings/reports (sha256 manifest) into `BACKUP_DIR`; `backup verify` restores into the scratch DB `callsight_restore_check`. Needs **`postgresql-client-16`** (pg_dump/pg_restore, exact pin `16.16-1.pgdg13+1`; bump it when PGDG drops that build) from the PostgreSQL apt repo (PGDG, `apt.postgresql.org`) in the app image: Debian's own client is another major version, which cannot dump our v16 server | ✅ | Adopted 2026-11-14 (hardening spec, decision 2): no new backup tool; restic/borg (dedup + encryption) = later idea. Target should be an encrypted second disk/NAS |
+| Locked Python deps | **pip-tools** (`pip-compile --generate-hashes --allow-unsafe`), run only inside a `python:3.12-slim` linux/amd64 container (not installed on the PC or in the image): `requirements.in` (ranges) → `requirements.lock` (exact + hashes); the app image installs with `pip install --require-hashes`. Test-only tools in `requirements-dev.in` / `requirements-dev.lock` | ✅ | Adopted 2026-11-14 (hardening spec, decision 7): reproducible builds, changed wheels are rejected |
+| Cloud servers | **AWS EC2**, region `eu-central-1` (Frankfurt; first choice Bahrain `me-south-1` did not answer on 2026-11-15): `t3.medium` always on (Ubuntu 24.04, 100 GB gp3, Elastic IP) + `g4dn.xlarge` (T4 16 GB, "Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 24.04)", no public address) that is on only while it works. Replaces "Server (to buy)" | ✅ | Adopted 2026-11-15 (aws-deploy spec): the user chose AWS over buying a server; GPU paid per working hour (≈ $110/month in total) |
+| GPU wake-up | **Amazon EventBridge Scheduler** (cron, timezone Asia/Riyadh) → `ec2:StartInstances` through an IAM role that may start that one server; the server powers itself off (`deploy/aws/gpu_run.py`, systemd, Python 3 standard library only) | ✅ | Adopted 2026-11-15: no AWS key on any server, no extra code service |
+| AWS set-up as a file | **AWS CloudFormation** (`deploy/aws/callsight.yaml`), uploaded by hand in the AWS website. No AWS CLI and no AWS access key on the PC. Checked offline with **cfn-lint** (PyPI, run from a throw-away venv; not installed in the project or image) | ✅ | Adopted 2026-11-15 (user answer 1: by hand, no access key) |
+| Disk snapshots | **Amazon Data Lifecycle Manager**: daily EBS snapshot of the main server, 7 kept | ✅ | Adopted 2026-11-15: the second copy on AWS (the nightly `callsight backup` stays on the same disk) |
+| Cost alarm | **AWS Budgets**: email at 80 % of $150 / month and at a forecast above it | ✅ | Adopted 2026-11-15 |
+| HTTPS | **Caddy 2** (`caddy:2.11.9-alpine`, pinned by digest, Apache-2.0) in front of the api on ports 80/443, automatic Let's Encrypt certificate; AWS main server only | ✅ | Adopted 2026-11-15: the website is reachable from the internet, so it needs a real certificate |
+| Shared recordings | **NFS v4** inside the private AWS network: `nfs-kernel-server` on the main server (read-only export), Docker NFS volumes + `nfs-common` on the GPU server | ✅ | Adopted 2026-11-15: the workers read plain files, so no code change |
 | Tests | pytest, Playwright for UI | 🔜 | |

@@ -39,7 +39,7 @@ real test call's CDR row + recording file has been pulled to the server by hand.
 
 - [x] Identify the PBX: **Yeastar P-Series**, LAN `192.168.50.151:8088` (model/firmware/plan still unknown: no Dashboard access; not blocking) ([spec](../specs/2026-11-12-pbx-discovery/spec.md)) (idea: user)
 - [x] Find CDR + recording access: via Yeastar API (`cdr/list`, `recording/download`); recording is on; format **mono WAV 8 kHz** → diarization needed in Phase 2 (idea: user)
-- [~] API access ✅ (`tools/pbx_probe.py token/cdr/recording` work); live WebSocket events ⏳ not tested; agent/supervisor extension mapping ⏳ waiting for user; inbound calls go through IVR 6200 (idea: user)
+- [x] API access ✅ (`tools/pbx_probe.py token/cdr/recording` work); live WebSocket events ✅ (live board on AWS since 2026-11-15); extension mapping ✅ (`config/teams.yaml`: 104, 116, 119, supervisor 114); inbound calls go through IVR 6200 (idea: user)
 - [~] Silent listen: Yeastar feature code `*51`+ext / API `call/listen`. **Paused by user 2026-11-12, resume later.** State:
   user has Feature Code access; Listen permission = monitor ext **114** (= supervisor, confirmed by user 2026-11-13); phone 114 "Key As Send" was `*` (ate the star) → told to set `#`;
   `*51119` still declined while 119 talking. Next: check **Extension 119 → Features → Call Monitor** setting, then run
@@ -47,7 +47,7 @@ real test call's CDR row + recording file has been pulled to the server by hand.
 - [x] Connect over LAN, not the internet remote-access address (`sstli.ras.yeastar.com` gave 70087 IP FORBIDDEN); IP Restriction allows PC `192.168.50.189` (idea: user)
 - [x] Remove old public-IP rule `66.212.118.128` from API IP Restriction (user) → done 2026-11-12, API login still OK
 - [ ] Legal recording announcement for customers (Saudi PDPL consent); recording already on
-- [ ] ~~Buy & install server~~ → changed by the user 2026-11-15: **run on AWS** (Frankfurt, changed from Bahrain the same day: that region did not answer; small server always on + GPU server woken every 30 min, ≈ $110/month) — spec approved 2026-11-15; repository part built (work-left command, health item, GPU on/off service, compose files, CloudFormation file, `docs/aws.md`), nothing created on AWS yet ([spec](../specs/2026-11-15-aws-deploy/spec.md)) (idea: user)
+- [~] ~~Buy & install server~~ → changed by the user 2026-11-15: **run on AWS** (Frankfurt, changed from Bahrain the same day: that region did not answer; small server always on + GPU server woken every 30 min, ≈ $110/month) — spec approved 2026-11-15; repository part built (work-left command, health item, GPU on/off service, compose files, CloudFormation file, `docs/aws.md`), main server live 2026-11-15, GPU server + 30-min schedule live 2026-11-16; AWS tasks 15–18 open (7-day cost/latency check) ([spec](../specs/2026-11-15-aws-deploy/spec.md)) (idea: user)
 - [x] Repo skeleton: Docker Compose (Postgres, Redis, worker, beat), `.env` config (done in call-ingest spec; API container comes with the web UI; CI later)
 
 ## Phase 1: Call ingest, duration & unanswered calls (MVP data)
@@ -68,7 +68,7 @@ and each call has ring/talk/hold time + status (answered / no-answer / abandoned
 **Done when:** chosen model WER ≤ 25% on 30 hand-corrected own calls; every new answered
 call has a transcript within 15 min of hang-up.
 
-- [~] Collect & hand-correct 30 representative calls (gold set: 30 × 60 s clips cut ✅; ⚠ typing by user open) ([spec](../specs/2026-11-14-asr-benchmark/spec.md)) (idea: user)
+- [x] Collect & hand-correct 30 representative calls (gold set: 30 × 60 s clips cut ✅; 30 texts typed and scored 2026-11-14) ([spec](../specs/2026-11-14-asr-benchmark/spec.md)) (idea: user)
 - [x] Benchmark Jais-ASR / Audar-ASR / Whisper-large-v3 on gold set, pick the winner (scored on 30 typed clips: Audar 30.1%, Whisper 40.3%, Jais 47.1% WER; **user chose Whisper-large-v3** (MIT licence), confirmed 2026-11-15) (source: [echonova-ai-solutions/arabic-asr-benchmark](https://github.com/echonova-ai-solutions/arabic-asr-benchmark))
 - [x] STT model chosen by config (`ASR_MODEL`), served by our own `asr` worker, not a separate server (changed 2026-11-14, decision R2; speaches can't run Audar/Jais) ([spec](../specs/2026-11-14-transcription/spec.md)) (source: [speaches-ai/speaches](https://github.com/speaches-ai/speaches))
 - [x] `asr` worker queue: mono recording → 30 s windows → transcribe → store segments with timestamps; speaker split via diarization later (recordings are mono, not stereo) ([spec](../specs/2026-11-14-transcription/spec.md)) (idea: user) ([spec](../specs/2026-11-14-transcription/spec.md))
@@ -80,11 +80,11 @@ call has a transcript within 15 min of hang-up.
 **Goal:** Every analysed call gets a trustworthy 1–10 customer-satisfaction score.
 **Done when:** on a 100-call human-rated test set, score is within ±2 of the human on ≥ 80% of calls.
 
-- [~] Labelling tool: supervisor rates calls 1–10 (pre-filled by local LLM to go faster; first 100 = frozen blind test set without pre-fill) — built + tested (synthetic data), deployed (live DB at 0008); no real call rated yet ⚠ NEEDS USER ([spec](../specs/2026-11-14-call-analysis/spec.md)) (idea: user)
+- [~] Labelling tool: supervisor rates calls 1–10 (pre-filled by local LLM to go faster; first 100 = frozen blind test set without pre-fill) — built + tested (synthetic data), live on AWS with the 500-call rating set (2026-11-16); no real call rated yet ⚠ NEEDS USER ([spec](../specs/2026-11-14-call-analysis/spec.md)) (idea: user)
 - [ ] Label ≥ 500 calls = 400 training + the 100 blind test calls (LLM pre-label + human correction) ⚠ NEEDS USER: rate on the page "تقييم المكالمات", 100 blind first (idea: user)
 - [~] Fine-tune CAMeLBERT-DA (Apache-2.0; MARBERT excluded: research-only licence) as 1–10 regressor; compare with LLM-only baseline on the blind set — training code `callsight/analysis/train.py` + Docker self-test done; real run waits for ≥ 500 labels; customer-side text needs diarization ([spec](../specs/2026-11-14-call-analysis/spec.md)) (idea: user)
 - [~] `nlp` worker: score each call; store score + model version; re-score job when model updates — built for the LLM first estimate (model + prompt version stored, `analyze --rescore`); the tuned model's score comes after training ([spec](../specs/2026-11-14-call-analysis/spec.md)) (idea: user)
-- [~] LLM call summary: summary, topic, action items — local Ollama `qwen2.5:7b`, JSON schema + validation; deployed; 4 real calls analysed through the nlp worker (1 more skipped: poor audio); automatic runs off (`NLP_ENABLED=false`); page not yet checked in a browser ⚠ NEEDS USER ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [transcriptionstream/transcriptionstream](https://github.com/transcriptionstream/transcriptionstream))
+- [~] LLM call summary: summary, topic, action items — local Ollama `qwen2.5:7b`, JSON schema + validation; automatic on AWS since 2026-11-16 (`NLP_ENABLED=true`, main queues, GPU runs) ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [transcriptionstream/transcriptionstream](https://github.com/transcriptionstream/transcriptionstream))
 - [~] Bad words / escalation flags — matching built (`config/rules.yaml`, whole words, normalised); real word lists ⚠ NEEDS USER ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
 - [~] Silence, interruption & talk-ratio metrics from channel timings — silence metrics built (RMS, no diarization); talk ratio + interruptions need diarization (recordings are mono) ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
 
@@ -105,7 +105,7 @@ generates in < 30 s; weekly/monthly reports also auto-generate on schedule.
 **Done when:** live board updates within 2 s of call state change; "Listen" button rings
 the supervisor's phone and connects silently to the chosen call (customer + agent unaware).
 
-- [~] Live event stream from PBX adapter → WebSocket → live board (who's on call, caller, duration, queue waiting) (idea: user) — built; **on since 2026-11-14** (Call Status Monitor on trunk SSTLI); the user saw a real test call appear on the board; delay not timed, real 30011 payload not saved yet ([spec](../specs/2026-11-14-live-board/spec.md))
+- [~] Live event stream from PBX adapter → WebSocket → live board (who's on call, caller, duration, queue waiting) (idea: user) — built; **on AWS since 2026-11-15, team-only since 2026-11-16** (Call Status Monitor on trunk SSTLI); the user saw a real test call appear on the board; delay not timed, real 30011 payload not saved yet ([spec](../specs/2026-11-14-live-board/spec.md))
 - [~] "Listen" button: PBX originates spy call (ChanSpy `q` / vendor monitor) to supervisor extension (idea: user) — paused by user; 403 stub only, legal steps ⚠ NEEDS USER ([spec](../specs/2026-11-14-live-board/spec.md))
 - [x] Access control + audit log of who listened to which call (idea: user) — staff only, append-only listen_audit ([spec](../specs/2026-11-14-live-board/spec.md))
 
@@ -148,5 +148,5 @@ the HR/legal OK.
 - [x] Priority + no-follow-up visible + "تحتاج حل" + forward chain — **live 2026-11-18** ([spec](../specs/2026-11-16-priority-no-followup/spec.md)):
   parts 1–3 built (required priority عالية/متوسطة/منخفضة in the first form, 1 day to solve when عالية, priority
   filter + tag; "لا تحتاج متابعة" counter/filter + KPI/PDF columns; "تحتاج حل" side section whatever the dates;
-  supervisor one-line view), 3-agent review per part, 705 tests — not pushed yet. Part 4 (forward to a person in
-  another system, tracking view, forward-people KPI) waits for the API (idea: user)
+  supervisor one-line view), 3-agent review per part; parts 1–4 live 2026-11-18 (forward chain, questions/answers, forwards KPI,
+  training lookup); the first real test ticket (D5) is left (idea: user)
