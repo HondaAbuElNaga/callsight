@@ -21,6 +21,10 @@ on:
           - finish
           - main-status
           - gpu-cmd
+          - nlp-on
+          - main-ps
+          - gpu-update
+          - blind-reset
       value:
         description: "start-date: YYYY-MM-DD  |  gpu-cmd: one command run on the GPU server"
         required: false
@@ -125,6 +129,32 @@ jobs:
               "${MC[@]}" exec -T postgres psql -U callsight -d callsight -At -c \
                 "select 'finished per hour (UTC)', date_trunc('hour', finished_at), count(*) from transcript
                  where finished_at > now() - interval '12 hours' group by 2 order by 2" ;;
+
+            nlp-on)             # automatic AI analysis on: main server (queues analyses) + GPU server (runs them)
+              cd "$M"
+              if grep -q '^NLP_ENABLED=' .env; then sed -i 's/^NLP_ENABLED=.*/NLP_ENABLED=true/' .env
+              else echo 'NLP_ENABLED=true' >> .env; fi
+              grep '^NLP_ENABLED=' .env
+              docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml up -d
+              "${G[@]}" "cd /opt/callsight && { grep -q '^NLP_ENABLED=' .env                 && sed -i 's/^NLP_ENABLED=.*/NLP_ENABLED=true/' .env || echo 'NLP_ENABLED=true' >> .env; }                 && grep '^NLP_ENABLED=' .env && $GC up -d && $GC ps" ;;
+
+            main-ps)
+              cd "$M"
+              MC=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml)
+              "${MC[@]}" ps --format '{{.Service}} {{.Image}} {{.CreatedAt}} {{.Command}}'
+              docker images --format '{{.Repository}}:{{.Tag}} {{.CreatedAt}}' | head -20
+              git -C "$M" log -1 --format='%h %ci %s' || true
+              for svc in worker beat; do "${MC[@]}" logs --since 90m "$svc" 2>&1 | grep -i -E "queue_analyses|blind" | tail -8; done ;;
+
+            gpu-update)         # the GPU server's code = this branch (it ran old code); internet only during the build
+              sudo bash "$M/deploy/aws/setup-internet.sh" on
+              trap 'sudo bash "$M/deploy/aws/setup-internet.sh" off' EXIT
+              git archive HEAD | "${G[@]}" 'tar -x -C /opt/callsight'
+              "${G[@]}" "$GC up -d --build && $GC ps && ls /opt/callsight/callsight/analysis/ratingset.py && sudo docker image prune -f >/dev/null" ;;
+
+            blind-reset)        # undo a blind set frozen by old code; the main server freezes it again from the rating set
+              cd "$M"
+              docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml exec -T postgres psql -U callsight -d callsight -At -c                 "delete from blind_set returning call_id" | wc -l ;;
 
             gpu-cmd)
               [ -n "$VALUE" ] || { echo "value: the command to run" >&2; exit 1; }
