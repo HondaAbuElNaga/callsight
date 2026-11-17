@@ -3,13 +3,15 @@
 # supervisor's PBX ext: his calls to the customer are the proof of solving (only supervisors are checked).
 # guid = the person's id there (forward-targets); filled by the sync, matched by name (+ branch).
 people:
-  - {branch: "فرع الزهور",            name: "صالح الغامدي",        ext: "101", guid: null}
-  - {branch: "حفر الباطن مصيف",        name: "اسماعيل ابو المعاطي",  ext: "301", guid: null}
-  - {branch: "حفر الباطن حي الواحه",    name: "السيد عبدالمنعم",      ext: "401", guid: null}
-  - {branch: "الرياض الحمرا",          name: "عمر جنينة",           ext: "201", guid: null}
-  - {branch: "المدينة المنورة",         name: "شريف",                ext: "501", guid: null}
-  - {branch: "خميس مشيط الظرفة",       name: "عبدالعظيم",           ext: "601", guid: null}
-  - {branch: "الرياض ظهرة لبن",        name: "عماد حلمي",           ext: "901", guid: null}
+  - {branch: "فرع الزهور",            name: "صالح الغامدي",        ext: "101", guid: "ed7fcacb-a5b8-49a1-8f2f-a601e0a9a2ee"}
+  - {branch: "حفر الباطن مصيف",        name: "اسماعيل ابو المعاطي",  ext: "301", guid: "0e1d8c32-f20b-4c7a-b36f-1bc533537afc"}
+  - {branch: "حفر الباطن حي الواحه",    name: "السيد عبدالمنعم",      ext: "401", guid: "66026998-18eb-4f7d-9a47-85e07c5f7781"}
+  - {branch: "الرياض الحمرا",          name: "عمر جنينة",           ext: "201", guid: "4e0dce3d-8882-4d99-a537-01ae081326f7"}
+  - {branch: "المدينة المنورة",         name: "شريف",                ext: "501", guid: "311f4e09-7045-4a61-ae74-efed22fc90eb"}
+  # 601: the user says ext 601 = عبدالعظيم (2026-11-18); the other system still labels the Al-Dhurfa supervisor
+  # account "(مصطفى السيد)". Linked to that branch supervisor account (only supervisor accounts are linked).
+  - {branch: "خميس مشيط الظرفة",       name: "عبدالعظيم",           ext: "601", guid: "bb5ac3bd-7898-48bf-865b-7bf3dcf55830"}
+  - {branch: "الرياض ظهرة لبن",        name: "عماد حلمي",           ext: "901", guid: "b7f71c74-bcd6-42ff-8e13-4e2b6b26ce0e"}
 
 # The forward chain's last level (user 2026-11-16): the 3 managers. ALL of them get a problem that neither the
 # employee nor his branch supervisor solved in 24 h each (the first on the same ticket, the others a copy ticket).
