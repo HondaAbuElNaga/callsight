@@ -22,4 +22,4 @@
       - rejected: "gpu-setup races with deploy / server-task" — one runner on the main server runs one job at a
         time, so they never overlap (written in server-task.yml); "Postgres / Redis traffic to the GPU server not
         encrypted" — accepted risk inside the private network, written in docs/aws.md section 10.
-- [ ] 11. "ok push" → live; delete merged branches/worktrees (user said yes via "approve all").
+- [x] 11. "ok push" → live 2026-11-18 (main ea84167, deploy OK, site 200); 8 old worktrees + 30 merged local branches removed (spec/2026-11-15-agent-supervisor kept: its GitHub copy has extra commits).
