@@ -136,6 +136,20 @@ class AppUser(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class ApiClient(Base):
+    """A key for another system (spec 2026-11-18-erp-api). Only the SHA-256 of the key is kept; the key is shown
+    once. A request with the key names the CallSight user it acts for (X-Act-As) and gets exactly that user's rights."""
+    __tablename__ = "api_client"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100))
+    key_prefix: Mapped[str] = mapped_column(String(16), unique=True)
+    key_hash: Mapped[str] = mapped_column(String(64))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class RecordingPlay(Base):
     """Audit: who played which recording (recordings are personal data)."""
     __tablename__ = "recording_play"

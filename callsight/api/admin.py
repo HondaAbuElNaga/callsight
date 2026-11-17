@@ -10,13 +10,13 @@ import logging
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import followups as fu
-from ..db.models import AdminLog, AppUser, Call, GoldClip
+from ..db.models import AdminLog, ApiClient, AppUser, Call, GoldClip
 from . import auth
 
 log_ = logging.getLogger(__name__)
@@ -37,6 +37,11 @@ class UserPatch(BaseModel):
     ext: str | None = Field(default=None, pattern=r"^\d{1,6}$")
     clear_ext: StrictBool = False
     active: StrictBool | None = None
+
+
+class ApiClientIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=100)
 
 
 class SettingsIn(BaseModel):
@@ -152,6 +157,47 @@ def register(app: FastAPI, *, DB, Admin, cfg) -> None:
         log(s, user, "reset_password", u.username)
         s.commit()
         return {"id": u.id, "username": u.username, "password": password}
+
+    # ---------- API keys for other systems (spec 2026-11-18-erp-api) ----------
+
+    def client_dict(c: ApiClient) -> dict:
+        return {"id": c.id, "name": c.name, "prefix": c.key_prefix, "active": c.active,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+                "last_used_at": c.last_used_at.isoformat() if c.last_used_at else None}
+
+    @app.get("/api/admin/api-clients")
+    def api_clients(user: Admin, s: DB) -> list[dict]:
+        return [client_dict(c) for c in s.scalars(select(ApiClient).order_by(ApiClient.id))]
+
+    def by_hand(request: Request) -> None:
+        if getattr(request.state, "api_key", False):     # a key never makes or stops keys: only a person, logged in
+            raise HTTPException(403, "API keys are managed on the CallSight page only")
+
+    @app.post("/api/admin/api-clients")
+    def create_api_client(body: ApiClientIn, request: Request, user: Admin, s: DB) -> dict:
+        by_hand(request)
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(422, "name is required")
+        key, prefix, hash_ = auth.new_api_key()
+        c = ApiClient(name=name, key_prefix=prefix, key_hash=hash_, active=True, created_by=user.id)
+        s.add(c)
+        s.flush()
+        log(s, user, "create_api_key", f"{c.id} {name}")
+        s.commit()
+        return {**client_dict(c), "key": key}          # shown once on the page, never again
+
+    @app.post("/api/admin/api-clients/{client_id}/disable")
+    def disable_api_client(client_id: int, request: Request, user: Admin, s: DB) -> dict:
+        by_hand(request)
+        c = s.get(ApiClient, client_id)
+        if c is None:
+            raise HTTPException(404, "no such key")
+        if c.active:
+            c.active = False                            # stops at once; a key is never turned back on
+            log(s, user, "disable_api_key", f"{c.id} {c.name}")
+            s.commit()
+        return client_dict(c)
 
     # ---------- settings ----------
 
