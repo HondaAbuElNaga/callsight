@@ -1,6 +1,8 @@
 """Passwords (Argon2), login token (signed JWT in an HttpOnly cookie), lockout after wrong passwords."""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
 import string
 from collections.abc import Collection
@@ -12,7 +14,7 @@ from argon2.exceptions import InvalidHashError, VerificationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..db.models import AppUser
+from ..db.models import ApiClient, AppUser
 
 COOKIE_NAME = "cs_session"
 TOKEN_HOURS = 8
@@ -96,6 +98,51 @@ def user_from_token(session: Session, token: str | None, secret: str) -> AppUser
         return None
     if user is None or not user.active or user.token_version != data.get("ver"):
         return None
+    return user
+
+
+# ---------- API keys for other systems (spec 2026-11-18-erp-api) ----------
+
+API_KEY_HEADER = "X-Api-Key"
+ACT_AS_HEADER = "X-Act-As"
+KEY_USED_EVERY = timedelta(minutes=1)        # last_used_at is written at most once a minute per key
+
+
+def _key_hash(key: str) -> str:
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def new_api_key() -> tuple[str, str, str]:
+    """(key shown once, prefix kept to find the row, SHA-256 kept to check the key). Format: cs_<10>_<48 hex>."""
+    alphabet = string.ascii_letters + string.digits
+    prefix = "".join(secrets.choice(alphabet) for _ in range(10))
+    key = f"cs_{prefix}_{secrets.token_hex(24)}"
+    return key, prefix, _key_hash(key)
+
+
+def _key_prefix(key: str) -> str | None:
+    parts = key.split("_")
+    return parts[1] if len(parts) == 3 and parts[0] == "cs" and len(parts[1]) == 10 and parts[1].isalnum() else None
+
+
+def user_from_api_key(session: Session, key: str | None, act_as: str | None,
+                      now: datetime | None = None) -> AppUser | None:
+    """The CallSight user a system request acts for, or None (bad/disabled key, unknown or disabled user).
+    The answer gets exactly that user's role and scope, and every audit row names that user."""
+    key, act_as = (key or "").strip(), (act_as or "").strip().lower()
+    prefix = _key_prefix(key)
+    if prefix is None or not act_as or len(act_as) > 50:
+        return None
+    client = session.scalars(select(ApiClient).where(ApiClient.key_prefix == prefix)).first()
+    if client is None or not client.active or not hmac.compare_digest(client.key_hash, _key_hash(key)):
+        return None
+    user = session.scalars(select(AppUser).where(AppUser.username == act_as)).first()
+    if user is None or not user.active:
+        return None
+    now = now or datetime.now(timezone.utc)
+    if client.last_used_at is None or now - client.last_used_at > KEY_USED_EVERY:
+        client.last_used_at = now
+        session.commit()
     return user
 
 

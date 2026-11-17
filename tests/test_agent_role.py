@@ -52,6 +52,9 @@ STAFF_ONLY = {
     ("GET", "/api/admin/log"), ("POST", "/api/calls/{call_id}/delete-content"),
     ("GET", "/api/forwards"), ("GET", "/api/forwards/{call_id}"),      # forwards page: staff only
     ("GET", "/api/kpi/forwards"),                                      # D4: forward people KPI, staff only
+    # erp-api spec: API keys (admin, by hand only) + the live board once over HTTP (staff)
+    ("GET", "/api/admin/api-clients"), ("POST", "/api/admin/api-clients"),
+    ("POST", "/api/admin/api-clients/{client_id}/disable"), ("GET", "/api/live/snapshot"),
 }
 CATCH_ALL = {("GET", "/api/{rest:path}")}       # plain 404 for unknown /api paths
 ORIGIN = "http://testserver"                     # live WebSocket Origin allowlist in these tests
