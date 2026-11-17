@@ -278,10 +278,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     from .. import app as wiring
     from . import llm
-    from .settings import LlmConfig, load_topics
+    from .rulestore import current_topics
+    from .settings import LlmConfig
     cfg = LlmConfig.from_env()
-    pv = llm.prompt_version(load_topics(cfg.topics_file))
     with wiring.session_factory()() as s:
+        pv = llm.prompt_version(current_topics(s, cfg.topics_file))
         tr, te = load_examples(s, os.getenv("ASR_MODEL", "whisper-large-v3").strip(), cfg.model, pv)
     try:
         r = train(tr, te, BASE_MODEL, Path(a.out), revision=BASE_REVISION, epochs=a.epochs, lr=a.lr,

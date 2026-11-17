@@ -669,3 +669,27 @@ class AdminLog(Base):
     target: Mapped[str] = mapped_column(String(100))
     reason: Mapped[str | None] = mapped_column(String(300))
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RuleList(Base):
+    """A word list the admin edits on the rules page (spec 2026-11-17-rules-editor). Filled once from
+    config/rules.yaml + config/topics.yaml; after that the DB wins. `items`: normalised phrases, or for `topics`
+    [key, label] pairs in display order."""
+    __tablename__ = "rule_list"
+    name: Mapped[str] = mapped_column(String(30), primary_key=True)
+    items: Mapped[list] = mapped_column(JSONB)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RuleChange(Base):
+    """History of the rules page: who added / removed what and why. Never deleted, never holds call text.
+    user_id NULL = the first fill from the YAML files."""
+    __tablename__ = "rule_change"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    list_name: Mapped[str] = mapped_column(String(30), index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    added: Mapped[list] = mapped_column(JSONB)
+    removed: Mapped[list] = mapped_column(JSONB)
+    reason: Mapped[str] = mapped_column(String(300))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

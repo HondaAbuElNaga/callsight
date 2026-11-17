@@ -23,7 +23,7 @@ from .. import app as wiring
 from ..db.models import Call, CallAnalysis, CallAudioMetrics, TranscriptSegment
 from ..jobs import celery, send_analyze
 from . import flags, llm, queueing, silence
-from .settings import LlmConfig, Rules, load_rules, load_topics
+from .settings import LlmConfig, Rules
 
 log = logging.getLogger(__name__)
 GPU_WAIT_S = 120                 # GPU held by the asr worker: try again in 2 min (no try counted)
@@ -211,8 +211,10 @@ def _gpu_lock(ttl: int):
 
 def deps_from_env() -> Deps:
     import os
+    from . import rulestore
     cfg = LlmConfig.from_env()
-    return Deps(cfg=cfg, topics=load_topics(cfg.topics_file), rules=load_rules(cfg.rules_file),
+    rules, topics = rulestore.cached(wiring.session_factory(), cfg.rules_file, cfg.topics_file)   # rules page lists
+    return Deps(cfg=cfg, topics=topics, rules=rules,
                 client=llm.Ollama(cfg), gpu=_gpu_lock(int(cfg.timeout_s * llm.MAX_TRIES) + 120),
                 audio_dir=wiring.settings().audio_dir,
                 asr_model=os.getenv("ASR_MODEL", "whisper-large-v3").strip())

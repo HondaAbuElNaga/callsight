@@ -10,10 +10,11 @@ import { ForwardsPage } from "./ForwardsPage";
 import { HealthPage } from "./HealthPage";
 import { RatingPage } from "./RatingPage";
 import { LivePage } from "./LivePage";
+import { RulesPage } from "./RulesPage";
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = still checking
-  const [view, setView] = useState<"calls" | "goldset" | "kpi" | "health" | "live" | "rating" | "followups" | "users" | "forwards">("calls");
+  const [view, setView] = useState<"calls" | "goldset" | "kpi" | "health" | "live" | "rating" | "followups" | "users" | "forwards" | "rules">("calls");
   const [openCall, setOpenCall] = useState<number | null>(null);   // follow-ups page -> open that call's panel
   const [problems, setProblems] = useState(0);
   const isAdmin = me?.role === "admin";
@@ -53,6 +54,8 @@ export function App() {
     page = <RatingPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "live" && isStaff)
     page = <LivePage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
+  else if (view === "rules" && isStaff)   // admin edits, supervisor reads (spec 2026-11-17-rules-editor)
+    page = <RulesPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "users" && isAdmin)
     page = <UsersPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (isAgent)   // agents: the follow-ups page is their only page; a call opens in its side panel
@@ -77,6 +80,7 @@ export function App() {
         onRating={isStaff ? () => setView("rating") : undefined}
         onFollowups={() => { setOpenCall(null); setView("followups"); }}
         onUsers={isAdmin ? () => setView("users") : undefined}
+        onRules={isStaff ? () => setView("rules") : undefined}
         openCallId={openCall}
         onOpened={() => setOpenCall(null)}
       />

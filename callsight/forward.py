@@ -834,7 +834,7 @@ def queue_summaries(s: Session, now: datetime) -> int:
     if not ids:
         return 0
     from .analysis.views import shown_analysis
-    model, pv = _analysis_key()
+    model, pv = _analysis_key(s)
     for cid in ids:
         live = s.scalars(select(Call.id).where(Call.id == cid, Call.content_deleted_at.is_(None))
                          .with_for_update(read=True, skip_locked=True)).first()
@@ -852,12 +852,13 @@ def queue_summaries(s: Session, now: datetime) -> int:
     return made
 
 
-def _analysis_key() -> tuple[str | None, str | None]:
+def _analysis_key(s: Session) -> tuple[str | None, str | None]:
     """(LLM_MODEL, prompt version): which analysis counts as the current one (as on the call panel)."""
     try:
         from .analysis.llm import prompt_version
-        from .analysis.settings import load_topics
-        topics = load_topics(Path(os.getenv("TOPICS_FILE", str(ROOT / "config" / "topics.yaml"))))
+        from .analysis.rulestore import current_topics
+        with s.begin_nested():                     # a failed read never spoils the caller's transaction
+            topics = current_topics(s, Path(os.getenv("TOPICS_FILE", str(ROOT / "config" / "topics.yaml"))))
         return os.getenv("LLM_MODEL", "qwen2.5:7b").strip(), prompt_version(topics)
     except Exception:  # noqa: BLE001 - no topics file: the newest done analysis is used
         return None, None

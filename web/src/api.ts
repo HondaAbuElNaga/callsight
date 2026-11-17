@@ -352,6 +352,22 @@ export interface AppUserRow {
 }
 export interface ApiClientRow { id: number; name: string; prefix: string; active: boolean; created_at: string | null; last_used_at: string | null }
 export interface AdminLogRow { id: number; user: string; action: string; target: string; reason: string | null; at: string }
+// rules page (spec 2026-11-17-rules-editor)
+export type RuleListName = "bad_words" | "escalation" | "competitor" | "competitor_own" | "competitor_ignore";
+export interface RulesPage {
+  can_edit: boolean;
+  lists: Record<RuleListName, string[]>;
+  topics: [string, string][];
+  competitor_word: string | null;
+  competitor_label: string | null;
+  limits: { items: number; letters: number; topics: number; label: number };
+  version: string;
+  recheck_days: number;
+  recheck_enabled: boolean;
+}
+export interface RuleChangeRow { id: number; list: string; user: string | null; added: string[]; removed: string[];
+  reason: string; at: string }
+export interface RuleHit { kind: string; phrase: string }
 export interface FollowupKpiBucket {
   forms_due: number; forms_on_time: number; forms_rate: number | null;
   callbacks_due: number; callbacks_on_time: number; callbacks_rate: number | null; came_back: number;
@@ -499,6 +515,14 @@ export const api = {
   apiClients: () => get<ApiClientRow[]>("/api/admin/api-clients"),
   createApiClient: (name: string) => send<ApiClientRow & { key: string }>("POST", "/api/admin/api-clients", { name }),
   disableApiClient: (id: number) => send<ApiClientRow>("POST", `/api/admin/api-clients/${id}/disable`),
+  rules: () => get<RulesPage>("/api/rules"),
+  rulesHistory: () => get<RuleChangeRow[]>("/api/rules/history"),
+  changeRuleList: (name: RuleListName, add: string[], remove: string[], reason: string) =>
+    send<{ name: string; items: string[] }>("POST", `/api/rules/lists/${name}`, { add, remove, reason }),
+  changeTopics: (set: Record<string, string>, remove: string[], reason: string) =>
+    send<{ name: string; items: [string, string][] }>("POST", "/api/rules/topics", { set, remove, reason }),
+  testSentence: (text: string) => send<{ hits: RuleHit[] }>("POST", "/api/rules/test", { text }),
+  rulesRecheck: () => send<{ queued: boolean; days: number }>("POST", "/api/rules/recheck"),
   deleteContent: (id: number, reason: string, confirm: number) =>
     send<{ ok: true; deleted: string[] }>("POST", `/api/calls/${id}/delete-content`, { reason, confirm }),
   analysis: (id: number) => get<CallAnalysis>(`/api/calls/${id}/analysis`),

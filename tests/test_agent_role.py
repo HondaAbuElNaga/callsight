@@ -50,6 +50,9 @@ STAFF_ONLY = {
     ("GET", "/api/admin/users"), ("POST", "/api/admin/users"), ("PATCH", "/api/admin/users/{user_id}"),
     ("POST", "/api/admin/users/{user_id}/password"), ("GET", "/api/admin/settings"), ("PUT", "/api/admin/settings"),
     ("GET", "/api/admin/log"), ("POST", "/api/calls/{call_id}/delete-content"),
+    # rules page (spec 2026-11-17-rules-editor): staff read, admin writes
+    ("GET", "/api/rules"), ("GET", "/api/rules/history"), ("POST", "/api/rules/lists/{name}"),
+    ("POST", "/api/rules/topics"), ("POST", "/api/rules/test"), ("POST", "/api/rules/recheck"),
     ("GET", "/api/forwards"), ("GET", "/api/forwards/{call_id}"),      # forwards page: staff only
     ("GET", "/api/kpi/forwards"),                                      # D4: forward people KPI, staff only
     # erp-api spec: API keys (admin, by hand only) + the live board once over HTTP (staff)

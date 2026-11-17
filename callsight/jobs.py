@@ -315,9 +315,13 @@ def reap_transcripts() -> dict:
 
 def _analysis_setup():
     from .analysis import llm
-    from .analysis.settings import LlmConfig, load_topics
+    from .analysis.rulestore import current_topics
+    from .analysis.settings import LlmConfig
     cfg = LlmConfig.from_env()
-    return cfg, llm.prompt_version(load_topics(cfg.topics_file))
+    if not cfg.enabled:                       # off: no DB read at all
+        return cfg, None
+    with wiring.session_factory()() as s:
+        return cfg, llm.prompt_version(current_topics(s, cfg.topics_file))
 
 
 @celery.task
@@ -349,6 +353,26 @@ def reap_analyses() -> dict:
     for cid, row_pv in rows:
         send_analyze(cid, cfg.model, row_pv)
     return {"requeued": len(rows), "queue_length": ql}
+
+
+RULES_RECHECK_TASK = "callsight.jobs.rules_recheck"
+
+
+@celery.task(name=RULES_RECHECK_TASK)
+def rules_recheck(days: int = 7) -> dict:
+    """Rules page "re-check": match the current word lists on the calls of the last `days` days again (no LLM,
+    queue `ingest`, DB only). Counts only in the result, never call text."""
+    import os
+
+    from .analysis import flags, rulestore
+    from .analysis.settings import LlmConfig
+    cfg = LlmConfig.from_env()
+    days = max(1, min(int(days), 31))
+    with wiring.session_factory()() as s:
+        rules, _ = rulestore.current(s, cfg.rules_file, cfg.topics_file)
+        n = flags.recompute(s, rules, os.getenv("ASR_MODEL", "whisper-large-v3").strip(),
+                            since=datetime.now(RIYADH) - timedelta(days=days))
+    return {"calls": n, "days": days, "rules_version": rules.version}
 
 
 # ---------- maintenance (queue `maint`): backup + retention ----------

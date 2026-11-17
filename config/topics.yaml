@@ -1,5 +1,6 @@
-# Call topics for the LLM summary (spec 2026-11-14-call-analysis, decision 2). The manager may edit the Arabic labels
-# and add topics. Keys: lowercase a-z and _ only, never change an existing key (old analyses keep it).
+# Call topics for the LLM summary (spec 2026-11-14-call-analysis, decision 2). Edited on the web page "القواعد" (tab
+# topics, spec 2026-11-17-rules-editor): this file only filled the database once (migration 0023); the database wins.
+# Keys: lowercase a-z and _ only, never change an existing key (old analyses keep it).
 # "other" must always stay. Any edit changes prompt_version, so new calls are analysed with the new list;
 # old calls only with: python -m callsight analyze --rescore --days N --limit M
 topics:

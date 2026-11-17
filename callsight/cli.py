@@ -40,7 +40,7 @@
   analyze --days N --limit M [--rescore]   backfill: newest M transcribed calls of the last N days without an
                                    analysis (--rescore: without one by the current LLM_MODEL + prompt/topics)
   analyze status                   analysis counts for the current model + prompt version, nlp queue length
-  flags --recompute [--call ID]    re-match config/rules.yaml on the transcripts (after editing the word lists)
+  flags --recompute [--call ID]    re-match the word lists (rules page) on the transcripts
   blindset create [--n 100 --min-pool 100]   freeze the blind test set once (it never changes afterwards)
   blindset status                  blind set size and rating progress
   rating-set fetch --days D1,D2,...   store those days' team calls from the PBX (recordings stay on the PBX)
@@ -251,7 +251,8 @@ def _analyze(a: argparse.Namespace, p: argparse.ArgumentParser) -> int:
     from . import jobs
     from .analysis import llm
     from .analysis import queueing as nlpq
-    from .analysis.settings import ConfigError, LlmConfig, load_topics
+    from .analysis.rulestore import current_topics
+    from .analysis.settings import ConfigError, LlmConfig
     modes = sum((a.action == "status", a.call is not None, a.days is not None or a.limit is not None))
     if modes != 1:
         p.error("analyze: give exactly one of: status | --call ID | --days N --limit M [--rescore]")
@@ -259,7 +260,8 @@ def _analyze(a: argparse.Namespace, p: argparse.ArgumentParser) -> int:
         p.error("analyze: backfill needs both --days and --limit")
     try:
         cfg = LlmConfig.from_env()
-        pv = llm.prompt_version(load_topics(cfg.topics_file))
+        with wiring.session_factory()() as s:
+            pv = llm.prompt_version(current_topics(s, cfg.topics_file))    # the rules page list (or topics.yaml)
     except (ConfigError, OSError) as exc:
         print("ERROR:", exc, file=sys.stderr)
         return 1
@@ -320,13 +322,15 @@ def _gpu_work(a: argparse.Namespace) -> int:
 def _flags(a: argparse.Namespace) -> int:
     import os
     from .analysis import flags
-    from .analysis.settings import ConfigError, LlmConfig, load_rules
-    try:
-        rules = load_rules(LlmConfig.from_env().rules_file)
-    except (ConfigError, OSError) as exc:
-        print("ERROR:", exc, file=sys.stderr)
-        return 1
+    from .analysis import rulestore
+    from .analysis.settings import ConfigError, LlmConfig
+    cfg = LlmConfig.from_env()
     with wiring.session_factory()() as s:
+        try:
+            rules, _ = rulestore.current(s, cfg.rules_file, cfg.topics_file)   # the rules page lists (or YAML)
+        except (ConfigError, OSError) as exc:
+            print("ERROR:", exc, file=sys.stderr)
+            return 1
         n = flags.recompute(s, rules, os.getenv("ASR_MODEL", "whisper-large-v3").strip(), call_id=a.call)
     print(f"flags recomputed for {n} call(s) (rules {rules.version})")
     return 0

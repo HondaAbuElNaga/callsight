@@ -18,6 +18,7 @@ interface Props {
   onForwards?: () => void;      // the forwards page (staff)
   onFollowups?: () => void;
   onUsers?: () => void;
+  onRules?: () => void;         // the rules page (staff; admin edits)
   openCallId?: number | null;      // open this call's panel at once (from the follow-ups page)
   onOpened?: () => void;           // called once openCallId was used (so it never reopens later)
   detailOnly?: boolean;            // agents: no call list, only the opened call (their home is the follow-ups page)
@@ -43,7 +44,7 @@ function wordsOk(text: string): boolean {
 interface Seek { id: number; t: number; n: number }
 
 export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth, onRating, onLive, onFollowups, onUsers,
-  onForwards,
+  onForwards, onRules,
   openCallId, onOpened, detailOnly = false, embedded = false, fromShare = false }: Props) {
   const [filters, setFilters] = useState<Filters>(emptyFilters); // applied as soon as a field changes
   const [qText, setQText] = useState("");                  // number box: applied after typing stops
@@ -154,6 +155,7 @@ export function CallsPage({ me, onLogout, onExpired, onGoldset, onKpi, onHealth,
           {onForwards && <button className="link" onClick={onForwards}>التحويلات</button>}
           {onRating && <button className="link" onClick={onRating}>تقييم المكالمات</button>}
           {onGoldset && <button className="link" onClick={onGoldset}>النصوص المرجعية</button>}
+          {onRules && <button className="link" onClick={onRules}>القواعد</button>}
           {onHealth && <button className="link" onClick={onHealth}>حالة النظام</button>}
           {onUsers && <button className="link" onClick={onUsers}>المستخدمون</button>}
           <span className="muted">{me.username}{me.ext ? ` · تحويلة ${me.ext}` : ""}</span>
