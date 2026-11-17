@@ -3,7 +3,7 @@
 - [x] 2. Branch `spec/2026-11-17-cleanup` from `main` (after step 0 is live). → from f6afec0.
 - [x] 3. Tests first: LoginGate retry, agent 403 on `/api/calls`, KPI log both dates.
 - [x] 4. Fixes: take 376fb94 (LoginGate), agent 403, KPI log `date_to` (migration if a column is needed). → merge
-      98218a3; `list_allowed` in `callsight/api/main.py`; `report_download.period_end` (migration 0021, up/down/up OK).
+      98218a3; `list_allowed` in `callsight/api/main.py`; `report_download.period_end` (migration 0022, up/down/up OK; renumbered from 0021 after PR #4 took 0021).
 - [x] 5. Merge `ops/nlp-on` workflow tasks. → merge 0754067.
 - [ ] 6. Queue test: user calls queue 6401 while agents are busy; save the masked event; fix the board if needed.
       → waits for the user's test call.
