@@ -20,6 +20,8 @@ on:
           - rating-fetch
           - rating-create
           - rating-status
+          - link-keys
+          - forward-sync
       value:
         description: "rating-fetch / rating-create: days YYYY-MM-DD,YYYY-MM-DD,... (rating-create: then ;N, default 500)"
         type: string
@@ -43,6 +45,10 @@ jobs:
         env:
           TASK: ${{ inputs.task }}
           VALUE: ${{ inputs.value }}
+          # link-keys only: set as repository secrets for one run, deleted right after. Never printed.
+          K_CS_API_KEY: ${{ inputs.task == 'link-keys' && secrets.CS_API_KEY || '' }}
+          K_CS_USER_GUID: ${{ inputs.task == 'link-keys' && secrets.CS_USER_GUID || '' }}
+          K_TRAINING_API_KEY: ${{ inputs.task == 'link-keys' && secrets.TRAINING_API_KEY || '' }}
         run: |
           set -euo pipefail
           C=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml)
@@ -73,4 +79,21 @@ jobs:
               "${C[@]}" exec -T worker python -m callsight blindset status
               grep -E '^NLP_ENABLED=' .env || echo "NLP_ENABLED not set (off)"
               "${C[@]}" exec -T worker python -m callsight gpu-work || true ;;
+            link-keys)
+              # Writes the customer-service + training API keys into the server .env (replaces old lines).
+              umask 077
+              cp -p .env .env.before-link-keys
+              BEFORE=$(wc -l < .env)
+              for NAME in CS_API_KEY CS_USER_GUID TRAINING_API_KEY; do
+                VAR="K_$NAME"; VAL="${!VAR}"
+                if [ -z "$VAL" ]; then echo "$NAME: no secret given, left as it was"; continue; fi
+                grep -v "^$NAME=" .env > .env.new || true
+                printf '%s=%s\n' "$NAME" "$VAL" >> .env.new
+                [ "$(wc -l < .env.new)" -ge "$((BEFORE - 3))" ] || { echo "stop: the new .env looks too short, nothing changed"; rm -f .env.new; exit 1; }
+                cat .env.new > .env; rm -f .env.new
+                echo "$NAME: set (${#VAL} characters)"
+              done
+              "${C[@]}" up -d --force-recreate api worker beat
+              echo "api, worker, beat restarted" ;;
+            forward-sync) "${C[@]}" exec -T worker python -m callsight forward-sync ;;
           esac

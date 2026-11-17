@@ -1,0 +1,12 @@
+# Tasks: cleanup
+- [ ] 1. User approves the spec.
+- [ ] 2. Branch `spec/2026-11-17-cleanup` from `main` (after step 0 is live).
+- [ ] 3. Tests first: LoginGate retry, agent 403 on `/api/calls`, KPI log both dates.
+- [ ] 4. Fixes: take 376fb94 (LoginGate), agent 403, KPI log `date_to` (migration if a column is needed).
+- [ ] 5. Merge `ops/nlp-on` workflow tasks.
+- [ ] 6. Queue test: user calls queue 6401 while agents are busy; save the masked event; fix the board if needed.
+- [ ] 7. Tick the old specs (A3, 11–14, ring-time 10, rating-set 7, asr-benchmark 9, pbx-discovery 11–13).
+- [ ] 8. AWS tasks 15–16: acceptance check + 3-agent review of deploy files; fix findings.
+- [ ] 9. Rewrite roadmap "Current position".
+- [ ] 10. Full pytest; 3-agent review of this branch; fix.
+- [ ] 11. "ok push" → live; delete merged branches/worktrees if the user said yes.
