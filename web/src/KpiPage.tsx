@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api, Unauthorized,
-  type Agent, type ArchivedReport, type KpiFilters, type KpiReport, type KpiSummary, type Me, type Status,
+  type Agent, type ArchivedReport, type ForwardKpi, type KpiFilters, type KpiReport, type KpiSummary, type Me, type Status,
 } from "./api";
 import { Chart, type ChartOption } from "./Chart";
-import { STATUS_LABEL, duration, riyadhToday } from "./format";
+import { STATUS_LABEL, duration, formatDateTime, riyadhToday } from "./format";
+import { Story, took } from "./ForwardsPage";
 
 interface Props { me: Me; onCalls: () => void; onLogout: () => void; onExpired: () => void }
 
@@ -354,6 +355,8 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
             </section>
           )}
 
+          {staff && <ForwardPeople from={f.from} to={f.to} agent={f.agent} onExpired={onExpired} />}
+
           <div className="panels">
             <section className="panel">
               <h2>أكثر الأرقام تكراراً</h2>
@@ -392,4 +395,118 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
       {!data && loading && <div className="center muted">جارٍ التحميل…</div>}
     </div>
   );
+}
+
+// ---------- D4 (req 20): the people problems were forwarded to (show-only) ----------
+
+const LEVEL_TITLE: Record<number, string> = { 1: "موظفو الفروع", 2: "مشرفو الفروع", 3: "الإدارة" };
+
+/** Who solves forwarded problems in their 24 h, who lets them run out (each case one line: open it to see the
+ *  whole story), and how fast our agents answer the questions asked on the ticket. By the من/إلى above. */
+function ForwardPeople({ from, to, agent, onExpired }: { from: string; to: string; agent: string;
+  onExpired: () => void }) {
+  const [d, setD] = useState<ForwardKpi | null>(null);
+  const [open, setOpen] = useState<string | null>(null);      // "p:<level>:<id>" / "a:<ext>": its mistakes list
+  const [story, setStory] = useState<number | null>(null);
+  const [error, setError] = useState("");
+  const expired = useRef(onExpired);       // a new function each render must not refetch
+  expired.current = onExpired;
+  useEffect(() => {
+    if (!from || !to || to < from) return;
+    let live = true;
+    const t = setTimeout(() => {          // typing a date: one request when it settles
+      setError("");
+      api.forwardKpi({ from, to, agent: agent || undefined }).then((x) => { if (live) setD(x); }).catch((e) => {
+        if (!live) return;
+        if (e instanceof Unauthorized) expired.current(); else setError("تعذر تحميل أرقام التحويلات.");
+      });
+    }, 400);
+    return () => { live = false; clearTimeout(t); };
+  }, [from, to, agent]);
+  if (error) return <section className="panel"><p className="error">{error}</p></section>;
+  if (!d || (d.people.length === 0 && d.agents.length === 0)) return null;
+  const toggle = (k: string) => setOpen(open === k ? null : k);
+  return (
+    <section className="panel wide">
+      <h2>التحويلات: من حلّ في وقته ومن تأخر</h2>
+      {[1, 2, 3].map((lvl) => {
+        const rows = d.people.filter((r) => r.level === lvl);
+        if (rows.length === 0) return null;
+        return <div key={lvl}>
+          <h3>{LEVEL_TITLE[lvl]}</h3>
+          <div className="table-wrap"><table>
+            <thead><tr><th>الاسم</th><th>الفرع</th><th>استلم</th><th>حلّ</th><th>حلّ خلال 24 ساعة</th>
+              <th>نسبة الحل خلال 24 ساعة</th><th>متوسط وقت الحل (من استلامه)</th><th>عنده الآن</th>
+              <th>تأخر (أخطاء)</th>
+              <th title="تجاوز 24 ساعة على الساعة، لكن التأخير كان بانتظار رد موظف المكالمة أو تقييم الرضا عندنا">تأخر ليس بسببه</th>
+            </tr></thead>
+            <tbody>{rows.map((r) => {
+              const k = `p:${r.level}:${r.person_id}`;
+              return [<tr key={k}>
+                <td>{r.name ?? "–"}</td><td className="muted">{r.branch ?? "–"}</td>
+                <td className="num">{r.received}</td><td className="num">{r.solved}</td>
+                <td className="num">{r.solved_in_24h}</td><td className="num">{pct(r.in_24h_rate)}</td>
+                <td className="num">{took(r.avg_seconds_to_solve)}</td><td className="num">{r.open}</td>
+                <td className="num">{r.late ? <button type="button" className="link bad-text" aria-expanded={open === k}
+                  onClick={() => toggle(k)}>{r.late}</button> : 0}</td>
+                <td className="num muted">{r.excused}</td>
+              </tr>,
+              open === k && <tr key={`${k}:list`}><td colSpan={10}><Mistakes items={r.mistakes.map((m) => ({
+                call_id: m.call_id, at: m.sent_at, reason: m.reason,
+                extra: [`العميل ${m.customer_number ?? "–"}`, m.due ? `الموعد ${formatDateTime(m.due)}` : "",
+                  m.ended_at ? `انتهت ${formatDateTime(m.ended_at)}` : "ما زالت عنده",
+                  m.agent_wait_seconds ? `منها ${took(m.agent_wait_seconds)} بانتظار رد موظف المكالمة (لا تُحسب عليه)` : "",
+                  m.ticket_number ? `تذكرة ${m.ticket_number}` : "", `موظف المكالمة: ${m.agent ?? "–"}`]
+                  .filter(Boolean).join(" · ") }))}
+                total={r.late} onOpen={setStory} /></td></tr>];
+            })}</tbody>
+          </table></div>
+        </div>;
+      })}
+      {d.agents.length > 0 && <>
+        <h3>ردود موظفي المكالمات على أسئلة التذكرة</h3>
+        <div className="table-wrap"><table>
+          <thead><tr><th>موظف المكالمة</th><th>أسئلة</th><th>رد في وقته</th><th>تأخر (أخطاء)</th><th>أسئلة تنتظر الرد</th></tr></thead>
+          <tbody>{d.agents.map((a) => {
+            const k = `a:${a.ext}`;
+            return [<tr key={k}>
+              <td>{a.ext} <span className="muted">{a.name}</span></td><td className="num">{a.questions}</td>
+              <td className="num">{a.on_time}</td>
+              <td className="num">{a.late ? <button type="button" className="link bad-text" aria-expanded={open === k}
+                onClick={() => toggle(k)}>{a.late}</button> : 0}</td>
+              <td className="num">{a.waiting}</td>
+            </tr>,
+            open === k && <tr key={`${k}:list`}><td colSpan={5}><Mistakes items={a.mistakes.map((m) => ({
+              call_id: m.call_id, at: m.asked_at, reason: m.reason,
+              extra: `سؤال من «${m.from ?? "–"}» · الموعد ${m.due ? formatDateTime(m.due) : "–"}${m.answered_at ? ` · ردّ ${formatDateTime(m.answered_at)}` : ""}` }))}
+              total={a.late} onOpen={setStory} /></td></tr>];
+          })}</tbody>
+        </table></div>
+      </>}
+      {story !== null && <Story id={story} onClose={() => setStory(null)} onExpired={onExpired} />}
+      <p className="muted small">
+        بحسب يوم استلام كل شخص للمشكلة. كل شخص له 24 ساعة من وقته هو: الوقت الذي ينتظر فيه سؤالُه رد موظف المكالمة
+        لا يُحسب عليه. «تأخر» = تجاوز وقته 24 ساعة دون أن يحلّها (انتقلت لمن بعده، أو ما زالت عنده، أو حلّها بعدها).
+        مشرف الفرع الذي أغلقها دون مكالمة جيدة للعميل يُذكر السبب؛ وإن كان ينتظر تقييم الرضا عندنا فلا يُحسب عليه.
+        النسبة من المشاكل التي انتهت مهلتها فقط. اضغط عدد الأخطاء لرؤية الحالات، ثم الحالة لرؤية قصتها كاملة.
+        ردود موظفي المكالمات: في وقتها = قبل 23:00 يوم السؤال (أو خلال ساعتين لسؤال بعد 21:00)؛ «اطّلعت، لا يحتاج
+        رداً» يُحتسب رداً؛ إن حُلّت المشكلة قبل الموعد فلا يُحتسب السؤال. فلتر «الموظف» أعلاه يغيّر جدول موظفي المكالمات
+        فقط. للعرض فقط.
+      </p>
+    </section>
+  );
+}
+
+function Mistakes({ items, total, onOpen }: { total: number; onOpen: (id: number) => void;
+  items: { call_id: number; at: string | null; reason: string; extra: string }[] }) {
+  return <>
+    <ul className="mistakes">
+      {items.map((m, i) => <li key={i}>
+        <button type="button" className="link" onClick={() => onOpen(m.call_id)}>
+          استلمها {m.at ? formatDateTime(m.at) : "–"}</button> · <span className="bad-text">{m.reason}</span>
+        <span className="muted small"> · {m.extra}</span>
+      </li>)}
+    </ul>
+    {total > items.length && <p className="muted small">تظهر أول {items.length} من {total}.</p>}
+  </>;
 }

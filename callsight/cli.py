@@ -5,6 +5,11 @@
   recordings             download pending recordings now
   reconcile --date D     check one day (YYYY-MM-DD, default yesterday) against the PBX and fill gaps
   sync-agents            refresh agents/queues from the PBX
+  forward-sync           branch supervisors: config/forward_people.yaml -> DB, linked to the customer-service
+                         system (CS_API_KEY / CS_USER_GUID); prints who is linked
+  forward-targets        list the employees the customer-service system gives (supervisor?, branch, name, id)
+  forward-send           send waiting forwarded problems now (same as the 5-minute job)
+  forward-poll           read back the open tickets and move the chain now (same as the 5-minute job)
   stats --date D         calls per direction / status / agent for one day
   create-user NAME --role admin|supervisor|agent [--ext 114] [--generate]
                          new web login; asks for the password, or with --generate prints a random one.
@@ -117,7 +122,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("pbx-unblock")
     gw = sub.add_parser("gpu-work"); gw.add_argument("--queue", action="store_true")
     sub.add_parser("live")
+    for name in ("forward-sync", "forward-targets", "forward-send", "forward-poll"):
+        sub.add_parser(name)
     a = p.parse_args(argv)
+    if a.cmd in ("forward-sync", "forward-targets", "forward-send", "forward-poll"):
+        return _forward(a.cmd)
     if a.cmd == "pbx-unblock":
         return _pbx_unblock()
     if a.cmd == "gpu-work":
@@ -616,3 +625,39 @@ def _pbx_unblock(redis=None) -> int:
     else:
         print(f"PBX logins allowed again (was blocked by {info.get('by', '?')}: {info.get('reason', '?')}).")
     return 0
+
+
+def _forward(cmd: str) -> int:
+    """Part 4 (spec 2026-11-16-priority-no-followup): the link to the customer-service system."""
+    from . import forward
+    from .cs_api import CsClient, CsConfig, CsError, CsUnavailable, employees
+    cfg = CsConfig.from_env()
+    if not cfg.enabled and cmd != "forward-sync":
+        print("CS_API_KEY / CS_USER_GUID are empty in .env: the link is off")
+        return 1
+    try:
+        with wiring.session_factory()() as s:
+            if cmd == "forward-sync":
+                if not cfg.enabled:
+                    print("link off: only the yaml is loaded (no ids)")
+                    lines = forward.sync_people(s, None)
+                else:
+                    with CsClient(cfg) as client:
+                        lines = forward.sync_people(s, client)
+                for line in lines:
+                    print(line)
+                return 0 if not any(x.startswith("NOT LINKED") for x in lines) else 1
+            with CsClient(cfg) as client:
+                if cmd == "forward-targets":
+                    for x in employees(client.forward_targets()):
+                        sup = "مشرف" if x["is_supervisor"] else "    "
+                        print(f"{x['group']:5} {sup} {x['branch']} | {x['name']} | {x['guid']}")
+                    return 0
+                if cmd == "forward-poll":
+                    print(forward.poll_tickets(s, client), forward.advance(s, client))
+                    return 0
+                print(forward.send_pending(s, client), forward.send_messages(s, client))
+                return 0
+    except (CsError, CsUnavailable) as exc:
+        print(f"customer-service system: {exc}")
+        return 1

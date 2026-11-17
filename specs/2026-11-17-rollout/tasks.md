@@ -1,0 +1,11 @@
+# Tasks: rollout
+- [ ] 1. User approves; user sends the list of people (name, extension, role).
+- [ ] 2. Branch `spec/2026-11-17-rollout`. Test first: `must_change_password` gate.
+- [ ] 3. Build the first-login change-password page + flag (migration).
+- [ ] 4. Write `docs/agent-guide.md`.
+- [ ] 5. 3-agent review; "ok push" → live.
+- [ ] 6. Create the accounts (server-task button), give passwords to the user once, delete the run logs.
+- [ ] 7. Admin sets the follow-up start date.
+- [ ] 8. Browser check with one agent account (list + screenshots); fix what is found.
+- [ ] 9. User says yes → final PC DB dump + `backup verify`, then `docker compose down` on the PC.
+- [ ] 10. Roadmap: Phase 7 item ticked; "Done when" 2-week count starts (date written).

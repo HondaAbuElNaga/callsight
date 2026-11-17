@@ -56,6 +56,13 @@ class ApiConfig:
     live_lookup: Callable[[str], dict | None] | None = None   # live call by PBX call id (from the snapshot)
     # agent-supervisor spec: admin delete -> worker task removes the backup copy (BACKUP_DIR is read-only here)
     delete_backup_copy: Callable[[int, str], None] | None = None
+    # part 4 (spec 2026-11-16-priority-no-followup): forward to a branch supervisor. enabled = CS_API_KEY and
+    # CS_USER_GUID are set (the API never reads the key itself); send = ask the worker to send now
+    forward_enabled: Callable[[], bool] = lambda: False
+    forward_send: Callable[[], None] | None = None
+    # the training look-up (spec "Part 4: the training lookup"): phone 05xxxxxxxx -> students (training_api.parse
+    # shape); raises training_api.TrainingUnavailable. None = TRAINING_API_KEY empty (the box is not shown)
+    training_lookup: Callable[[str], list[dict]] | None = None
 
 
 class LoginIn(BaseModel):
@@ -434,8 +441,9 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         return topics, prompt_version(topics)
 
     def staff_call(s: Session, call_id: int) -> Call:
+        from ..ingest.classify import FORWARD_TEAM
         c = s.get(Call, call_id)
-        if c is None:
+        if c is None or c.team == FORWARD_TEAM:       # supervisors' proof calls are hidden, also from staff (D2)
             raise HTTPException(404, "no such call")
         return c
 
@@ -555,6 +563,9 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
     work_routes.register(app, DB=DB, User=User, Manager=Manager, cfg=cfg,
                          audit_analysis=lambda s, user, call_id: audit_transcript(s, user, call_id, "analysis"))
     admin_routes.register(app, DB=DB, Admin=Admin, cfg=cfg)
+    from . import forwards as forward_routes
+    forward_routes.register(app, DB=DB, Manager=Manager,      # the forwards page (staff only)
+                            audit_analysis=lambda s, user, call_id: audit_transcript(s, user, call_id, "analysis"))
 
     @app.get("/api/{rest:path}")
     def api_404(rest: str) -> None:
@@ -578,7 +589,24 @@ def _app_from_env() -> FastAPI:
         health=_health_from_env(), live=_live_from_env(),
         listen_enabled=lambda: os.getenv("LISTEN_ENABLED", "false").strip().lower() in ("1", "true", "yes"),
         listen_client=lambda: _listen_adapter(), live_lookup=_live_lookup_from_env(),
-        delete_backup_copy=_send_backup_delete))
+        delete_backup_copy=_send_backup_delete, forward_enabled=_forward_enabled, forward_send=_send_forward,
+        training_lookup=_training_lookup_from_env()))
+
+
+def _forward_enabled() -> bool:
+    from ..cs_api import enabled_from_env
+    return enabled_from_env()
+
+
+def _training_lookup_from_env() -> Callable[[str], list[dict]] | None:
+    from ..training_api import TrainingClient, TrainingConfig
+    tc = TrainingConfig.from_env()
+    return TrainingClient(tc).students if tc.enabled else None
+
+
+def _send_forward() -> None:
+    from ..jobs import FORWARD_TASK, celery
+    celery.send_task(FORWARD_TASK, queue="ingest")
 
 
 def _send_backup_delete(call_id: int, rel_path: str) -> None:

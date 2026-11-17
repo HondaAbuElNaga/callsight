@@ -1,0 +1,11 @@
+# Tasks: off-site backup
+- [ ] 1. User approves; answers the 2 open questions.
+- [ ] 2. Branch `spec/2026-11-17-offsite-backup`. Tech stack: add `boto3` (reason: S3).
+- [ ] 3. `callsight.yaml`: bucket + lifecycle + role policy; cfn-lint.
+- [ ] 4. Tests first (fake S3): upload only new files, sha256, retention deletes S3 copy, monthly check.
+- [ ] 5. Build upload step, monthly verify job, health page item.
+- [ ] 6. 3-agent review; fix.
+- [ ] 7. User: stack update click by click (written in `user-steps.md`).
+- [ ] 8. "ok push" → live; watch the first nightly upload; `BACKUP_OFFSITE_CONFIRMED=true`.
+- [ ] 9. Restore drill; write the steps and time in `docs/aws.md` section 7.
+- [ ] 10. Roadmap: Phase 6 "Done when" part 1 ticked.

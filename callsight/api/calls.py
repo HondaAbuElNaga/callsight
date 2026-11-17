@@ -7,6 +7,7 @@ from datetime import date
 from sqlalchemy import Select, and_, exists, false, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
+from ..ingest.classify import FORWARD_TEAM
 from ..db.models import Agent, AppUser, Call, CallLeg, CallShare, Transcript
 from ..ingest.service import day_bounds
 from ..transcripts import displayed_order
@@ -26,13 +27,16 @@ class Scope:
     user_id: int | None = None          # agents: calls shared with this user open one by one (never in the list)
 
     def where(self, stmt: Select) -> Select:
+        # part 4 D2: a branch supervisor's call kept as proof (team "forward") is never listed, not even for staff
         if self.everything:
-            return stmt
+            return stmt.where(Call.team.is_distinct_from(FORWARD_TEAM))
         if self.agent_ext:
-            return stmt.where(Call.agent_ext == self.agent_ext)
+            return stmt.where(Call.agent_ext == self.agent_ext, Call.team.is_distinct_from(FORWARD_TEAM))
         return stmt.where(false())
 
     def allows(self, call: Call) -> bool:
+        if call.team == FORWARD_TEAM:
+            return False
         return self.everything or (bool(self.agent_ext) and call.agent_ext == self.agent_ext)
 
     @property

@@ -21,7 +21,7 @@ from ..config import RIYADH
 from ..db.models import Agent, Call, CallLeg, IngestState, Queue, ReconcileRun
 from ..pbx.base import PbxAdapter, PbxError, PbxUnavailable
 from ..pbx.yeastar import safe_recording_name
-from .classify import TeamConfig, classify, is_team_call, leg_kind, to_number
+from .classify import FORWARD_TEAM, TeamConfig, classify, is_forward_call, is_team_call, leg_kind, to_number
 
 log = logging.getLogger(__name__)
 CURSOR_KEY = "last_cdr_id"
@@ -62,8 +62,9 @@ def _leg_values(row: dict, call_id: int) -> dict:
     }
 
 
-def ingest_rows(session: Session, rows: Iterable[dict], team: TeamConfig) -> IngestResult:
-    """Store team calls from raw CDR rows. Idempotent: same rows twice -> same result."""
+def ingest_rows(session: Session, rows: Iterable[dict], team: TeamConfig, watch: dict | None = None) -> IngestResult:
+    """Store team calls from raw CDR rows. Idempotent: same rows twice -> same result. watch (part 4 D2): also keep
+    a branch supervisor's call to a forwarded customer, as team "forward" (see is_forward_call)."""
     res = IngestResult()
     by_uid: dict[str, dict[int, dict]] = defaultdict(dict)
     for r in rows:
@@ -76,11 +77,16 @@ def ingest_rows(session: Session, rows: Iterable[dict], team: TeamConfig) -> Ing
         session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:uid))"), {"uid": uid})
         old = {leg.id: leg.raw for leg in session.scalars(select(CallLeg).where(CallLeg.uid == uid))}
         legs = {**old, **new_legs}
+        forward_call = False
         if not is_team_call(legs.values(), team):
-            res.skipped_calls += 1
-            continue
+            if not (watch and is_forward_call(legs.values(), watch)):
+                res.skipped_calls += 1
+                continue
+            forward_call = True
         f = classify(list(legs.values()), team)
         fields = {k: v for k, v in vars(f).items()}
+        if forward_call:
+            fields["team"] = FORWARD_TEAM
 
         session.execute(insert(Call).values(**fields, recording_status="none")
                         .on_conflict_do_nothing(index_elements=["uid"]))
@@ -122,6 +128,12 @@ def set_cursor(session: Session, rows: list[dict]) -> None:
         st.value = str(top)
 
 
+def _watch(session: Session) -> dict:
+    """Branch supervisors' exts to watch (part 4 D2); empty when nothing is forwarded."""
+    from ..forward import watch_list
+    return watch_list(session)
+
+
 def run_ingest(session: Session, pbx: PbxAdapter, team: TeamConfig) -> IngestResult:
     """Pull new CDR rows since the cursor (first run: last 24 h)."""
     last = get_cursor(session)
@@ -130,7 +142,7 @@ def run_ingest(session: Session, pbx: PbxAdapter, team: TeamConfig) -> IngestRes
         rows = pbx.fetch_cdr_between(now - timedelta(days=1), now + timedelta(minutes=5))
     else:
         rows = pbx.fetch_cdr_since(last)
-    res = ingest_rows(session, rows, team)
+    res = ingest_rows(session, rows, team, _watch(session))
     set_cursor(session, rows)
     session.commit()
     return res
@@ -139,7 +151,7 @@ def run_ingest(session: Session, pbx: PbxAdapter, team: TeamConfig) -> IngestRes
 def run_backfill(session: Session, pbx: PbxAdapter, team: TeamConfig, days: int) -> IngestResult:
     now = datetime.now(timezone.utc)
     rows = pbx.fetch_cdr_between(now - timedelta(days=days), now + timedelta(minutes=5))
-    res = ingest_rows(session, rows, team)
+    res = ingest_rows(session, rows, team, _watch(session))
     set_cursor(session, rows)
     session.commit()
     return res

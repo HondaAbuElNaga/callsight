@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, Unauthorized, type Agent, type FollowupItem, type FollowupList, type Me, type Share } from "./api";
 import {
-  CALLBACK_LABEL, PRIORITIES, PRIORITY_LABEL, STEP_CLASS, STEP_LABEL, earlyText, formatDateTime, riyadhToday, ringText,
+  CALLBACK_LABEL, PRIORITIES, PRIORITY_LABEL, STEP_CLASS, STEP_LABEL, earlyText, formatDateTime, forwardWhere,
+  riyadhToday, ringText,
 } from "./format";
 import { CB_CLASS, PriorityTag, RESP_LABEL } from "./WorkPanels";
 import { CallsPage } from "./CallsPage";
@@ -14,8 +15,17 @@ interface Props { me: Me; onCalls?: () => void;   // agents: no calls page (foll
 const STATE_OPTIONS: [string, string][] = [
   ["action", "يحتاج عملاً"], ["forms", "نماذج مطلوبة"], ["notes", "ملاحظات مطلوبة"],
   ["callbacks_today", "معاودات اليوم"], ["missed", "معاودات فائتة"], ["open", "متابعات مفتوحة"], ["solved", "حُلّت"],
-  ["came_back", "عاد العميل بعد الحل"], ["no_followup", "لا تحتاج متابعة"], ["", "الكل"],
+  ["came_back", "عاد العميل بعد الحل"], ["no_followup", "لا تحتاج متابعة"],
+  ["forward_solved_today", "حُلّت بالتحويل اليوم"], ["questions", "أسئلة تنتظر ردك"], ["", "الكل"],
 ];
+
+/** D3: "سؤال من «name»" when the person holding the forwarded problem asked something. */
+function Asked({ i }: { i: FollowupItem }) {
+  const q = i.forward?.questions;
+  if (!q?.length) return null;
+  const who = q[q.length - 1].from;
+  return <span className="state bad">سؤال من «{who ?? "المسؤول"}»{q.length > 1 ? ` (${q.length})` : ""}</span>;
+}
 const LOOKBACK_DAYS = 62;   // same as the server's look-back for unfinished work
 const REFRESH_MS = 60_000;
 const SOON_MS = 60 * 60_000;
@@ -27,6 +37,7 @@ function daysAgo(n: number): string {
 
 /** Row colour (fix E): red = missed / overdue, yellow = callback within the hour or a note to write. */
 function urgency(i: FollowupItem, now: number): string {
+  if (i.forward?.questions?.length) return "row-bad";       // D3: the person holding it waits for an answer
   if (i.step === "callback_missed" || i.step === "overdue" || i.step === "solution_overdue") return "row-bad";
   if (i.step === "waiting_solution" && i.solve_by && new Date(i.solve_by).getTime() - now <= SOON_MS) return "row-warn";
   if (i.step === "note_needed") return "row-warn";
@@ -40,11 +51,13 @@ function urgency(i: FollowupItem, now: number): string {
 function whoSolves(i: FollowupItem): string {
   const last = i.history[i.history.length - 1];
   if (!last || last.solved !== false) return "–";
+  if (i.forward?.holders?.length && i.step !== "forward_solved") return i.forward.holders.join("، ");   // the chain
   return last.responsible ?? RESP_LABEL[last.responsible_kind ?? ""] ?? "–";
 }
 
 function caseState(i: FollowupItem): [string, string] {
-  if (i.step === "solved_first" || i.step === "solved_after") return ["حُلّت", "ok"];
+  if (i.step === "solved_first" || i.step === "solved_after" || i.step === "forward_solved") return ["حُلّت", "ok"];
+  if (i.step === "forward_unconfirmed") return ["حُلّت غير مؤكدة", "warn"];
   if (i.step === "no_followup") return ["لا تحتاج متابعة", "off"];
   if (i.step === "required" || i.step === "overdue") return ["لم يُعبّأ", i.step === "overdue" ? "bad" : "off"];
   return ["مفتوحة", "warn"];
@@ -76,6 +89,10 @@ function Unsolved({ items, truncated, staff, onOpen }:
               <div className="line">
                 <PriorityTag p={i.form?.priority} />
                 <span className={`state ${STEP_CLASS[i.step]}`}>{STEP_LABEL[i.step]}</span>
+                {(i.step === "forwarded" || i.step === "forward_overdue") && forwardWhere(i.forward)
+                  && <span className="small">{forwardWhere(i.forward)}</span>}
+                {i.forward?.status === "pending" && <span className="muted small">لم يُرسل بعد</span>}
+                <Asked i={i} />
                 <Number_ n={i.customer_number} />
               </div>
               <div className="line small">
@@ -201,7 +218,9 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
         <div className="counters">   {/* click = show only that kind; click again = back to "needs action" */}
           {([["forms", c.forms, "نماذج مطلوبة", "bad"], ["notes", c.notes, "ملاحظات مطلوبة", "warn"],
              ["callbacks_today", c.callbacks_today, "معاودات اليوم", ""], ["missed", c.missed, "معاودات فائتة", "bad"],
-             ["no_followup", c.no_followup, "لا تحتاج متابعة", ""]] as const)
+             ["no_followup", c.no_followup, "لا تحتاج متابعة", ""],
+             ["forward_solved_today", c.forward_solved_today ?? 0, "حُلّت بالتحويل اليوم", "ok"],
+             ["questions", c.questions ?? 0, staff ? "أسئلة تنتظر رد موظف المكالمة" : "أسئلة تنتظر ردك", "bad"]] as const)
             .map(([k, n, label, tone]) => (
               <button key={k} type="button" aria-pressed={state === k}
                 className={`counter ${n ? tone : ""} ${state === k ? "active" : ""}`}
@@ -285,6 +304,8 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
                   {staff && <><td>{i.agent_ext} <span className="muted">{i.agent_name}</span></td><td><Problem i={i} /></td></>}
                   <td>
                     <span className={`state ${STEP_CLASS[i.step]}`}>{STEP_LABEL[i.step]}</span>
+                    {i.forward?.status === "pending" && <span className="muted small"> · لم يُرسل بعد</span>}
+                    {i.forward?.questions?.length ? <> <Asked i={i} /></> : null}
                     {i.form?.priority && <> <PriorityTag p={i.form.priority} /></>}
                     {i.round > 1 && <span className="muted small"> · جولة {i.round}</span>}
                     {i.came_back && <span className="tag">عاد العميل</span>}

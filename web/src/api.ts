@@ -222,8 +222,10 @@ export interface FollowupForm {
   solved: boolean | null;
   priority: "high" | "medium" | "low" | null;   // first form only; null = old form or no follow-up
   priority_ar: string | null;
-  responsible_kind: "user" | "customer" | "other_department" | null;
+  responsible_kind: "user" | "customer" | "other_department" | "forward" | null;
   responsible_user_id: number | null;
+  forward_person_id?: number | null;   // part 4: the branch supervisor (responsible_kind "forward")
+  forward_note?: string | null;
   expected_at: string | null;
   callback_at: string | null;
   first_filled_at: string;
@@ -239,10 +241,62 @@ export interface FollowupItem {
   step: Step; round: number; note_deadline: string | null; history: HistoryEntry[];
   solve_by?: string | null;     // not solved without a callback: the expected solve time (max 2 days)
   my_note?: string | null;      // the viewer's own private reminder (only they see it)
+  forward?: Forward | null;     // part 4: forwarded to a branch supervisor in the customer-service system
 }
+export interface Forward {
+  person_id: number | null; name: string | null; branch: string | null; ext: string | null; note: string | null;
+  status: "pending" | "sent" | "failed" | null; ticket_number: number | null; forwarded_at: string | null;
+  error: string | null;
+  closed_at?: string | null; solution?: string | null; checked_at?: string | null;   // D2: read back from the ticket
+  proof?: ForwardProof | null;
+  // the forward chain: employee (1) -> his branch supervisor (2) -> the managers (3), 24 h each
+  hops?: ForwardHopView[]; level?: 1 | 2 | 3 | null; holders?: string[]; due_at?: string | null;
+  // D3: questions from the person holding it (wait for the agent), what we wrote on the ticket, the tracker
+  questions?: { id: number; from: string | null; text: string | null; at: string | null }[];
+  messages?: ForwardMessageView[];
+  tracker?: TrackerItem[];
+}
+export interface ForwardKpiPerson {
+  person_id: number; level: 1 | 2 | 3; name: string | null; branch: string | null; received: number; solved: number;
+  solved_in_24h: number; decided: number; in_24h_rate: number | null; avg_seconds_to_solve: number | null;
+  open: number; late: number; excused: number;
+  mistakes: { call_id: number; sent_at: string | null; due: string | null; ended_at: string | null; reason: string;
+    ticket_number: number | null; customer_number: string | null; agent_wait_seconds: number;
+    agent: string | null }[];
+}
+export interface ForwardKpiAgent {
+  ext: string; name: string; questions: number; on_time: number; late: number; waiting: number;
+  mistakes: { call_id: number; asked_at: string | null; due: string | null; answered_at: string | null;
+    from: string | null; reason: string }[];
+}
+export interface ForwardKpi { from: string; to: string; people: ForwardKpiPerson[]; agents: ForwardKpiAgent[] }
+export interface ForwardMessageView {
+  id: number; kind: "answer" | "note" | "summary" | "seen"; text: string | null;
+  status: "pending" | "waiting" | "sent" | "failed" | "done"; error: string | null; at: string | null;
+  sent_at: string | null;
+}
+export interface TrackerItem {
+  kind: "step" | "call" | "question" | "answer" | "note" | "summary" | "seen"; label: string; at: string | null;
+  state: "done" | "current" | "late" | "bad" | "future"; detail: string | null;
+  status?: ForwardMessageView["status"]; error?: string | null; solution?: string | null;
+}
+export interface ForwardHopView {
+  level: 1 | 2 | 3; name: string | null; branch: string | null; ticket_number: number | null;
+  result: "pending" | "open" | "solved" | "passed_on" | "closed_by_other" | "failed";
+  sent_at: string | null; closed_at: string | null; ended_at: string | null; error: string | null;
+}
+// D2: the supervisor's calls to the customer after the forward; the LAST one decides (answered, > 60 s, score > 7)
+export interface ForwardProof {
+  ok: boolean;
+  reason: "no_ext" | "no_call" | "not_answered" | "short" | "waiting_score" | "low_score" | null;
+  calls: { call_id: number; time: string; answered: boolean; talk_seconds: number; score: number | null }[];
+}
+export interface ForwardOption { id: number; name: string; branch: string; ext: string | null;
+  supervisor?: boolean; manager?: boolean }
 // follow-up stages (spec 2026-11-15-followup-stages)
 export type Step = "required" | "overdue" | "no_followup" | "solved_first" | "waiting_callback" | "callback_missed"
-  | "note_needed" | "solved_after" | "no_number" | "waiting_solution" | "solution_overdue";
+  | "note_needed" | "solved_after" | "no_number" | "waiting_solution" | "solution_overdue"
+  | "forwarded" | "forward_overdue" | "forward_failed" | "forward_solved" | "forward_unconfirmed";
 export interface HistoryEntry {
   round: number; what_happened: string | null; solved: boolean | null; no_followup: boolean;
   priority: "high" | "medium" | "low" | null; priority_ar: string | null;    // round 1 only
@@ -258,17 +312,27 @@ export interface NoteIn {
   responsible_user_id?: number | null; expected_at?: string; callback_at?: string;
 }
 export interface FollowupCounts { forms: number; notes: number; callbacks_today: number; missed: number;
-  no_followup: number }   // calls marked "لا تحتاج متابعة" in من/إلى
+  no_followup: number; forward_solved_today?: number; questions?: number }   // calls marked "لا تحتاج متابعة" in من/إلى
 export interface Person { id: number; username: string; role: string; ext: string | null }
 export type FollowupView =
   | { needed: false; enabled: boolean }
-  | (FollowupItem & { needed: true; enabled: true; can_edit: boolean; lock_reason: string | null; options: Person[] });
+  | (FollowupItem & { needed: true; enabled: true; can_edit: boolean; lock_reason: string | null; options: Person[];
+      forward_enabled?: boolean; forward_options?: ForwardOption[]; training_enabled?: boolean });
+// the training look-up (spec "Part 4: the training lookup"): the caller's student record + suggested person
+export interface Placement { branch: string; diploma: string; level: string; section: string; status: string;
+  trainers: string[] }
+export interface StudentLookup {
+  enabled: boolean; students: { student: string; placements: Placement[] }[];
+  suggestion: { person_id: number; kind: "trainer" | "branch_supervisor"; name: string } | null;
+  error: "not_mobile" | "unavailable" | null;
+}
 export interface FollowupList { settings: Settings; items: FollowupItem[]; truncated?: boolean; linked: boolean;
   counts: FollowupCounts; older_action: number;    // older_action: work left before من (62-day look-back)
   unsolved: FollowupItem[]; unsolved_truncated?: boolean }   // "تحتاج حل": open problems, whatever من/إلى say
 export interface FollowupIn {
   no_followup: boolean; what_happened?: string; solved?: boolean; priority?: string; responsible_kind?: string;
   responsible_user_id?: number | null; expected_at?: string; callback_at?: string;
+  forward_person_id?: number | null; forward_note?: string;
 }
 export interface Share {
   id: number; call_id: number; from: string; to: string; to_user_id: number; created_at: string;
@@ -387,10 +451,28 @@ export const api = {
     return r.json() as Promise<GoldClip>;
   },
   logout: () => fetch("/api/logout", { method: "POST", credentials: "same-origin" }),
+  forwards: (p: { from?: string; to?: string; state?: string; level?: string; branch?: string; person?: string }) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(p)) if (v) q.set(k, v);
+    return get<ForwardsList>(`/api/forwards?${q.toString()}`);
+  },
+  forwardStory: (id: number) => get<ForwardStory>(`/api/forwards/${id}`),
+  // D4 (req 20): the people problems were forwarded to + the agents' answers to their questions (staff only)
+  forwardKpi: (p: { from: string; to: string; agent?: string }) => {
+    const q = new URLSearchParams();
+    if (p.from) q.set("from", p.from);
+    if (p.to) q.set("to", p.to);
+    if (p.agent) q.set("agent", p.agent);
+    return get<ForwardKpi>(`/api/kpi/forwards?${q.toString()}`);
+  },
   followup: (id: number) => get<FollowupView>(`/api/calls/${id}/followup`),
+  student: (id: number) => get<StudentLookup>(`/api/calls/${id}/student`),
   saveFollowup: (id: number, body: FollowupIn) => send<FollowupView>("PUT", `/api/calls/${id}/followup`, body),
   myNote: (id: number, text: string) => send<{ call_id: number; text: string | null }>("PUT", `/api/calls/${id}/my-note`, { text }),
   addNote: (id: number, body: NoteIn) => send<FollowupView>("POST", `/api/calls/${id}/followup/notes`, body),
+  // D3: answer the question on the forwarded ticket, or mark it seen (no answer needed)
+  forwardMessage: (id: number, body: { kind: "answer" | "seen"; text?: string; upto?: number }) =>
+    send<FollowupView>("POST", `/api/calls/${id}/forward/messages`, body),
   followups: (p: { from?: string; to?: string; agent?: string; state?: string; priority?: string }) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(p)) if (v) q.set(k, v);
@@ -430,3 +512,43 @@ export const api = {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
   },
 };
+
+// ---------- the forwards page (staff): archive, story, numbers ----------
+export type ForwardState = "open" | "solved" | "unsolved";
+export interface ForwardLineItem {
+  call_id: number; customer_number: string | null; agent_ext: string | null; agent_name: string;
+  priority: string | null; ticket_number: number | null; forwarded_at: string | null; state: ForwardState;
+  level: 1 | 2 | 3 | null; first: { name: string | null; branch: string | null }; holders: string[];
+  solved_by: { name: string | null; level: number } | null; solved_at: string | null; seconds_to_solve: number | null;
+}
+export interface ForwardPersonStats {
+  person_id: number; name: string | null; branch: string | null; received: number; solved: number;
+  not_solved_24h: number; closed_no_good_call: number; closed_by_other: number; open: number;
+  avg_seconds_to_solve: number | null;
+}
+export interface ForwardInsights {
+  totals: { forwarded: number; open: number; unsolved: number; solved_1: number; solved_2: number; solved_3: number;
+    avg_seconds_to_solve: number | null };
+  employees: ForwardPersonStats[]; supervisors: ForwardPersonStats[]; managers: ForwardPersonStats[];
+  branches: { branch: string; received: number; solved_in_branch: number; went_to_managers: number }[];
+}
+export interface ForwardsList {
+  items: ForwardLineItem[]; truncated: boolean; insights: ForwardInsights; from: string; to: string;
+  filters: { branches: string[]; people: { id: number; name: string; branch: string }[] };
+}
+export interface ForwardStoryHop {
+  level: 1 | 2 | 3; name: string | null; branch: string | null; ticket_number: number | null;
+  result: "pending" | "open" | "solved" | "passed_on" | "closed_by_other" | "failed";
+  sent_at: string | null; closed_at: string | null; ended_at: string | null; solution: string | null;
+  error: string | null;
+  items: { kind: string; type: string; note: string | null; at: string | null; actor: string | null }[];
+  items_cut: boolean;
+  calls: ForwardProof["calls"] | null; proof: ForwardProof | null;
+}
+export interface ForwardStory {
+  call_id: number; customer_number: string | null; priority: string | null; state: ForwardState;
+  agent: { ext: string | null; name: string; what_happened: string | null; note: string | null;
+    forwarded_at: string | null; ticket_number: number | null; call_time: string | null };
+  hops: ForwardStoryHop[];
+  other_items?: ForwardStoryHop["items"];     // read before the chain, outside every person's time
+}

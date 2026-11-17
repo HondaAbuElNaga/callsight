@@ -17,6 +17,7 @@ from .ingest import service
 
 log = logging.getLogger(__name__)
 ANALYZE_TASK, NLP_QUEUE = "callsight.analysis.tasks.analyze_call", "nlp"   # = analysis.queueing (no import cycle)
+FORWARD_TASK = "callsight.jobs.forward_send"
 logging.getLogger("httpx").setLevel(logging.WARNING)   # request URLs contain the access token
 
 celery = Celery("callsight", broker=wiring.settings().redis_url)
@@ -39,6 +40,11 @@ celery.conf.update(
                                    "options": {"expires": 290}},
         "reconcile-nightly": {"task": "callsight.jobs.reconcile_yesterday", "schedule": crontab(hour=2, minute=0)},
         "sync-agents-daily": {"task": "callsight.jobs.sync_agents", "schedule": crontab(hour=3, minute=0)},
+        # part 4 (forward to a branch supervisor): nothing happens while CS_API_KEY / CS_USER_GUID are empty
+        "forward-send-every-5-min": {"task": FORWARD_TASK, "schedule": 300.0, "options": {"expires": 290}},
+        "forward-sync-hourly": {"task": "callsight.jobs.forward_sync", "schedule": crontab(minute=7)},
+        "forward-poll-every-5-min": {"task": "callsight.jobs.forward_poll", "schedule": 300.0,
+                                     "options": {"expires": 290}},
         # DB dump + new recordings/reports copy, before the 02:00 reconcile (which waits while the lock is held)
         "backup-nightly": {"task": "callsight.jobs.backup_nightly", "schedule": crontab(hour=1, minute=30)},
         # PDPL retention: does nothing unless RETENTION_ENABLED=true and days >= 30 (first run = dry run)
@@ -187,6 +193,57 @@ def sync_agents() -> dict:
     with wiring.session_factory()() as s:
         n_ext, n_q = service.sync_agents(s, wiring.pbx(), wiring.teams())
     return {"extensions": n_ext, "queues": n_q}
+
+
+# ---------- part 4: forward to a branch supervisor (customer-service system) ----------
+
+@celery.task
+@tracked("forward_sync")
+def forward_sync() -> dict:
+    from . import forward
+    from .cs_api import CsClient, CsConfig
+    cfg = CsConfig.from_env()
+    with wiring.session_factory()() as s:
+        if not cfg.enabled:
+            return {"enabled": False, "report": forward.sync_people(s, None)}
+        with CsClient(cfg) as client:
+            report = forward.sync_people(s, client)
+    for line in report:
+        log.info("forward sync: %s", line)
+    return {"enabled": True, "report": report}
+
+
+@celery.task
+@tracked("forward_send")
+def forward_send() -> dict:
+    from . import forward
+    from .cs_api import CsClient, CsConfig
+    cfg = CsConfig.from_env()
+    if not cfg.enabled:
+        return {"enabled": False}
+    with wiring.session_factory()() as s, CsClient(cfg) as client:
+        done = forward.send_pending(s, client)
+        done.update(forward.send_messages(s, client))    # D3: answers, notes, the AI summary on the ticket
+    if any(done.values()):
+        log.info("forward send: %s", done)
+    return done
+
+
+@celery.task
+@tracked("forward_poll")
+def forward_poll() -> dict:
+    """D2: read back the sent tickets (closed? solution? questions)."""
+    from . import forward
+    from .cs_api import CsClient, CsConfig
+    cfg = CsConfig.from_env()
+    if not cfg.enabled:
+        return {"enabled": False}
+    with wiring.session_factory()() as s, CsClient(cfg) as client:
+        done = forward.poll_tickets(s, client)
+        done.update(forward.advance(s, client))      # the chain: solved? 24 h over? -> next person
+    if done["new_items"] or done["missing"] or done["solved"] or done["passed_on"] or done["errors"]:
+        log.info("forward poll: %s", done)
+    return done
 
 
 # ---------- scheduled PDF reports ----------

@@ -31,7 +31,10 @@ AUDIT_DAYS = 730
 # membership); a rating note may hold personal data, and without its transcript a label is useless for training.
 CONTENT_TABLES = ("transcript", "call_analysis", "call_flag", "call_audio_metrics", "satisfaction_label",
                   "call_followup", "call_followup_note", "call_share",
-                  "call_private_note")   # follow-up text + notes are personal too
+                  "call_private_note",   # follow-up text + notes are personal too
+                  "forward_message",     # what we wrote on the ticket: answers, notes, AI summary (D3)
+                  "forward_event",       # the forwarded ticket's timeline (part 4 D2)
+                  "forward_hop")         # who held it + the solution text (forward chain)
 BATCH = 200
 
 

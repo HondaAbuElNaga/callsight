@@ -2,11 +2,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   api, Refused, Unauthorized,
-  type AgentSummary, type CallShares, type FollowupIn, type FollowupView, type HistoryEntry, type Me, type NoteIn,
-  type Person, type Share,
+  type AgentSummary, type CallShares, type Forward, type ForwardOption, type FollowupIn, type FollowupView,
+  type HistoryEntry, type Me, type NoteIn, type Person, type Share, type StudentLookup, type TrackerItem,
 } from "./api";
 import {
-  CALLBACK_LABEL, PRIORITIES, PRIORITY_CLASS, PRIORITY_LABEL, STEP_CLASS, type Priority, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, fromRiyadhInput, ringText, toRiyadhInput,
+  CALLBACK_LABEL, HOP_LEVEL, HOP_RESULT, PROOF_REASON, PRIORITIES, PRIORITY_CLASS, PRIORITY_LABEL, STEP_CLASS, type Priority, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, fromRiyadhInput, ringText, toRiyadhInput,
 } from "./format";
 
 export const CB_CLASS: Record<string, string> = { on_time: "ok", waiting: "off", late: "warn", missed: "bad", no_number: "off" };
@@ -26,8 +26,9 @@ type Solved = "" | "yes" | "no";
 const MAX_SOLVE_MS = 2 * 24 * 3600_000;     // a problem not solved: expected solve time within 2 days (server checks too)
 const nowIn = () => toRiyadhInput(new Date().toISOString());
 const maxIn = () => toRiyadhInput(new Date(Date.now() + MAX_SOLVE_MS).toISOString());
-interface Problem { what: string; solved: Solved; resp: string; expected: string; callback: string }
-const EMPTY: Problem = { what: "", solved: "", resp: "", expected: "", callback: "" };
+// resp: "user:<id>" / "customer" / "other_department" / "forward:<id>" (form) / "forward" (note on a forwarded problem)
+interface Problem { what: string; solved: Solved; resp: string; expected: string; callback: string; fnote: string }
+const EMPTY: Problem = { what: "", solved: "", resp: "", expected: "", callback: "", fnote: "" };
 
 const MAX_SOLVE_HIGH_MS = 24 * 3600_000;    // ... within 1 day when the priority is high
 
@@ -48,35 +49,64 @@ function problemBody(p: Problem, keepExpected = "", priority = "", askPriority =
   if (p.callback && left(p.callback) <= 0) return { error: "وقت معاودة الاتصال يجب أن يكون في المستقبل" };
   if (p.callback && left(p.callback) > MAX_SOLVE_MS) return { error: "وقت معاودة الاتصال خلال يومين على الأكثر" };
   const [kind, uid] = p.resp.split(":");
-  return { body: { what_happened: p.what.trim(), solved: false, ...prio, responsible_kind: kind,
-    responsible_user_id: uid ? Number(uid) : null, expected_at: fromRiyadhInput(p.expected),
-    ...(p.callback ? { callback_at: fromRiyadhInput(p.callback) } : {}) } };
+  const who = kind === "forward"
+    ? (uid ? { forward_person_id: Number(uid), forward_note: p.fnote.trim() } : {})   // the person: first form only
+    : { responsible_user_id: uid ? Number(uid) : null };
+  return { body: { what_happened: p.what.trim(), solved: false, ...prio, responsible_kind: kind, ...who,
+    expected_at: fromRiyadhInput(p.expected), ...(p.callback ? { callback_at: fromRiyadhInput(p.callback) } : {}) } };
 }
 
-function ProblemFields({ p, set, options, label, afterText, high }:
-  { p: Problem; set: (p: Problem) => void; options: Person[]; label: string; afterText?: ReactNode; high?: boolean }) {
+function ProblemFields({ p, set, options, label, afterText, high, forwardOptions = [], forwardedTo }:
+  { p: Problem; set: (p: Problem) => void; options: Person[]; label: string; afterText?: ReactNode; high?: boolean;
+    forwardOptions?: ForwardOption[];   // first form, link on: the branch supervisors
+    forwardedTo?: Forward | null }) {   // a note on a forwarded problem: only the supervisor closes it
   const max = high ? toRiyadhInput(new Date(Date.now() + MAX_SOLVE_HIGH_MS).toISOString()) : maxIn();
+  const toSupervisor = p.resp.startsWith("forward:");
+  const [fq, setFq] = useState("");          // search in the ~474 employees of the other system
+  const q = fq.trim();
+  const shown = forwardOptions.filter((o) => !q || o.name.includes(q) || o.branch.includes(q)
+    || p.resp === `forward:${o.id}`);
+  const branches = [...new Set(shown.map((o) => o.branch))];
   return (
     <>
       <label>{label}
         <textarea value={p.what} maxLength={500} rows={3} onChange={(e) => set({ ...p, what: e.target.value })} />
       </label>
       {afterText}
-      <div className="row">
-        هل حُلّت المشكلة؟
-        <label><input type="radio" checked={p.solved === "yes"} onChange={() => set({ ...p, solved: "yes" })} /> نعم</label>
-        <label><input type="radio" checked={p.solved === "no"} onChange={() => set({ ...p, solved: "no" })} /> لا</label>
-      </div>
+      {forwardedTo ? <p className="muted small">المشكلة محوّلة إلى {(forwardedTo.holders?.length ? forwardedTo.holders
+        : [forwardedTo.name ?? ""]).join("، ")}: {(forwardedTo.holders?.length ?? 0) > 1 ? "هم من يغلقونها" : "هو من يغلقها"}.</p> : (
+        <div className="row">
+          هل حُلّت المشكلة؟
+          <label><input type="radio" checked={p.solved === "yes"} onChange={() => set({ ...p, solved: "yes" })} /> نعم</label>
+          <label><input type="radio" checked={p.solved === "no"} onChange={() => set({ ...p, solved: "no" })} /> لا</label>
+        </div>
+      )}
       {p.solved === "no" && (
         <>
-          <label>من يجب أن يحلّها؟
+          {!forwardedTo && forwardOptions.length > 0 && <label>بحث عن موظف للتحويل (الاسم أو الفرع)
+            <input value={fq} maxLength={50} onChange={(e) => setFq(e.target.value)} />
+          </label>}
+          {!forwardedTo && <label>من يجب أن يحلّها؟
             <select value={p.resp} onChange={(e) => set({ ...p, resp: e.target.value })}>
               <option value="">اختر…</option>
               {options.map((o) => <option key={o.id} value={`user:${o.id}`}>{o.username}{o.ext ? ` · ${o.ext}` : ""}</option>)}
               <option value="customer">العميل</option>
               <option value="other_department">قسم آخر</option>
+              {branches.map((b) => <optgroup key={b} label={`تحويل · ${b}`}>
+                {shown.filter((o) => o.branch === b).map((o) => <option key={o.id} value={`forward:${o.id}`}>
+                  {o.name}{o.supervisor ? " (مشرف الفرع)" : ""}{o.manager ? " (الإدارة)" : ""}</option>)}
+              </optgroup>)}
             </select>
-          </label>
+          </label>}
+          {toSupervisor && (() => {
+            const o = forwardOptions.find((x) => p.resp === `forward:${x.id}`);
+            return <p className="muted small">{o?.manager ? "عنده 24 ساعة (الإدارة: آخر مستوى)."
+              : o?.supervisor ? "عنده 24 ساعة ومكالمة جيدة للعميل، ثم تنتقل تلقائيًا للإدارة."
+              : "عنده 24 ساعة، ثم تنتقل تلقائيًا لمشرف فرعه، ثم للإدارة."}</p>;
+          })()}
+          {toSupervisor && <label>ملاحظة للمسؤول (اختياري)
+            <textarea value={p.fnote} maxLength={500} rows={2} onChange={(e) => set({ ...p, fnote: e.target.value })} />
+          </label>}
           <label>وقت الحل المتوقع ({high ? "خلال يوم واحد: أولوية عالية" : "خلال يومين على الأكثر"}) <input type="datetime-local" value={p.expected} min={nowIn()} max={max} onChange={(e) => set({ ...p, expected: e.target.value })} /></label>
           <label>وقت معاودة الاتصال بالعميل (اختياري) <input type="datetime-local" value={p.callback} min={nowIn()} max={maxIn()} onChange={(e) => set({ ...p, callback: e.target.value })} /></label>
         </>
@@ -85,8 +115,96 @@ function ProblemFields({ p, set, options, label, afterText, high }:
   );
 }
 
-const NOTE_STEPS: string[] = ["note_needed", "waiting_solution", "solution_overdue"];
-export const RESP_LABEL: Record<string, string> = { customer: "العميل", other_department: "قسم آخر" };
+const NOTE_STEPS: string[] = ["note_needed", "waiting_solution", "solution_overdue", "forwarded", "forward_overdue",
+  "forward_failed"];
+export const RESP_LABEL: Record<string, string> = { customer: "العميل", other_department: "قسم آخر", forward: "تحويل" };
+
+/** Part 4: where the forwarded problem is (ticket made / still trying / refused by the other system). */
+function ForwardLine({ f }: { f: Forward }) {
+  const who = `${f.name ?? "المسؤول"}${f.branch ? ` (${f.branch})` : ""}`;
+  const sup = f.hops?.filter((h) => h.level === 2 && h.result !== "pending").pop();
+  if (f.tracker?.length)
+    return <>
+      <p>حُوّلت إلى {who}{f.ticket_number ? ` · تذكرة رقم ${f.ticket_number}` : ""}</p>
+      <Tracker items={f.tracker} />
+      {f.due_at && <p className="small muted">المهلة عند {f.holders?.length ? f.holders.join("، ") : "من يحملها"}:
+        حتى {formatDateTime(f.due_at)} (24 ساعة لكل شخص)</p>}
+      {f.status === "failed" && <p className="bad-text">عدّل النموذج واختر من جديد.</p>}
+    </>;
+  if (f.status === "sent")
+    return <>
+      <p>حُوّلت إلى {who}{f.ticket_number ? ` · تذكرة رقم ${f.ticket_number}` : ""}
+        {f.forwarded_at && <span className="muted small"> · {formatDateTime(f.forwarded_at)}</span>}</p>
+      {f.hops && f.hops.length > 0 && <ol className="small">
+        {f.hops.map((h, i) => <li key={i}>{HOP_LEVEL[h.level]}: {h.name ?? "–"}
+          {h.sent_at && <span className="muted"> · من {formatDateTime(h.sent_at)}</span>}
+          {" · "}<span className={h.result === "solved" ? "state ok" : h.result === "passed_on" || h.result === "failed"
+            ? "state bad" : "state off"}>{HOP_RESULT[h.result] ?? h.result}</span>
+          {h.error && <span className="muted"> ({h.error})</span>}</li>)}
+      </ol>}
+      {f.due_at && <p className="small">المهلة حتى {formatDateTime(f.due_at)}</p>}
+      {sup?.closed_at && f.proof && <p>أغلقها مشرف الفرع {formatDateTime(sup.closed_at)}{" "}
+        {f.proof.ok ? <span className="state ok">مؤكد ✓</span>
+          : <span className="state warn">غير مؤكد: {PROOF_REASON[f.proof.reason ?? ""] ?? "–"}</span>}</p>}
+      {f.solution && <p className="small">الحل: {f.solution}</p>}
+      {f.proof && f.proof.calls.length > 0 && <ul className="small muted">
+        {f.proof.calls.map((c) => <li key={c.call_id}>اتصل المشرف {formatDateTime(c.time)} · {c.answered
+          ? `ردّ العميل · ${c.talk_seconds} ث` : "لم يرد"}{c.score !== null ? ` · الرضا ${c.score}/10` : ""}</li>)}
+      </ul>}
+    </>;
+  if (f.status === "failed")
+    return <p className="bad-text">لم تُحوَّل إلى {who}: {f.error ?? "رفض النظام الآخر"}. عدّل النموذج واختر من جديد.</p>;
+  return <p className="muted">لم يُرسل بعد إلى {who}، نحاول مرة أخرى{f.error ? ` (${f.error})` : ""}.</p>;
+}
+
+const TK_ICON: Record<TrackerItem["state"], string> = { done: "✓", current: "●", late: "!", bad: "✗", future: "○" };
+const MSG_STATUS: Record<string, string> = { pending: "بانتظار الإرسال", waiting: "بانتظار إعادة فتح التذكرة",
+  failed: "لم يُرسل" };
+
+/** Part 4 D3 (req 17): the forwarded problem step by step, like a delivery tracker. Questions and what we wrote
+ *  on the ticket sit at their time; the current step is highlighted, red with "متأخر" after the 24 h. */
+function Tracker({ items }: { items: TrackerItem[] }) {
+  return (
+    <ol className="tracker">
+      {items.map((t, i) => (
+        <li key={i} className={`tk-${t.state} tk-${t.kind}`} aria-current={t.state === "current" || t.state === "late" ? "step" : undefined}>
+          <span className="tk-dot" aria-hidden="true">{t.kind === "question" ? "؟" : TK_ICON[t.state]}</span>
+          <div>
+            <b>{t.label}</b>{t.at && <span className="muted small"> · {formatDateTime(t.at)}</span>}
+            {t.status && MSG_STATUS[t.status] && <span className={`small ${t.status === "failed" ? "bad-text" : "muted"}`}>
+              {" · "}{MSG_STATUS[t.status]}{t.error ? ` (${t.error})` : ""}</span>}
+            {t.detail && <p className="small">{t.detail}</p>}
+            {t.solution && <p className="small">الحل: {t.solution}</p>}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** Part 4 D3 (req 18): the agent answers the person holding the forwarded problem (written on the ticket), or
+ *  marks the question seen when no answer is needed. */
+function AnswerBox({ f, busy, onSend }: { f: Forward; busy: boolean;
+  onSend: (kind: "answer" | "seen", text?: string) => Promise<boolean> }) {
+  const [text, setText] = useState("");
+  const qs = f.questions ?? [];
+  if (qs.length === 0) return null;
+  return (
+    <fieldset disabled={busy} className="form answer-box">
+      <legend>سؤال ينتظر ردك</legend>
+      {qs.map((q) => <p key={q.id} className="question"><b>{q.from ?? "المسؤول"}</b>
+        {q.at && <span className="muted small"> · {formatDateTime(q.at)}</span>}<br />{q.text}</p>)}
+      <label>ردّك (يُكتب في التذكرة عند {f.holders?.length ? f.holders.join("، ") : f.name ?? "المسؤول"})
+        <textarea value={text} maxLength={500} rows={3} onChange={(e) => setText(e.target.value)} /></label>
+      <span className="muted small">{text.length}/500</span>
+      <div className="row">
+        <button type="button" className="primary" disabled={!text.trim()}
+          onClick={async () => { if (await onSend("answer", text.trim())) setText(""); }}>إرسال الرد</button>
+        <button type="button" onClick={() => onSend("seen")}>اطّلعت، لا يحتاج رداً</button>
+      </div>
+    </fieldset>
+  );
+}
 
 function History({ items }: { items: HistoryEntry[] }) {
   if (items.length === 0) return null;
@@ -101,7 +219,8 @@ function History({ items }: { items: HistoryEntry[] }) {
             <p>{h.what_happened}</p>
             <p className="small">
               {h.solved ? <span className="state ok">حُلّت</span> : <span className="state warn">لم تُحل</span>}
-              {h.solved === false && <> · المسؤول: {h.responsible ?? RESP_LABEL[h.responsible_kind ?? ""] ?? "–"}</>}
+              {h.solved === false && <> · المسؤول: {h.responsible ?? RESP_LABEL[h.responsible_kind ?? ""] ?? "–"}
+                {h.responsible_kind === "forward" && h.responsible ? " (تحويل)" : ""}</>}
               {h.solved === false && h.expected_at && <> · الحل المتوقع: {formatDateTime(h.expected_at)}</>}
               {h.callback_at && <> · معاودة الاتصال: {formatDateTime(h.callback_at)}</>}
               {h.callback_status && <> <span className={`state ${CB_CLASS[h.callback_status]}`}>{CALLBACK_LABEL[h.callback_status]}</span></>}
@@ -115,6 +234,26 @@ function History({ items }: { items: HistoryEntry[] }) {
         </li>
       ))}
     </ol>
+  );
+}
+
+/** The training look-up (spec "Part 4: the training lookup"): who the caller is in the training system. */
+function StudentBox({ d, picked }: { d: StudentLookup; picked: boolean }) {
+  if (d.error === "unavailable") return <p className="muted small">نظام التدريب لا يرد الآن: اختر المسؤول بنفسك.</p>;
+  if (d.error === "not_mobile") return <p className="muted small">الرقم ليس جوالًا: لم يُبحث عنه في نظام التدريب.</p>;
+  if (d.students.length === 0) return <p className="muted small">الرقم غير مسجل لطالب في نظام التدريب.</p>;
+  return (
+    <div className="student-box">
+      {d.students.map((st, i) => <div key={i}>
+        <b>{st.student || "طالب"}</b>
+        {st.placements.map((p, j) => <p key={j} className="small">
+          {[p.diploma, p.level && `المستوى ${p.level}`, p.section, p.branch, p.status].filter(Boolean).join(" · ")}
+          <br />المدرب: {p.trainers.length ? p.trainers.join("، ") : "غير محدد بعد"}
+        </p>)}
+      </div>)}
+      {picked && d.suggestion && <p className="small">المقترح للتحويل: <b>{d.suggestion.name}</b>
+        {d.suggestion.kind === "trainer" ? " (المدرب)" : " (مشرف فرع الطالب)"}. يمكنك تغييره.</p>}
+    </div>
   );
 }
 
@@ -133,19 +272,36 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
   const [form, setForm] = useState<Problem>(EMPTY);
   const [prio, setPrio] = useState("");             // first form only (set once)
   const [note, setNote] = useState<Problem>(EMPTY);
+  const [student, setStudent] = useState<StudentLookup | null>(null);
   const fail = useFail(onExpired, setError);
 
   const load = (v: FollowupView) => {
     setView(v);
-    setNote(EMPTY);
+    // a note on a forwarded problem: never "solved", the person stays (the server checks both)
+    setNote(v.needed && v.forward && v.forward.status !== "failed" ? { ...EMPTY, solved: "no", resp: "forward" } : EMPTY);
     if (!v.needed || !v.form) { setPrio(""); return; }
     const f = v.form;
     setPrio(f.priority ?? "");
     setForm({ what: f.what_happened ?? "", solved: f.no_followup || f.solved === null ? "" : f.solved ? "yes" : "no",
-      resp: f.responsible_kind === "user" ? `user:${f.responsible_user_id}` : f.responsible_kind ?? "",
-      expected: toRiyadhInput(f.expected_at), callback: toRiyadhInput(f.callback_at) });
+      resp: f.responsible_kind === "user" ? `user:${f.responsible_user_id}`
+        : f.responsible_kind === "forward" ? `forward:${f.forward_person_id}` : f.responsible_kind ?? "",
+      expected: toRiyadhInput(f.expected_at), callback: toRiyadhInput(f.callback_at), fnote: f.forward_note ?? "" });
   };
   useEffect(() => { api.followup(callId).then(load).catch(fail); /* eslint-disable-next-line */ }, [callId]);
+  // the agent's own open first form (or one re-opened after a failed forward): staff never see the box
+  const lookUp = !staff && !!view?.needed && !!view.training_enabled && view.can_edit
+    && (!view.form || view.step === "forward_failed");
+  useEffect(() => {     // the box only: an error here never blocks the form
+    setStudent(null);
+    if (lookUp) api.student(callId).then(setStudent).catch((e) => { if (e instanceof Unauthorized) onExpired(); });
+    /* eslint-disable-next-line */ }, [callId, lookUp]);
+  // first form, "not solved", nobody picked yet: pre-pick the suggested person (the agent can change it)
+  const sug = student?.suggestion;
+  const sugOk = !!sug && !!view?.needed && !view.form && !!view.forward_enabled
+    && (view.forward_options ?? []).some((o) => o.id === sug.person_id);
+  useEffect(() => {
+    if (sugOk && form.solved === "no" && !form.resp) setForm({ ...form, resp: `forward:${sug!.person_id}` });
+    /* eslint-disable-next-line */ }, [sugOk, form.solved]);
 
   if (!view || !view.needed) return null;
   const run = async (call: () => Promise<FollowupView>, done: string) => {
@@ -164,10 +320,22 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
     if (r.error) { setError(r.error); return; }
     run(() => api.addNote(callId, { ...(r.body as Omit<NoteIn, "round">), round: view.round + 1 }), "تم حفظ الملاحظة.");
   };
+  const sendAnswer = async (kind: "answer" | "seen", text?: string): Promise<boolean> => {
+    if (busy) return false;
+    setError(""); setSaved(""); setBusy(true);
+    try {
+      const upto = Math.max(0, ...(view.forward?.questions ?? []).map((q) => q.id));   // what is on screen
+      load(await api.forwardMessage(callId, kind === "answer" ? { kind, text, upto } : { kind, upto }));
+      setSaved(kind === "answer" ? "حُفظ الرد، ويُكتب في التذكرة خلال دقائق." : "تم.");
+      return true;
+    } catch (e) { fail(e); return false; } finally { setBusy(false); }
+  };
   const ro = !view.can_edit || busy;
   const noteStep = !staff && NOTE_STEPS.includes(view.step);
   // round 1 without a callback: the form stays editable (deadline rules on the server) next to the update box
-  const formOpen = !staff && view.round === 1 && view.history.length <= 1 && view.step !== "note_needed";
+  // a failed forward: the form opens again so the agent picks another way (review D1)
+  const formOpen = !staff && (view.step === "forward_failed"
+    || (view.round === 1 && view.history.length <= 1 && view.step !== "note_needed"));
   const next = STEP_NEXT[view.step];
   return (
     <section className={`panel work step-${STEP_CLASS[view.step]}`}>
@@ -186,13 +354,20 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
         </p>
       )}
       {view.came_back && <p className="tag">اتصل العميل مرة أخرى خلال 72 ساعة بعد الحل</p>}
+      {view.forward && <ForwardLine f={view.forward} />}
+      {view.forward && !staff && <AnswerBox f={view.forward} busy={busy} onSend={sendAnswer} />}
+      {view.forward && staff && (view.forward.questions?.length ?? 0) > 0 &&
+        <p className="bad-text">سؤال من «{view.forward.questions![view.forward.questions!.length - 1].from ?? "المسؤول"}» ينتظر رد موظف المكالمة.</p>}
 
       {noteStep && (
         <fieldset disabled={busy} className="form note-box">
           <legend>{view.step === "note_needed"
             ? `ملاحظة بعد مكالمة المعاودة${view.callback?.by_ext ? ` (اتصل ${view.callback.by_ext}${view.callback.answered ? "، ردّ العميل" : "، لم يرد"})` : ""}`
             : "تحديث المتابعة"}</legend>
+          {view.forward?.status === "sent" && <p className="muted small">تُكتب هذه الملاحظة أيضاً في التذكرة في نظام
+            خدمة العملاء، ويراها {view.forward.holders?.length ? view.forward.holders.join("، ") : view.forward.name ?? "المسؤول"}.</p>}
           <ProblemFields p={note} set={setNote} options={view.options} high={view.form?.priority === "high"}
+            forwardedTo={view.forward}
             label={view.step === "note_needed" ? "ماذا حدث في مكالمة المعاودة؟" : "ماذا حدث في المشكلة؟"} />
           <button type="button" className="primary" onClick={submitNote}>حفظ الملاحظة</button>
         </fieldset>
@@ -200,12 +375,14 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
 
       <History items={view.history} />
 
+      {formOpen && student && <StudentBox d={student} picked={sugOk} />}
       {formOpen && <>
         {ro && view.lock_reason && <p className="muted small">لا يمكنك التعديل: {lockText(view.lock_reason)}</p>}
         <fieldset disabled={ro} className="form">
           {view.form && <legend>تعديل النموذج</legend>}
           {!view.form && <button type="button" onClick={() => saveForm({ no_followup: true })}>لا تحتاج متابعة (رقم خطأ، استفسار انتهى…)</button>}
           <ProblemFields p={form} set={setForm} options={view.options} label="ماذا حدث؟" high={prio === "high"}
+            forwardOptions={view.forward_enabled ? view.forward_options : []}
             afterText={<label>الأولوية
               <select value={prio} required onChange={(e) => setPrio(e.target.value)}>
                 <option value="">اختر…</option>
@@ -224,6 +401,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
 function lockText(reason: string): string {
   if (reason.startsWith("after the form deadline")) return "انتهى وقت التعبئة";
   if (reason.startsWith("the callback time")) return "مرّ وقت معاودة الاتصال";
+  if (reason.startsWith("forwarded to the branch supervisor")) return "حُوّلت المشكلة لمشرف الفرع";
   return "ليست مكالمتك";
 }
 

@@ -19,7 +19,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from .config import RIYADH
-from .db.models import AppSetting, AppUser, Call, CallFollowup, CallFollowupNote, norm_number
+from .db.models import (AppSetting, AppUser, Call, CallFollowup, CallFollowupNote, ForwardEvent, ForwardHop,
+                        ForwardMessage, ForwardPerson, norm_number)
 from .ingest.service import day_bounds
 
 MIN_TALK_SECONDS = 20          # talk must be MORE than this
@@ -36,17 +37,28 @@ CAME_BACK = timedelta(hours=72)
 SETTING_START = "followup_start"
 SETTING_KPI = "followup_kpi_since"
 SETTINGS = (SETTING_START, SETTING_KPI)
-RESPONSIBLE_KINDS = ("user", "customer", "other_department")
+RESPONSIBLE_KINDS = ("user", "customer", "other_department", "forward")   # forward: part 4, first form only
 CALLBACK_STATES = ("waiting", "on_time", "late", "missed", "no_number")
 # steps of one call (spec 2026-11-15-followup-stages), computed on read, never stored
 STEPS = ("required", "overdue", "no_followup", "solved_first", "waiting_callback", "callback_missed",
-         "note_needed", "solved_after", "no_number", "waiting_solution", "solution_overdue")
+         "note_needed", "solved_after", "no_number", "waiting_solution", "solution_overdue",
+         "forwarded", "forward_overdue", "forward_failed", "forward_solved", "forward_unconfirmed")
 # not solved WITHOUT a callback time (callback is optional): waiting until the expected solve time, then overdue
 NO_CB_STEPS = ("waiting_solution", "solution_overdue")
-NOTE_STEPS = ("note_needed", *NO_CB_STEPS)         # steps where a note may be added
-OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number", *NO_CB_STEPS)   # list view "open"
-KPI_OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", *NO_CB_STEPS)
-ACTION_STEPS = ("required", "overdue", "note_needed", "callback_missed", "solution_overdue")
+# forwarded to a branch supervisor (part 4): with them until the expected solve time, then late with them
+FORWARD_STEPS = ("forwarded", "forward_overdue")
+# forward_failed + notes: any answer other than another supervisor is written as a note (review D1)
+NOTE_STEPS = ("note_needed", *NO_CB_STEPS, *FORWARD_STEPS, "forward_failed", "forward_unconfirmed")   # steps where a note may be added
+# the send failed (refused, or not sure it went through): the agent must pick again in the form (review D1)
+# D2: the supervisor closed the ticket -> forward_solved when the proof call is good, else forward_unconfirmed (open)
+OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", "no_number", *NO_CB_STEPS,
+              *FORWARD_STEPS, "forward_failed", "forward_unconfirmed")   # list view "open"
+# KPI: a ticket closed there is not "open", confirmed or not (llm_score is for the solved check only, decision 10)
+KPI_OPEN_STEPS = ("waiting_callback", "callback_missed", "note_needed", *NO_CB_STEPS, *FORWARD_STEPS,
+                  "forward_failed")
+SOLVED_STEPS = ("solved_first", "solved_after", "forward_solved")
+FORWARD_NOTE_MAX = 500
+ACTION_STEPS = ("required", "overdue", "note_needed", "callback_missed", "solution_overdue", "forward_failed")
 # + waiting_callback / waiting_solution due by today
 
 
@@ -219,6 +231,46 @@ class Row:
     cb_calls: dict[int, Call] = field(default_factory=dict)          # round-1 cb + notes' cb_call_id -> call
     current_cb: Callback | None = None   # rounds >= 2: callback of the latest open note (looked up in rows())
     early: list[Call] = field(default_factory=list)   # team calls to this customer after the call that did NOT count
+    person: ForwardPerson | None = None  # forwarded (part 4): the person the agent chose
+    hops: list[ForwardHop] = field(default_factory=list)   # the forward chain: who held it, in order
+    hop_people: dict[int, ForwardPerson] = field(default_factory=dict)
+    fwd_calls: list[Call] = field(default_factory=list)   # D2: the branch supervisor's calls to the customer since
+    scores: dict[int, int | None] = field(default_factory=dict)   # D2: llm_score of those calls
+    events: list[ForwardEvent] = field(default_factory=list)      # D3: the ticket's timeline (read back)
+    messages: list[ForwardMessage] = field(default_factory=list)  # D3: what we wrote on it (answers, notes...)
+
+    def proof_hop(self) -> ForwardHop | None:
+        """The last branch-supervisor hop (level 2): only his calls are tracked (user 2026-11-16)."""
+        got = [h for h in self.hops if h.level == 2 and h.result != "pending"]
+        return got[-1] if got else None
+
+    def current_hops(self) -> list[ForwardHop]:
+        """Who holds it now: the open hops of the highest level (several managers at level 3)."""
+        open_ = [h for h in self.hops if h.result in ("open", "pending")]
+        top = max((h.level for h in open_), default=0)
+        return [h for h in open_ if h.level == top]
+
+    def chain_open(self) -> bool:
+        return bool(self.hops) and not any(h.result == "solved" for h in self.hops) and bool(self.current_hops())
+
+    def questions(self) -> list[ForwardEvent]:
+        """D3 (req 18): questions from the person holding it that wait for the agent's answer."""
+        if not self.chain_open():
+            return []
+        from .forward import open_questions
+        return open_questions(self.events, self.messages)
+
+    def forward_proof(self) -> dict | None:
+        """D2: the proof of solving: the branch supervisor's last call (when we know his ext)."""
+        f = self.form
+        if f is None or f.responsible_kind != "forward" or f.forward_status != "sent":
+            return None
+        h = self.proof_hop()
+        if h is None:
+            return None
+        from .forward import proof
+        p = self.hop_people.get(h.person_id)
+        return proof(self.fwd_calls, self.scores, bool(p and p.ext))
 
     # ----- rounds -----
 
@@ -267,6 +319,21 @@ class Row:
         last = self.notes[-1] if self.notes else f
         if last.solved is True:
             return "solved_after" if self.notes else "solved_first"
+        if f.responsible_kind == "forward" and f.forward_status == "failed":
+            return "forward_failed"
+        if f.responsible_kind == "forward" and f.forward_status == "sent" and self.hops:
+            # the chain decides (forward.advance): solved / the branch supervisor closed without a good call
+            if any(h.result == "solved" for h in self.hops):
+                return "forward_solved"
+            from .forward import closed
+            cur = self.current_hops()
+            sup = cur[0] if cur and cur[0].level == 2 else None
+            if sup is not None and closed(sup):     # until the chain step confirms it (proof decides there)
+                return "forward_unconfirmed"
+        # the agent's own callback steps come first (build decision); then the supervisor's time
+        if f.responsible_kind == "forward" and last.callback_at is None:     # with the person (part 4)
+            due = self.forward_due()
+            return "forward_overdue" if due is not None and now > due else "forwarded"
         if last.callback_at is None:                     # no callback asked: wait for the expected solve time
             due = last.expected_at
             return "solution_overdue" if due is not None and now > due + GRACE else "waiting_solution"
@@ -275,6 +342,15 @@ class Row:
         if self.cb_of_round(len(self.notes) + 1) is not None:
             return "note_needed"
         return "callback_missed" if now > last.callback_at + GRACE else "waiting_callback"
+
+    def forward_due(self) -> datetime | None:
+        """24 h after the current holder got it (the chain); before the chain existed: the expected solve time."""
+        cur = [h for h in self.current_hops() if h.sent_at is not None]
+        if cur:
+            from .forward import HOP_TIME
+            return min(h.sent_at for h in cur) + HOP_TIME
+        f = self.form
+        return f.expected_at + GRACE if f is not None and f.expected_at is not None and not self.hops else None
 
     def as_dict(self, now: datetime, names: dict[str, str] | None = None,
                 users: dict[int, str] | None = None) -> dict:
@@ -293,8 +369,9 @@ class Row:
             "form": form_dict(f) if f else None,
             "step": step, "round": rnd,
             "note_deadline": after_deadline(cur.end).isoformat() if step == "note_needed" and cur else None,
-            "solve_by": (self.notes[-1] if self.notes else f).expected_at.isoformat()
-            if step in NO_CB_STEPS and (self.notes[-1] if self.notes else f).expected_at else None,
+            "solve_by": _solve_by(self, step),
+            "forward": (forward_dict(f, self.person, self.forward_proof(), self, now, names)
+                        if f is not None else None),
             "history": self.history(now, users or {}),
             "callback": None if cb_state is None else {
                 "at": open_.callback_at.isoformat(), "due": (open_.callback_at + GRACE).isoformat(),
@@ -324,7 +401,8 @@ class Row:
                 "round": rnd, "what_happened": e.what_happened, "solved": e.solved, "no_followup": bool(nofu),
                 **priority_fields(e.priority if rnd == 1 else None),       # set once, in the first form
                 "responsible_kind": e.responsible_kind, "responsible_user_id": e.responsible_user_id,
-                "responsible": users.get(e.responsible_user_id or -1),
+                "responsible": (self.person.name if e.responsible_kind == "forward" and self.person
+                                else users.get(e.responsible_user_id or -1)),
                 "expected_at": e.expected_at.isoformat() if e.expected_at else None,
                 "callback_at": e.callback_at.isoformat() if e.callback_at else None,
                 "at": at_.isoformat(), "by": users.get(by),
@@ -371,6 +449,214 @@ class Row:
         return out
 
 
+def _solve_by(r: Row, step: str) -> str | None:
+    if step in FORWARD_STEPS and r.hops:
+        due = r.forward_due()
+        return due.isoformat() if due else None
+    e = r.form if step in FORWARD_STEPS else (r.notes[-1] if r.notes else r.form)
+    if step not in (*NO_CB_STEPS, *FORWARD_STEPS) or e is None or e.expected_at is None:
+        return None
+    return e.expected_at.isoformat()
+
+
+def forwarded(f: CallFollowup | None) -> bool:
+    """With the supervisor (or on its way): only they close it. A failed send is not forwarded."""
+    return f is not None and f.responsible_kind == "forward" and f.forward_status in ("pending", "sent")
+
+
+def forward_failed(f: CallFollowup | None) -> bool:
+    return f is not None and f.responsible_kind == "forward" and f.forward_status == "failed"
+
+
+def _hop_dict(h: ForwardHop, p: ForwardPerson | None) -> dict:
+    return {"level": h.level, "name": p.name if p else None, "branch": p.branch if p else None,
+            "result": h.result, "ticket_number": h.ticket_number,
+            "sent_at": h.sent_at.isoformat() if h.sent_at else None,
+            "closed_at": h.closed_at.isoformat() if h.closed_at else None,
+            "ended_at": h.ended_at.isoformat() if h.ended_at else None, "error": h.error}
+
+
+def forward_dict(f: CallFollowup, person: ForwardPerson | None, proof: dict | None = None,
+                 row: "Row | None" = None, now: datetime | None = None,
+                 names: dict[str, str] | None = None) -> dict | None:
+    """Part 4: who the problem went to, whether the ticket was made, and (D2) what came back: closed time, solution
+    text, the supervisor's calls and the proof verdict. Never the ticket's guid or the key."""
+    if f.responsible_kind != "forward":
+        return None
+    return {"person_id": f.forward_person_id, "name": person.name if person else None,
+            "branch": person.branch if person else None, "ext": person.ext if person else None,
+            "note": f.forward_note, "status": f.forward_status, "ticket_number": f.forward_ticket_number,
+            "forwarded_at": f.forwarded_at.isoformat() if f.forwarded_at else None, "error": f.forward_error,
+            "closed_at": f.forward_closed_at.isoformat() if f.forward_closed_at else None,
+            "solution": f.forward_solution,
+            "checked_at": f.forward_checked_at.isoformat() if f.forward_checked_at else None,
+            "proof": proof, **_chain_dict(row), **_talk_dict(row, now or _utcnow(), names)}
+
+
+LEVEL_AR = {1: "موظف الفرع", 2: "مشرف الفرع", 3: "الإدارة"}
+PROOF_REASON_AR = {"no_call": "لم يتصل بالعميل", "not_answered": "لم يرد العميل", "short": "المكالمة 60 ثانية أو أقل",
+                   "waiting_score": "بانتظار تقييم الرضا", "low_score": "الرضا 7 أو أقل", "no_ext": "لا توجد تحويلة"}
+MSG_LABEL = {"answer": "ردّ موظف المكالمة", "note": "تحديث من موظف المكالمة على التذكرة",
+             "summary": "ملخص المكالمة (آلي) على التذكرة", "seen": "اطّلع موظف المكالمة على السؤال (لا يحتاج رداً)"}
+SOLVED_END = "حُلّت ✓"
+
+
+def _iso(t: datetime | None) -> str | None:
+    return t.isoformat() if t else None
+
+
+def _talk_dict(row: "Row | None", now: datetime, names: dict[str, str] | None = None) -> dict:
+    """D3: the questions waiting for the agent, what we wrote on the ticket, and the tracker (req 17). The AI
+    summary's text is never repeated here (it is read, audited, on the call's summary panel)."""
+    if row is None:
+        return {"questions": [], "messages": [], "tracker": []}
+    return {"questions": [{"id": e.id, "from": e.actor, "text": e.note, "at": _iso(e.at or e.seen_at)}
+                          for e in row.questions()],
+            "messages": [{"id": m.id, "kind": m.kind, "text": None if m.kind == "summary" else m.text,
+                          "status": m.status, "error": m.error, "at": _iso(m.created_at),
+                          "sent_at": _iso(m.sent_at)} for m in row.messages],
+            "tracker": tracker(row, now, names)}
+
+
+def tracker(row: "Row", now: datetime, names: dict[str, str] | None = None) -> list[dict]:
+    """Req 17, "like a delivery tracker": the forwarded problem step by step, oldest first. Each item: kind (step /
+    call / question / answer / note / summary / seen), label, at, state (done / current / late / bad / future),
+    detail. Questions and our messages sit at their time; the current step turns "late" after the 24 h."""
+    f = row.form
+    if f is None or f.responsible_kind != "forward" or f.forward_status is None:
+        return []
+    from .forward import closed, hop_calls, is_question, our_actors, ours, proof
+    items: list[dict] = []
+
+    def add(kind: str, label: str, at_: datetime | None, state: str, detail: str | None = None, **kw) -> dict:
+        it = {"kind": kind, "label": label, "at": at_, "state": state, "detail": detail, **kw}
+        items.append(it)
+        return it
+
+    agent = (names or {}).get(row.call.agent_ext or "") or row.call.agent_ext or "–"
+    add("step", "سُجّلت المشكلة", f.first_filled_at, "done",
+        f"موظف المكالمة: {agent} · الأولوية: {PRIORITIES.get(f.priority or '', '–')}")
+    who = f"«{row.person.name}»" if row.person else "المسؤول"
+    if f.forward_status == "failed":
+        add("step", f"لم تُحوَّل إلى {who}", f.updated_at, "bad", f.forward_error)
+        return _finish(items)
+    if f.forward_status != "sent":
+        add("step", f"حُوّلت إلى {who}", None, "current", "لم يُرسل بعد، نحاول مرة أخرى")
+        add("step", SOLVED_END, None, "future", end=True)
+        return _finish(items)
+    add("step", f"حُوّلت إلى {who}", f.forwarded_at, "done",
+        f"تذكرة رقم {f.forward_ticket_number}" if f.forward_ticket_number else None)
+    us = our_actors(row.events)
+    sup_hop = row.proof_hop()
+    current: dict | None = None
+    solved = False
+    for i, h in enumerate(row.hops):
+        p = row.hop_people.get(h.person_id)
+        holder = f"«{p.name if p else '–'}» ({LEVEL_AR.get(h.level, '')})"
+        if h.result == "failed":
+            add("step", f"تعذّر إرسال نسخة إلى {holder}", h.ended_at, "bad", h.error)
+            continue
+        if h.result == "pending" or h.sent_at is None:
+            continue
+        if i > 0:
+            add("step", f"انتقلت إلى {holder}", h.sent_at, "done")
+        mine = [e for e in row.events if e.hop_id == h.id or (
+            e.hop_id is None and e.at is not None and e.at >= h.sent_at and (h.ended_at is None or e.at <= h.ended_at))]
+        acts = [e.at or e.seen_at for e in mine if e.kind == "followup" and not ours(e, us)]
+        if closed(h) and h.closed_at:
+            acts.append(h.closed_at)
+        got = min(acts, default=None)
+        recv = add("step", f"استلمها {holder}", got, "done" if got else "future")
+        from .forward import HOP_TIME
+        if got is None and (h.result == "passed_on" or (h.result == "closed_by_other" and h.ended_at
+                                                         and h.ended_at > h.sent_at + HOP_TIME)):
+            recv["state"], recv["detail"] = "bad", "لم يتخذ أي إجراء على التذكرة"
+        elif got is None and h.result == "closed_by_other":
+            recv["detail"] = "حلّها غيره قبل أن يتصرف"
+        if got is None and h.result == "open" and current is None:
+            recv["state"] = "current"
+            current = recv
+        if h is sup_hop:
+            for c in row.fwd_calls:
+                sc = row.scores.get(c.id)
+                ok = c.status == "answered"
+                add("call", f"اتصل {holder} بالعميل", c.start_time, "done" if ok else "bad",
+                    (f"ردّ العميل · {c.talk_seconds or 0} ث"
+                     + (f" · الرضا {sc}/10" if sc is not None
+                        else " · بانتظار تقييم الرضا" if (c.talk_seconds or 0) > 60 else ""))
+                    if ok else "لم يرد العميل")
+        if h.result == "solved":
+            solved = True
+            add("step", f"حلّها {holder} ✓", h.closed_at if closed(h) and h.closed_at else h.ended_at, "done",
+                h.solution)
+        elif h.result == "passed_on":
+            why = None
+            if h.level == 2 and closed(h) and p is not None and p.ext:
+                got_c, sc = hop_calls(row.fwd_calls, row.scores, p.ext, row.call.customer_number, h.sent_at)
+                pr = proof([c for c in got_c if h.ended_at is None or c.start_time <= h.ended_at], sc, True)
+                why = f"أغلقها دون تأكيد: {PROOF_REASON_AR.get(pr['reason'] or '', '–')}"
+            add("step", f"لم تُحل خلال 24 ساعة عند {holder}", h.ended_at, "bad", why)
+        elif h.result == "closed_by_other":
+            add("step", f"أُغلقت عند {holder}: حلّها غيره", h.ended_at, "done")
+        elif h.result == "open" and closed(h):
+            pr = row.forward_proof() if h is sup_hop else None
+            reason = PROOF_REASON_AR.get(pr["reason"] or "", "") if pr and not pr["ok"] else ""
+            add("step", f"حُلّت عند {holder} (غير مؤكد)", h.closed_at, "bad",
+                f"غير مؤكد: {reason}" if reason else None, solution=h.solution)
+    for e in row.events:
+        if is_question(e, us):
+            add("question", f"سؤال من «{e.actor or '–'}»", e.at or e.seen_at, "done", e.note)
+    for m in row.messages:
+        add(m.kind, MSG_LABEL.get(m.kind, m.kind), m.created_at,
+            "bad" if m.status == "failed" else "done", m.text if m.kind in ("answer", "note") else None,
+            status=m.status, error=m.error)
+    if not solved:
+        last = add("step", SOLVED_END, None, "future", end=True)
+        if row.chain_open() and current is None:
+            last["state"] = "current"
+            current = last
+    due = row.forward_due() if row.chain_open() else None
+    if current is not None and due is not None and now > due:
+        current["state"] = "late"
+        current["detail"] = "متأخر" + (f" · {current['detail']}" if current.get("detail") else "")
+    return _finish(items)
+
+
+def _finish(items: list[dict]) -> list[dict]:
+    """Oldest first; a step without a time stays after the item before it; the open end ("حُلّت ✓") is last."""
+    end = datetime.max.replace(tzinfo=timezone.utc)
+    key: datetime | None = None
+    keyed = []
+    for i, it in enumerate(items):
+        if it.pop("end", False):
+            k = end
+        else:
+            k = it["at"] or key or end
+            key = k
+        keyed.append((k, i, it))
+    keyed.sort(key=lambda x: (x[0], x[1]))
+    for _, _, it in keyed:
+        it["at"] = _iso(it["at"])
+    return [it for _, _, it in keyed]
+
+
+def _chain_dict(row: "Row | None") -> dict:
+    """The forward chain for the page: every hop, the level now, who holds it, until when (24 h). closed_at /
+    solution = the solving hop's (else the current one's) so the counters and the line read one place."""
+    if row is None or not row.hops:
+        return {"hops": [], "level": None, "holders": [], "due_at": None}
+    solved = [h for h in row.hops if h.result == "solved"]
+    cur = row.current_hops()
+    pick = solved[-1] if solved else (cur[0] if cur else row.hops[-1])
+    due = row.forward_due()
+    return {"hops": [_hop_dict(h, row.hop_people.get(h.person_id)) for h in row.hops],
+            "level": None if solved else (cur[0].level if cur else None),
+            "holders": [row.hop_people[h.person_id].name for h in cur if h.person_id in row.hop_people],
+            "due_at": due.isoformat() if due and not solved else None,
+            "closed_at": pick.closed_at.isoformat() if pick.closed_at else None, "solution": pick.solution,
+            "solved_at": solved[-1].ended_at.isoformat() if solved and solved[-1].ended_at else None}
+
+
 def priority_fields(code: str | None) -> dict:
     return {"priority": code, "priority_ar": PRIORITIES.get(code or "")}
 
@@ -379,6 +665,7 @@ def form_dict(f: CallFollowup) -> dict:
     return {"no_followup": f.no_followup, "what_happened": f.what_happened, "solved": f.solved,
             **priority_fields(f.priority),
             "responsible_kind": f.responsible_kind, "responsible_user_id": f.responsible_user_id,
+            "forward_person_id": f.forward_person_id, "forward_note": f.forward_note,
             "expected_at": f.expected_at.isoformat() if f.expected_at else None,
             "callback_at": f.callback_at.isoformat() if f.callback_at else None,
             "first_filled_at": f.first_filled_at.isoformat(), "updated_at": f.updated_at.isoformat()}
@@ -450,9 +737,12 @@ def rows(s: Session, exts, start: date, lo: datetime, hi: datetime, call_ids: li
     need = {r.cb_id for r in out if r.cb_id} | {n.cb_call_id for ns in notes.values() for n in ns if n.cb_call_id}
     calls = {c.id: c for c in s.scalars(select(Call).where(Call.id.in_(need)))} if need else {}
     early = _early_calls(s, [r for r in out if r.call.id in with_form], callers)
+    pids = {r.form.forward_person_id for r in out if r.form is not None and r.form.forward_person_id}
+    people = {p.id: p for p in s.scalars(select(ForwardPerson).where(ForwardPerson.id.in_(pids)))} if pids else {}
     for r in out:
         r.notes = notes.get(r.call.id, [])
         r.cb_calls = calls
+        r.person = people.get(r.form.forward_person_id or -1) if r.form is not None else None
         r.early = [c for c in early.get(_digits9(r.call.customer_number), []) if c.start_time > r.call.end_time]
         f = r.form
         if (f.solved is False and r.cb_time is not None and r.cb_time <= f.first_filled_at) if f else False:
@@ -464,7 +754,46 @@ def rows(s: Session, exts, start: date, lo: datetime, hi: datetime, call_ids: li
                 calls[cb1.id] = s.get(Call, cb1.id)
         if r.notes and r.open_entry() is not None:
             r.current_cb = find_callback(s, r.call, _anchor(r), callers)
+    _load_hops(s, [r for r in out if r.form is not None and r.form.forward_status == "sent"])
     return out
+
+
+def _load_hops(s: Session, rs: list[Row]) -> None:
+    """The forward chain of each forwarded row (hops + their people) and the branch supervisor's calls to the
+    customer since he got it (team "forward", kept by ingest) with their newest llm_score (this check only)."""
+    if not rs:
+        return
+    from .forward import _sup_calls, digits9, hop_calls
+    hops: dict[int, list[ForwardHop]] = {}
+    for h in s.scalars(select(ForwardHop).where(ForwardHop.call_id.in_([r.call.id for r in rs]))
+                       .order_by(ForwardHop.call_id, ForwardHop.id)):
+        hops.setdefault(h.call_id, []).append(h)
+    pids = {h.person_id for hs in hops.values() for h in hs}
+    people = {p.id: p for p in s.scalars(select(ForwardPerson).where(ForwardPerson.id.in_(pids)))} if pids else {}
+    pairs = []
+    for r in rs:
+        r.hops, r.hop_people = hops.get(r.call.id, []), people
+        h = r.proof_hop()
+        p = people.get(h.person_id) if h else None
+        if h is not None and p is not None and p.ext and h.sent_at:
+            pairs.append((p.ext, digits9(r.call.customer_number), h.sent_at))
+    calls, scores = _sup_calls(s, pairs)
+    for r in rs:
+        h = r.proof_hop()
+        p = people.get(h.person_id) if h else None
+        if h is not None and p is not None:
+            r.fwd_calls, r.scores = hop_calls(calls, scores, p.ext, r.call.customer_number, h.sent_at)
+    ids = [r.call.id for r in rs]
+    events: dict[int, list[ForwardEvent]] = {}
+    for e in s.scalars(select(ForwardEvent).where(ForwardEvent.call_id.in_(ids))
+                       .order_by(ForwardEvent.call_id, ForwardEvent.at.asc().nulls_last(), ForwardEvent.id)):
+        events.setdefault(e.call_id, []).append(e)
+    msgs: dict[int, list[ForwardMessage]] = {}
+    for m in s.scalars(select(ForwardMessage).where(ForwardMessage.call_id.in_(ids))
+                       .order_by(ForwardMessage.call_id, ForwardMessage.id)):
+        msgs.setdefault(m.call_id, []).append(m)
+    for r in rs:
+        r.events, r.messages = events.get(r.call.id, []), msgs.get(r.call.id, [])
 
 
 def one(s: Session, call: Call, exts, start: date | None) -> Row | None:
@@ -477,8 +806,8 @@ def one(s: Session, call: Call, exts, start: date | None) -> Row | None:
 
 # "تحتاج حل" (spec 2026-11-16-priority-no-followup, requirement 11): open problems, whatever من/إلى say
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}          # no priority (old form) comes last
-UNSOLVED_URGENCY = {"callback_missed": 0, "solution_overdue": 1, "note_needed": 2, "waiting_callback": 3,
-                    "waiting_solution": 3, "no_number": 4}
+UNSOLVED_URGENCY = {"forward_failed": 0, "callback_missed": 0, "solution_overdue": 1, "forward_unconfirmed": 1, "forward_overdue": 1, "note_needed": 2,
+                    "waiting_callback": 3, "waiting_solution": 3, "forwarded": 3, "no_number": 4}
 
 
 def unsolved(s: Session, exts, start: date, now: datetime, *, callers, priority: str | None = None,
@@ -495,7 +824,8 @@ def unsolved(s: Session, exts, start: date, now: datetime, *, callers, priority:
     rank = case(*[(CallFollowup.priority == k, v) for k, v in PRIORITY_ORDER.items()], else_=len(PRIORITY_ORDER))
     stmt = (select(Call.id).join(CallFollowup, CallFollowup.call_id == Call.id)
             .where(*needed_conditions(exts, start), CallFollowup.no_followup.is_(False),
-                   func.coalesce(last_note, CallFollowup.solved).is_(False))
+                   func.coalesce(last_note, CallFollowup.solved).is_(False),
+                   ~exists().where(ForwardHop.call_id == Call.id, ForwardHop.result == "solved"))   # chain solved
             .order_by(rank, Call.start_time, Call.id).limit(2 * limit + 1))
     if priority:
         stmt = stmt.where(CallFollowup.priority == priority)
@@ -505,7 +835,8 @@ def unsolved(s: Session, exts, start: date, now: datetime, *, callers, priority:
     got = [r for r in rows(s, exts, start, day_bounds(start)[0], now + timedelta(days=1), ids[:2 * limit],
                            callers=callers) if r.step(now) in OPEN_STEPS]
     got.sort(key=lambda r: (PRIORITY_ORDER.get(r.form.priority or "", 3),
-                            UNSOLVED_URGENCY.get(r.step(now), 9), r.call.start_time, r.call.id))
+                            -1 if r.questions() else UNSOLVED_URGENCY.get(r.step(now), 9),   # D3: a question first
+                            r.call.start_time, r.call.id))
     return got[:limit], len(got) > limit or len(ids) > 2 * limit
 
 
@@ -595,7 +926,8 @@ def add_note(s: Session, call: Call, data: dict, user: AppUser, exts, now: datet
     rnd = len(row.notes) + 2                              # form = round 1, the note opens the next round
     if data.get("round") != rnd:
         raise NoteConflict("تغيّرت حالة المتابعة، أعد تحميل الصفحة")
-    clean = validate(s, {**data, "no_followup": False}, call, now, priority=row.form.priority)
+    clean = validate(s, {**data, "no_followup": False}, call, now, priority=row.form.priority,
+                     forwarded=forwarded(row.form))
     last = row.notes[-1] if row.notes else row.form
     cb = row.cb_of_round(rnd - 1) if last.callback_at is not None else None     # no callback asked: none to report
     n = CallFollowupNote(call_id=call.id, round=rnd, cb_call_id=cb.id if cb else None,
@@ -604,6 +936,11 @@ def add_note(s: Session, call: Call, data: dict, user: AppUser, exts, now: datet
                          expected_at=clean["expected_at"], callback_at=clean["callback_at"],
                          created_by=user.id, created_at=now)
     s.add(n)
+    if (forwarded(row.form) and (clean["what_happened"] or "").strip() and user.role == "agent" and user.ext
+            and user.ext == call.agent_ext):
+        # D3: the note is written on the ticket too (the person holding it sees the update)
+        s.add(ForwardMessage(call_id=call.id, kind="note", text=clean["what_happened"].strip()[:600],
+                             created_by=user.id, created_at=now, status="pending"))
     try:
         s.commit()
     except IntegrityError:          # the same round saved twice at once
@@ -625,15 +962,21 @@ class FormError(ValueError):
 FORM = object()      # validate(priority=FORM): the first form, whose own `priority` field is checked and kept
 
 
+NO_FORWARD = {"forward_person_id": None, "forward_note": None}
+
+
 def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: datetime | None = None,
-             real_now: datetime | None = None, *, priority=FORM) -> dict:
+             real_now: datetime | None = None, *, priority=FORM, forward_ok: bool = False,
+             forwarded: bool = False) -> dict:
     """Server-side checks of a submitted form (priority=FORM) or note (priority = the first form's priority, which
-    sets the solve-time limit); returns the clean fields. A note's clean fields never carry a priority."""
+    sets the solve-time limit); returns the clean fields. A note's clean fields never carry a priority.
+    Part 4: forward_ok = the link to the customer-service system is on (form only); forwarded = this note belongs to
+    a forwarded problem (only the supervisor closes it; the note keeps kind "forward")."""
     is_form = priority is FORM
     if data.get("no_followup"):
         out = {"no_followup": True, "what_happened": None, "solved": None, "responsible_kind": None,
                "responsible_user_id": None, "expected_at": None, "callback_at": None}
-        return {**out, "priority": None} if is_form else out          # nothing to rank (spec decision)
+        return {**out, "priority": None, **NO_FORWARD} if is_form else out    # nothing to rank (spec decision)
     text = (data.get("what_happened") or "").strip()
     if not text:
         raise FormError("اكتب ما حدث في المكالمة")
@@ -646,15 +989,34 @@ def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: d
     solved = data.get("solved")
     if solved not in (True, False):
         raise FormError("اختر: هل حُلّت المشكلة؟")
+    if forwarded and solved is True:
+        raise FormError("المشكلة محوّلة لمشرف الفرع: هو من يغلقها")
     clean = {"no_followup": False, "what_happened": text, "solved": solved, "responsible_kind": None,
              "responsible_user_id": None, "expected_at": None, "callback_at": None}
     if is_form:
-        clean["priority"] = priority
+        clean.update(priority=priority, **NO_FORWARD)
     if solved:
         return clean
     kind = data.get("responsible_kind")
     if kind not in RESPONSIBLE_KINDS:
         raise FormError("اختر المسؤول عن الحل")
+    if forwarded and kind != "forward":
+        raise FormError("المشكلة محوّلة لمشرف الفرع: لا يتغيّر المسؤول")
+    if kind == "forward" and not forwarded:
+        if not is_form:
+            raise FormError("التحويل لمشرف فرع من النموذج الأول فقط")
+        if not forward_ok:
+            raise FormError("التحويل لمشرف فرع غير مفعّل")
+        if not _has_number(call.customer_number):
+            raise FormError("لا يوجد رقم للعميل: لا يمكن التحويل")
+        from .forward import choosable
+        person = choosable(s, data.get("forward_person_id"))
+        if person is None:
+            raise FormError("اختر مشرف الفرع")
+        fnote = (data.get("forward_note") or "").strip()
+        if len(fnote) > FORWARD_NOTE_MAX:
+            raise FormError("ملاحظة المسؤول أطول من 500 حرف")
+        clean.update(forward_person_id=person.id, forward_note=fnote or None)
     uid = data.get("responsible_user_id")
     if kind == "user":
         u = s.get(AppUser, uid) if isinstance(uid, int) else None
@@ -686,12 +1048,22 @@ def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: d
     return clean
 
 
-def save(s: Session, call: Call, data: dict, user: AppUser, now: datetime | None = None) -> CallFollowup:
+def save(s: Session, call: Call, data: dict, user: AppUser, now: datetime | None = None, *,
+         forward_ok: bool = False) -> CallFollowup:
     now = now or _utcnow()
-    f = s.scalars(select(CallFollowup).where(CallFollowup.call_id == call.id)).first()
+    # locked: the send job (part 4) must not make a ticket while this edit changes the form
+    # populate_existing: the caller may hold this row already; re-read it under the lock (review D1: a stale
+    # "pending" let an edit through right after the job marked it "sent")
+    f = s.scalars(select(CallFollowup).where(CallFollowup.call_id == call.id).with_for_update()
+                  .execution_options(populate_existing=True)).first()
+    if f is not None and f.forward_status == "sent":
+        raise FormError("حُوّلت المشكلة لمشرف الفرع: لا يمكن تعديل النموذج")
     keep = f.expected_at if f is not None else None
-    clean = (validate(s, data, call, now, keep) if not _same_callback(f, data)
-             else _validate_keep(s, data, call, now, f))
+    clean = (validate(s, data, call, now, keep, forward_ok=forward_ok) if not _same_callback(f, data)
+             else _validate_keep(s, data, call, now, f, forward_ok))
+    # forward: (re)send on every save while not sent; any other answer drops a waiting / failed send
+    clean.update(forward_status="pending" if clean["responsible_kind"] == "forward" else None,
+                 forward_error=None, forward_tries=0)
     if f is None:
         f = CallFollowup(call_id=call.id, owner_ext=call.agent_ext, filled_by=user.id, first_filled_at=now,
                          updated_by=user.id, updated_at=now, **clean)
@@ -713,6 +1085,8 @@ def _same_callback(f: CallFollowup | None, data: dict) -> bool:
             and data.get("solved") is False and data.get("callback_at") == f.callback_at)
 
 
-def _validate_keep(s: Session, data: dict, call: Call, now: datetime, f: CallFollowup) -> dict:
+def _validate_keep(s: Session, data: dict, call: Call, now: datetime, f: CallFollowup, forward_ok: bool = False
+                   ) -> dict:
     """Editing a form without moving its callback time: the old time may be in the past by now (still valid)."""
-    return validate(s, data, call, min(now, f.callback_at - timedelta(seconds=1)), f.expected_at, now)
+    return validate(s, data, call, min(now, f.callback_at - timedelta(seconds=1)), f.expected_at, now,
+                    forward_ok=forward_ok)

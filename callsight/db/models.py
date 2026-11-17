@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import (DDL, BigInteger, Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer,
-                        String, Text, UniqueConstraint, event, func)
+                        SmallInteger, String, Text, UniqueConstraint, event, func, text as sa_text)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -459,7 +459,9 @@ class CallFollowup(Base):
     (callsight/followups.py), never stored."""
     __tablename__ = "call_followup"
     __table_args__ = (CheckConstraint("priority IN ('high', 'medium', 'low') OR priority IS NULL",
-                                      name="ck_call_followup_priority"),)
+                                      name="ck_call_followup_priority"),
+                      CheckConstraint("forward_status IN ('pending', 'sent', 'failed') OR forward_status IS NULL",
+                                      name="ck_call_followup_forward_status"))
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), unique=True)
     owner_ext: Mapped[str] = mapped_column(String(16), index=True)           # call.agent_ext when filled
@@ -477,6 +479,113 @@ class CallFollowup(Base):
     first_filled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_by: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # spec 2026-11-16-priority-no-followup part 4 (D1): responsible_kind "forward" = a branch supervisor in the
+    # customer-service system. Status: pending (to send / retrying) -> sent (ticket made) / failed (error shown).
+    forward_person_id: Mapped[int | None] = mapped_column(ForeignKey("forward_person.id"))
+    forward_note: Mapped[str | None] = mapped_column(String(500))
+    forward_status: Mapped[str | None] = mapped_column(String(10))
+    forward_ticket_guid: Mapped[str | None] = mapped_column(String(64))
+    forward_ticket_number: Mapped[int | None] = mapped_column(Integer)
+    forwarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))   # the ticket was made
+    forward_error: Mapped[str | None] = mapped_column(String(300))
+    forward_tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # D2: read back from the ticket every few minutes (closedAt there; NULL again when they reopen it)
+    forward_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    forward_solution: Mapped[str | None] = mapped_column(String(1000))      # text of the last followup_close
+    forward_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ForwardEvent(Base):
+    """One item of a forwarded ticket's timeline in the customer-service system (part 4 D2): events (created,
+    forwarded, reopened, closed...) and followups (the supervisor's questions / replies). ext_key = hash of the item,
+    so a re-read never adds it twice. Personal data: erased with the call's content."""
+    __tablename__ = "forward_event"
+    __table_args__ = (UniqueConstraint("call_id", "ext_key", name="uq_forward_event_call_key"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    ext_key: Mapped[str] = mapped_column(String(40))
+    kind: Mapped[str] = mapped_column(String(20))        # event / followup
+    type: Mapped[str] = mapped_column(String(30))        # created / forwarded / followup / followup_close / ...
+    note: Mapped[str | None] = mapped_column(String(1000))
+    at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    actor: Mapped[str | None] = mapped_column(String(200))
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))       # when we first read it
+    # the hop (person) that held the ticket when it was first read (forward chain story page)
+    hop_id: Mapped[int | None] = mapped_column(ForeignKey("forward_hop.id", ondelete="SET NULL"))
+
+
+class ForwardMessage(Base):
+    """What WE write on a forwarded ticket (part 4 D3), sent by the worker: the agent's answer to the employee's
+    question (kind answer), the agent's update note (note), the call's AI summary (summary, once per call), and
+    "seen, no answer needed" (seen: never sent, only closes the questions shown). status: pending -> sent /
+    waiting (the ticket is closed there: sent after it is reopened) / failed (error shown) / done (seen).
+    Append-only; personal data: erased with the call's content."""
+    __tablename__ = "forward_message"
+    __table_args__ = (CheckConstraint("kind IN ('answer', 'note', 'summary', 'seen')", name="ck_forward_message_kind"),
+                      CheckConstraint("status IN ('pending', 'waiting', 'sent', 'failed', 'done')",
+                                      name="ck_forward_message_status"),
+                      Index("uq_forward_message_summary", "call_id", unique=True,
+                            postgresql_where=sa_text("kind = 'summary'")))
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))
+    text: Mapped[str | None] = mapped_column(String(600))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))     # None = the system (summary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(10), index=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(String(300))
+    tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # answer / seen: the newest question (forward_event.id) the agent had on screen; later questions stay open
+    upto_event_id: Mapped[int | None] = mapped_column(BigInteger)
+    # the tickets it was written on (managers' copies: one failing copy never makes the others get it twice)
+    sent_to: Mapped[list | None] = mapped_column(JSONB)
+
+
+class ForwardPerson(Base):
+    """A branch supervisor who can receive a forwarded problem (config/forward_people.yaml, part 4 D1). guid = their
+    id in the customer-service system (from the yaml, or matched by name on sync); ext = PBX extension (proof calls).
+    active = still in the yaml and, after a sync, still a supervisor in that system. Not personal data of a call."""
+    __tablename__ = "forward_person"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    branch: Mapped[str] = mapped_column(String(100))
+    name: Mapped[str] = mapped_column(String(100))
+    ext: Mapped[str | None] = mapped_column(String(16))
+    guid: Mapped[str | None] = mapped_column(String(64), unique=True)
+    full_name: Mapped[str | None] = mapped_column(String(200))     # as the other system writes it (after a sync)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # the forward chain: every employee of the other system is stored (any can be chosen); level 2 = his branch's
+    # supervisor (isBranchSupervisor there), level 3 = the managers listed in the yaml (`managers:`)
+    is_supervisor: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    is_manager: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    grp: Mapped[str | None] = mapped_column(String(20))   # the other system's group (men / women): branch names repeat
+
+
+class ForwardHop(Base):
+    """One person who held a forwarded problem (spec "Part 4 change: the forward chain"): level 1 the chosen
+    employee, 2 his branch supervisor, 3 a manager (all the managers get it: the first on the same ticket, the others a
+    copy ticket each). result: pending (copy ticket not made yet) / open / solved / passed_on (24 h ran out) /
+    closed_by_other (another manager solved it) / failed. Levels 1 and 2 share the first ticket. The solution text
+    is personal data: erased with the call's content."""
+    __tablename__ = "forward_hop"
+    __table_args__ = (CheckConstraint("level IN (1, 2, 3)", name="ck_forward_hop_level"),
+                      CheckConstraint("result IN ('pending', 'open', 'solved', 'passed_on', 'closed_by_other', "
+                                      "'failed')", name="ck_forward_hop_result"))
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    level: Mapped[int] = mapped_column(SmallInteger)
+    person_id: Mapped[int] = mapped_column(ForeignKey("forward_person.id"))
+    ticket_guid: Mapped[str | None] = mapped_column(String(64))
+    ticket_number: Mapped[int | None] = mapped_column(Integer)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))     # when this person got it
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))   # closedAt there (None = open)
+    solution: Mapped[str | None] = mapped_column(String(1000))
+    result: Mapped[str] = mapped_column(String(20), index=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))    # solved / passed on / closed
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(String(300))
+    tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class CallFollowupNote(Base):

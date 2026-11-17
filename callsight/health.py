@@ -100,10 +100,18 @@ def queues(redis) -> list[Item]:
     return out
 
 
-def jobs(session: Session, now: datetime) -> list[Item]:
+# part 4: shown only while the customer-service link is on (an off link is not "bad")
+FORWARD_JOBS: dict[str, timedelta] = {"forward_send": timedelta(minutes=20), "forward_sync": timedelta(hours=3),
+                                       "forward_poll": timedelta(minutes=20)}
+
+
+def jobs(session: Session, now: datetime, forward_on: bool | None = None) -> list[Item]:
+    if forward_on is None:
+        from .cs_api import enabled_from_env
+        forward_on = enabled_from_env()
     rows = {r.job: r for r in session.scalars(select(JobRun))}
     out = []
-    for job, gap in JOBS.items():
+    for job, gap in {**JOBS, **(FORWARD_JOBS if forward_on else {})}.items():
         r = rows.get(job)
         last_ok = r.last_ok_at if r else None
         if last_ok is None:

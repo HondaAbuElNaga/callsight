@@ -188,7 +188,9 @@ def register(app: FastAPI, *, DB, Admin, cfg) -> None:
     @app.post("/api/calls/{call_id}/delete-content")
     def delete_content(call_id: int, body: DeleteIn, user: Admin, s: DB) -> dict:
         from .. import retention
-        c = s.get(Call, call_id)
+        # FOR NO KEY UPDATE: the D3 message sender (FOR SHARE ... SKIP LOCKED) skips this call; inserts of rows
+        # that point to the call are not blocked (review D4)
+        c = s.get(Call, call_id, with_for_update={"key_share": True})
         if c is None:
             raise HTTPException(404, "no such call")
         if body.confirm != c.id:
@@ -198,8 +200,14 @@ def register(app: FastAPI, *, DB, Admin, cfg) -> None:
             raise HTTPException(422, "write a reason (5 characters or more)")
         if c.content_deleted_at is not None:
             raise HTTPException(409, "already deleted")
+        from ..forward import linked_calls
         rel = c.recording_path
+        linked = [(x, x.recording_path) for x in linked_calls(s, c)]   # the branch supervisor's calls (part 4 D2)
         what, _, _ = retention.erase_call_content(s, c, cfg.audio_dir, None, None)
+        for x, _rel in linked:
+            retention.erase_call_content(s, x, cfg.audio_dir, None, None)
+        if linked:
+            what.append(f"supervisor_calls:{len(linked)}")
         for clip in s.scalars(select(GoldClip).where(GoldClip.call_id == c.id)):
             root = cfg.audio_dir.resolve()
             p = (root / clip.file).resolve()
@@ -211,9 +219,10 @@ def register(app: FastAPI, *, DB, Admin, cfg) -> None:
         c.content_deleted_at = _now()
         log(s, user, "delete_call_content", f"call:{c.id} {','.join(what) or 'nothing'}"[:100], reason)
         s.commit()
-        if rel and cfg.delete_backup_copy is not None:
-            try:
-                cfg.delete_backup_copy(c.id, rel)       # worker task: BACKUP_DIR is read-only in the API
-            except Exception:  # noqa: BLE001 - never fail the delete; ids only in the log
-                log_.warning("call %s: backup-copy delete task not sent; remove it by hand", c.id)
+        for cid, r in [(c.id, rel), *((x.id, xr) for x, xr in linked)]:
+            if r and cfg.delete_backup_copy is not None:
+                try:
+                    cfg.delete_backup_copy(cid, r)      # worker task: BACKUP_DIR is read-only in the API
+                except Exception:  # noqa: BLE001 - never fail the delete; ids only in the log
+                    log_.warning("call %s: backup-copy delete task not sent; remove it by hand", cid)
         return {"ok": True, "deleted": what}
