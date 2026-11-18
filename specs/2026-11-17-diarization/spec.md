@@ -44,6 +44,23 @@ pyannote needs a Hugging Face token once to download the gated model (the user c
 the model terms, click by click). The token is used only during build-models, never stored on the server after.
 Speaker turns are matched to Whisper segments by time overlap.
 
+## Decisions taken while building (2026-11-19, 3 judges, 3/3)
+- **Option A: same Whisper decode + word timings.** The adapter adds `return_token_timestamps=True` (alignment-head
+  DTW after the same greedy decode): the text is byte-identical, so the WER benchmark stays valid. Rejected: B
+  (transcribe each speaker turn: short clips hallucinate, WER must be re-run, more GPU) and C (timestamp-token
+  decoding: different decode mode, phrases span speaker changes).
+- Words kept per window (`transcript_segment.words`, JSONB `[[word, start, end], ...]`); overlap words deduped by
+  time (a word belongs to the window whose display range holds its midpoint). `Transcript.text`, search and
+  `merge_texts` unchanged. Dropped / silent windows give no words.
+- pyannote 3.1 (`num_speakers=2`) runs after Whisper while the GPU lock is held. Raw turns stored in `speaker_turn`
+  (source of talk ratio, interruptions, longest customer silence: pyannote turns, not word times).
+- Each word goes to the speaker whose turn overlaps its midpoint (nearest turn if none). Same-speaker words in a
+  row = one line in `transcript_turn` (speaker agent / customer / unknown, start, end, text).
+- Agent naming per requirement 2; unsure → `transcript.speaker_unsure` and "متحدث 1 / 2".
+- Old calls have no word timings: the re-run task decodes them once more with timings (text expected identical;
+  a call whose text differs is logged and keeps its old text). After that, diarization alone can re-run.
+- Migration **0024** (not 0009).
+
 ## Open questions
 1. pyannote 3.1 (**recommended**: best open model, MIT, used by whisperX) vs a simple 2-voice clustering of our
    own (no token, weaker on overlapping speech)?
