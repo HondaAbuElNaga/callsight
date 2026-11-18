@@ -8,7 +8,7 @@ One list, in build order. Each line is one spec folder under `specs/`. Build one
 | 0 | [2026-11-16-priority-no-followup](../specs/2026-11-16-priority-no-followup/spec.md) | Priority, "تحتاج حل", forward chain, training lookup | one real test forward by an agent (D5) | **live 2026-11-18**, D5 left |
 | 1 | [2026-11-17-cleanup](../specs/2026-11-17-cleanup/spec.md) | Small bugs, open branches merged, docs/roadmap up to date, queue-waiting check | one test call into queue 6401 | built + reviewed, waits for "ok push" |
 | 2 | [2026-11-17-rollout](../specs/2026-11-17-rollout/spec.md) | Agents really use the system; the PC is switched off | agent names, "yes stop the PC" | approved |
-| 3 | [2026-11-17-offsite-backup](../specs/2026-11-17-offsite-backup/spec.md) | Encrypted copy outside the server + restore drill on AWS (Phase 6 "Done when", part 1) | one CloudFormation update (click by click) | approved |
+| 3 | [2026-11-17-offsite-backup](../specs/2026-11-17-offsite-backup/spec.md) | Encrypted copy outside the server + restore drill on AWS (Phase 6 "Done when", part 1) | one CloudFormation update (click by click) | approved; **moved to the end** (user 2026-11-19), build before step 10 |
 | 4 | [2026-11-17-diarization](../specs/2026-11-17-diarization/spec.md) | Agent / customer separated in every transcript; talk ratio, interruptions | a free Hugging Face token (click by click) | approved |
 | 5 | [2026-11-17-satisfaction-model](../specs/2026-11-17-satisfaction-model/spec.md) | Trusted 1–10 score (Phase 3 "Done when") | the 500 ratings | approved |
 | 6 | [2026-11-17-rules-editor](../specs/2026-11-17-rules-editor/spec.md) | Admin edits word lists and limits on a page, no code | nothing | approved |
