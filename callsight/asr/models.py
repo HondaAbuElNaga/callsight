@@ -27,6 +27,42 @@ def read_wav(path: Path) -> tuple[array, int]:
     return samples, rate
 
 
+BAD_CHAR = "�"                      # a half-decoded UTF-8 letter (its other byte is in the next token)
+
+
+def token_words(tokenizer, seq: list[int], times: list[float], text: str,
+                duration: float) -> list[tuple[str, float, float]]:
+    """Generated tokens + their start times -> [(word, start, end)] whose words equal `text.split()`.
+    A token's characters are found by decoding growing prefixes (Arabic letters may span two byte tokens).
+    Anything inconsistent gives [] for the window (the window then has text but no speaker), never wrong times."""
+    special = set(tokenizer.all_special_ids)
+    pairs = [(t, float(ts)) for t, ts in zip(seq, times) if t not in special]
+    if not pairs or not text:
+        return []
+    ids = [t for t, _ in pairs]
+    ends, prev = [], ""
+    for k in range(1, len(ids) + 1):
+        cur = tokenizer.decode(ids[:k], skip_special_tokens=True)
+        if not cur.startswith(prev.rstrip(BAD_CHAR)):
+            return []
+        ends.append(len(cur))
+        prev = cur
+    full = prev
+    if full.strip() != text or BAD_CHAR in full:
+        return []
+    words, pos = [], 0
+    for w in text.split():
+        start_c = full.index(w, pos)
+        end_c = start_c + len(w)
+        pos = end_c
+        first = next(i for i, e in enumerate(ends) if e > start_c)
+        last = next(i for i, e in enumerate(ends) if e >= end_c)
+        t0 = pairs[first][1]
+        t1 = pairs[last + 1][1] if last + 1 < len(pairs) else min(duration, pairs[last][1] + 0.5)
+        words.append((w, round(t0, 3), round(max(t1, t0 + 0.02), 3)))
+    return words
+
+
 # ---------- model adapters (GPU, imported lazily) ----------
 
 class WhisperLargeV3:
@@ -50,6 +86,57 @@ class WhisperLargeV3:
         with self.torch.inference_mode():
             ids = self.model.generate(feats, language="ar", task="transcribe", num_beams=1, max_new_tokens=440)
         return self.processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
+
+    def transcribe_words(self, audio16k) -> tuple[str, list[tuple[str, float, float]]]:
+        """The decode of `transcribe` (byte-identical text) + word times (spec 2026-11-17-diarization, decision A).
+        generate(return_token_timestamps=True) would switch attention to "eager", whose fp16 rounding changed the
+        text of 1 window in 8 test clips (2026-11-19). So: normal decode first, then ONE teacher-forced eager pass
+        over that same token sequence for the cross-attentions, then transformers' own DTW (alignment heads, median
+        filter), cropped to the real audio length. Times are seconds from the window start."""
+        feats = self.processor(audio16k, sampling_rate=TARGET_RATE, return_tensors="pt").input_features
+        feats = feats.to("cuda", dtype=self.torch.float16)
+        with self.torch.inference_mode():
+            ids = self.model.generate(feats, language="ar", task="transcribe", num_beams=1, max_new_tokens=440)
+        text = self.processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
+        seq = ids[0].tolist()
+        try:
+            times = self.token_times(feats, ids, len(audio16k))
+        except Exception:                                  # noqa: BLE001  no times -> window without speakers
+            return text, []
+        return text, token_words(self.processor.tokenizer, seq, times, text, len(audio16k) / TARGET_RATE)
+
+    def token_times(self, feats, ids, n_samples: int | None, prompt_len: int | None = None) -> list[float]:
+        """Start time (s) of every token of `ids` (1 x L, as generate returned it). n_samples=None: no crop (the
+        same matrix as generate(return_token_timestamps=True), used by the check script)."""
+        import numpy as np
+        from transformers.models.whisper.generation_whisper import _dynamic_time_warping, _median_filter
+        torch, m = self.torch, self.model
+        special = set(self.processor.tokenizer.all_special_ids)
+        seq = ids[0].tolist()
+        if prompt_len is None:                             # <|startoftranscript|><|ar|><|transcribe|><|notimestamps|>
+            prompt_len = next((i for i, t in enumerate(seq) if t not in special), len(seq))
+        if len(seq) - 1 <= prompt_len:
+            return [0.0] * len(seq)
+        before = m.config._attn_implementation
+        try:
+            m.config._attn_implementation = "eager"        # attention weights only exist in eager
+            with torch.inference_mode():
+                out = m(input_features=feats, decoder_input_ids=ids[:, :-1], output_attentions=True,
+                        use_cache=False, return_dict=True)
+        finally:
+            m.config._attn_implementation = before
+        cross = out.cross_attentions                       # per layer: (1, heads, L-1, 1500)
+        w = torch.stack([cross[layer][0, head] for layer, head in m.generation_config.alignment_heads]).float()
+        w = w[:, prompt_len:, :]                           # rows of the text tokens (as transformers does)
+        if n_samples is not None:
+            w = w[:, :, : max(1, n_samples // 160 // 2)]   # 160 samples per mel frame, 2 frames per position
+        std = torch.std(w, dim=-2, keepdim=True, unbiased=False)
+        mean = torch.mean(w, dim=-2, keepdim=True)
+        w = _median_filter(((w - mean) / std).unsqueeze(0), m.config.median_filter_width)[0]
+        text_idx, time_idx = _dynamic_time_warping(-w.mean(dim=0).cpu().double().numpy())
+        jumps = np.pad(np.diff(text_idx), (1, 0), constant_values=1).astype(bool)
+        jump_times = (time_idx[jumps] * 0.02).tolist()
+        return [0.0] * prompt_len + jump_times + [jump_times[-1]]
 
 
 class AudarTurbo:

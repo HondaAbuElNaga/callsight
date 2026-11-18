@@ -35,6 +35,7 @@
   transcribe --days N --limit M    backfill: newest M answered calls of the last N days (max 500)
   transcribe status                queue length, done/error counts, latency hang-up -> transcript
   transcribe --retry-errors --since YYYY-MM-DD [--limit 50]   re-queue failed calls since that day (max 500)
+  transcribe --resplit [--limit 100]   redo done calls made before word times (rating set first): speakers
   transcripts reindex              rebuild the normalised search text of all done transcripts
   analyze --call ID [--force]      queue one call for the nlp worker (local LLM summary + first estimate)
   analyze --days N --limit M [--rescore]   backfill: newest M transcribed calls of the last N days without an
@@ -107,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     tr = sub.add_parser("transcribe"); tr.add_argument("action", nargs="?", choices=("status",))
     tr.add_argument("--call", type=int); tr.add_argument("--force", action="store_true")
     tr.add_argument("--days", type=int); tr.add_argument("--limit", type=int)
+    tr.add_argument("--resplit", action="store_true")
     tr.add_argument("--retry-errors", action="store_true"); tr.add_argument("--since", type=date.fromisoformat)
     ts = sub.add_parser("transcripts"); ts.add_argument("action", choices=("reindex",))
     an = sub.add_parser("analyze"); an.add_argument("action", nargs="?", choices=("status",))
@@ -498,13 +500,14 @@ def _transcribe(a: argparse.Namespace, p: argparse.ArgumentParser) -> int:
     """DB + Redis only (never the PBX). Run where Redis is reachable, e.g. inside the worker container."""
     from . import jobs
     from .asr import queueing
-    modes = sum((a.action == "status", a.call is not None, a.retry_errors,
-                 not a.retry_errors and (a.days is not None or a.limit is not None)))
+    modes = sum((a.action == "status", a.call is not None, a.retry_errors, a.resplit,
+                 not a.retry_errors and not a.resplit and (a.days is not None or a.limit is not None)))
     if modes != 1:
-        p.error("transcribe: give exactly one of: status | --call ID | --days N --limit M | --retry-errors --since D")
+        p.error("transcribe: give exactly one of: status | --call ID | --days N --limit M | --retry-errors --since D"
+                " | --resplit [--limit N]")
     if a.retry_errors and (a.since is None or a.days is not None):
         p.error("transcribe: --retry-errors needs --since YYYY-MM-DD (and optional --limit)")
-    if not a.retry_errors and (a.days is not None and a.limit is None or a.limit is not None and a.days is None):
+    if not a.retry_errors and not a.resplit and (a.days is not None and a.limit is None or a.limit is not None and a.days is None):
         p.error("transcribe: backfill needs both --days and --limit")
     cfg = queueing.AsrConfig.from_env()
     now = datetime.now(RIYADH)
@@ -519,6 +522,9 @@ def _transcribe(a: argparse.Namespace, p: argparse.ArgumentParser) -> int:
                 print(f"call {a.call}: {status}" + ("" if send else " (nothing sent; --force to redo)"))
             elif a.retry_errors:
                 ids = queueing.retry_errors(s, cfg, a.since, a.limit or 50, now)
+            elif a.resplit:
+                from .asr.engine import SEGMENTER_VERSION
+                ids = queueing.resplit(s, cfg, a.limit or 100, now, SEGMENTER_VERSION)
             else:
                 ids = queueing.queue_recent(s, cfg, a.days, a.limit, now)
         except ValueError as exc:

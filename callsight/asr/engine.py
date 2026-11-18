@@ -26,7 +26,7 @@ from .normalize import normalize
 
 log = logging.getLogger(__name__)
 
-SEGMENTER_VERSION = "w30o1-rms-hf1"      # change when windows/filters change, so old rows can be told apart
+SEGMENTER_VERSION = "w30o1-rms-hf1-wts"  # change when windows/filters change; -wts = word times kept (diarization)
 WINDOW_S, OVERLAP_S = 30.0, 1.0
 SILENCE_RMS = 0.003                      # ~ -50 dBFS: phone line noise; 2 s of speech in a 30 s window is ~0.02
 MAX_CHARS_PER_S = 25.0                   # fast Saudi speech is ~15 letters/s; more = model loop/invention
@@ -60,6 +60,7 @@ class Segment:
     end: float
     text: str
     flag: str | None = None              # silence / blocklist / repeat / too_fast
+    words: list = field(default_factory=list)   # [(word, start, end)] in call seconds; [] = no times (old / dropped)
 
 
 @dataclass
@@ -79,6 +80,17 @@ def display_times(bounds: list[tuple[int, int]], rate: int) -> list[tuple[float,
         end = e / rate if i == len(bounds) - 1 else (bounds[i + 1][0] + e) / 2 / rate
         times.append((round(start, 3), round(end, 3)))
     return times
+
+
+def window_words(words, offset: float, start: float, end: float) -> list[tuple[str, float, float]]:
+    """Window-relative word times -> call seconds; keep only words whose midpoint is in this window's display range
+    (the 1 s overlap is then counted once, by time, without touching the text merge)."""
+    out = []
+    for w, s, e in words or []:
+        s, e = round(s + offset, 3), round(e + offset, 3)
+        if start <= (s + e) / 2 < end:
+            out.append((str(w).replace("\x00", ""), s, e))
+    return out
 
 
 def rms(x) -> float:
@@ -126,9 +138,15 @@ def transcribe_audio(adapter, audio, rate: int = TARGET_RATE, silence_rms: float
         if rms(piece) < silence_rms:
             seg = Segment(i, start, end, "", "silence")
         else:
-            text = (adapter.transcribe(piece) or "").replace("\x00", "").strip()   # Postgres refuses NUL
+            words = []
+            if hasattr(adapter, "transcribe_words"):      # word times for the speaker split (diarization spec)
+                text, words = adapter.transcribe_words(piece)
+            else:
+                text = adapter.transcribe(piece)
+            text = (text or "").replace("\x00", "").strip()   # Postgres refuses NUL
             flag = hallucination_flag(text, (e - s) / rate)
-            seg = Segment(i, start, end, "" if flag else text, flag)
+            seg = Segment(i, start, end, "" if flag else text, flag,
+                          [] if flag else window_words(words, s / rate, start, end))
         if seg.flag:
             res.dropped_windows += 1
             runs.append([])
@@ -164,7 +182,8 @@ class ModelHolder:
     def __init__(self, name: str, idle_unload_s: float = 300, factory: Callable | None = None,
                  clock: Callable[[], float] = time.monotonic, start_timer: bool = True, load_retry_s: float = 120,
                  on_unload: Callable[[], None] | None = None,
-                 before_use: Callable[[], bool] | None = None):
+                 before_use: Callable[[], bool] | None = None,
+                 diarizer_factory: Callable | None = None, diarizer_retry_s: float = 3600):
         self.name, self.idle_unload_s, self.clock, self.load_retry_s = name, idle_unload_s, clock, load_retry_s
         self.on_unload = on_unload               # e.g. release the GPU lock (call-analysis spec, decision 6)
         # e.g. take/refresh the GPU lock. Called INSIDE self.lock right before the model is loaded or used, so the
@@ -176,6 +195,10 @@ class ModelHolder:
         self.busy = False
         self.last_used = clock()
         self.lock = threading.Lock()
+        # speaker split (diarization spec): optional; a missing model / library never stops transcription
+        self.diarizer_factory, self.diarizer_retry_s = diarizer_factory, diarizer_retry_s
+        self.diarizer = None
+        self.diarizer_failed_at: float | None = None
         if start_timer and idle_unload_s > 0:
             threading.Thread(target=self._idle_loop, daemon=True, name="asr-idle-unload").start()
 
@@ -233,6 +256,37 @@ class ModelHolder:
                 self.busy = False
                 self.last_used = self.clock()
 
+    def speaker_turns(self, audio):
+        """pyannote turns of one call, or None (no diarizer configured, or it cannot load: tried again after
+        `diarizer_retry_s`). Call inside `use()` (the GPU lock and self.lock are held). Errors of one call -> None."""
+        if self.diarizer_factory is None:
+            return None
+        if self.diarizer is None:
+            if self.diarizer_failed_at is not None and self.clock() - self.diarizer_failed_at < self.diarizer_retry_s:
+                return None
+            try:
+                d = self.diarizer_factory()
+                d.load()
+            except Exception as exc:                       # noqa: BLE001
+                self.diarizer_failed_at = self.clock()
+                free_gpu()
+                log.warning("speaker split not available (%s): transcripts are saved without speakers",
+                            type(exc).__name__)
+                return None
+            self.diarizer, self.diarizer_failed_at = d, None
+        try:
+            return self.diarizer.turns(audio)
+        except Exception as exc:                           # noqa: BLE001  never fail the transcript
+            if "out of memory" in str(exc).lower():
+                self.diarizer = None
+            free_gpu()
+            log.warning("speaker split failed for this call (%s)", type(exc).__name__)
+            return None
+
+    @property
+    def diarizer_version(self) -> str | None:
+        return getattr(self.diarizer, "version", None)
+
     def unload_if_idle(self) -> bool:
         if not self.lock.acquire(blocking=False):
             return False                                  # a call is being transcribed right now
@@ -240,6 +294,7 @@ class ModelHolder:
             if self.adapter is None or self.busy or self.clock() - self.last_used < self.idle_unload_s:
                 return False
             self.adapter = None
+            self.diarizer = None
             free_gpu()
             log.info("asr model %s unloaded after %.0f s idle", self.name, self.idle_unload_s)
             if self.on_unload is not None:

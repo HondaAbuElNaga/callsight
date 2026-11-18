@@ -81,15 +81,49 @@ def is_dropped(seg: TranscriptSegment) -> bool:
     return bool(seg.flag) or not (seg.text or "").strip()
 
 
-def as_dict(session: Session, t: Transcript) -> dict:
-    segs = segments(session, t) if t.status == "done" else []
-    return {
+def turns(session: Session, t: Transcript) -> list:
+    from .db.models import TranscriptTurn
+    return list(session.scalars(select(TranscriptTurn).where(TranscriptTurn.transcript_id == t.id)
+                                .order_by(TranscriptTurn.seq)))
+
+
+def display_rows(session: Session, t: Transcript) -> list[dict]:
+    """What the page and the export show. Split by speaker (diarization spec): the speaker lines, plus every window
+    without word times (dropped windows as "silence"; kept windows without times as one whole line, speaker None),
+    in time order. Not split: one line per window, as before."""
+    segs = segments(session, t)
+    tt = turns(session, t) if t.diarization_version else []
+    if not tt:
+        return [{"start": s.start_seconds, "end": s.end_seconds, "speaker": None, "dropped": is_dropped(s),
+                 "text": "" if is_dropped(s) else s.text} for s in segs]
+    out = [{"start": x.start_seconds, "end": x.end_seconds, "speaker": x.speaker, "dropped": False, "text": x.text}
+           for x in tt]
+    out += [{"start": s.start_seconds, "end": s.end_seconds, "speaker": None, "dropped": is_dropped(s),
+             "text": "" if is_dropped(s) else s.text} for s in segs if is_dropped(s) or not s.words]
+    return sorted(out, key=lambda d: (d["start"], d["dropped"]))
+
+
+def as_dict(session: Session, t: Transcript, staff: bool = False) -> dict:
+    """staff=True adds the talk metrics (open question 2: agents do not see them)."""
+    done = t.status == "done"
+    rows = display_rows(session, t) if done else []
+    d = {
         "call_id": t.call_id, "status": t.status, "model": t.model,
         "created_at": (t.finished_at or t.queued_at).isoformat() if (t.finished_at or t.queued_at) else None,
         "dropped_windows": t.dropped_windows,
-        "segments": [{"seq": s.seq, "start": s.start_seconds, "end": s.end_seconds, "speaker": s.speaker,
-                      "dropped": is_dropped(s), "text": "" if is_dropped(s) else s.text} for s in segs],
+        "split": bool(done and t.diarization_version and any(r["speaker"] for r in rows)),
+        "speaker_unsure": bool(t.speaker_unsure),
+        "segments": [{"seq": i, **r} for i, r in enumerate(rows)],
     }
+    if staff and done and t.diarization_version and t.speaker_unsure is False:
+        d["talk"] = {"agent_s": t.agent_talk_s, "customer_s": t.customer_talk_s, "ratio": t.talk_ratio,
+                     "interruptions_agent": t.interruptions_agent,
+                     "interruptions_customer": t.interruptions_customer, "longest_wait_s": t.longest_wait_s}
+    return d
+
+
+SPEAKER_AR = {"agent": "الموظف", "customer": "العميل", "speaker_1": "متحدث 1", "speaker_2": "متحدث 2",
+              "unknown": "متحدث"}
 
 
 def mmss(seconds: float) -> str:
@@ -108,7 +142,7 @@ def txt_filename(call) -> str:
     return f"callsight-call-{call.id}-{call.start_time.astimezone(RIYADH):%Y%m%d}.txt"
 
 
-def export_txt(call, agent_name: str | None, t: Transcript, segs: list[TranscriptSegment]) -> bytes:
+def export_txt(call, agent_name: str | None, t: Transcript, segs: list[dict]) -> bytes:
     """UTF-8 with BOM, CRLF, every line starts with RLM (keeps `[mm:ss]` on the right in Notepad)."""
     start: datetime = call.start_time.astimezone(RIYADH)
     ext = call.agent_ext or call.missed_agent_ext
@@ -122,8 +156,9 @@ def export_txt(call, agent_name: str | None, t: Transcript, segs: list[Transcrip
         DISCLAIMER,
         "",
     ]
-    lines += [f"[{mmss(s.start_seconds)}] {DROPPED_TEXT if is_dropped(s) else ' '.join(s.text.split())}"
-              for s in segs]
+    for s in segs:                      # display_rows(): speaker lines when the call is split, else windows
+        who = f"{SPEAKER_AR[s['speaker']]}: " if s.get("speaker") in SPEAKER_AR else ""
+        lines.append(f"[{mmss(s['start'])}] " + (DROPPED_TEXT if s["dropped"] else who + " ".join(s["text"].split())))
     return ("﻿" + "\r\n".join(RLM + line for line in lines) + "\r\n").encode("utf-8")
 
 

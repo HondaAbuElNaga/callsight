@@ -46,7 +46,7 @@ R = read, W = write. "own" = only calls of the agent's own extension.
 | GET /api/calls, /api/calls/summary | call list + counts | R | R | ❌ |
 | GET /api/calls/{id} | one call | R | R | R own |
 | GET /api/calls/{id}/recording | play the recording (audited) | R | R | R own |
-| GET /api/calls/{id}/transcript (+ .txt) | transcript (audited); word search = staff only | R | R | R own |
+| GET /api/calls/{id}/transcript (+ .txt) | transcript (audited), agent / customer lines once split; word search and the talk numbers (talk %, interruptions, wait) = staff only | R | R | R own (no talk numbers) |
 | GET /api/calls/{id}/analysis | AI analysis, score, flags | R | R | ❌ |
 | GET /api/calls/{id}/summary | AI summary only (no score, no flags) | R | R | R own |
 | POST /api/calls/{id}/delete-content | erase a call's recording + text (needs reason + call number) | W | ❌ | ❌ |

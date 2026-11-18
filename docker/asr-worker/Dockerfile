@@ -11,6 +11,9 @@ RUN if [ -n "$TORCH_REQS" ]; then       pip install --no-cache-dir --index-url h
 COPY requirements.txt ./reqs/app.txt
 COPY requirements.in ./reqs/requirements.in
 RUN pip install --no-cache-dir -r reqs/app.txt
+# speaker split (spec 2026-11-17-diarization): pyannote 3.3.2, exact pins, keeps torch / numpy of the base image
+COPY docker/asr-worker/requirements-diarize.txt ./reqs/diarize.txt
+RUN pip install --no-cache-dir -r reqs/diarize.txt
 COPY alembic.ini pyproject.toml ./
 COPY callsight ./callsight
 COPY config ./config

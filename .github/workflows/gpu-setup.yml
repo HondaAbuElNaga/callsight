@@ -15,6 +15,7 @@ on:
           - install-key
           - prepare
           - build-models
+          - build-diarize
           - internet-off
           - status
           - start-date
@@ -49,6 +50,7 @@ jobs:
           VALUE: ${{ inputs.value }}
           GPU_IP: 10.20.12.163
           GPU_SSH_KEY: ${{ secrets.GPU_SSH_KEY }}
+          HF_TOKEN: ${{ inputs.task == 'build-diarize' && secrets.HF_TOKEN || '' }}   # only that task
         run: |
           set -euo pipefail
           M=/opt/callsight
@@ -96,6 +98,22 @@ jobs:
                   --revision 06f233fe06e710322aca913c1bc4249a0d71fce1 --include '*.json' '*.txt' model.safetensors \
                 && $GC --profile setup run --rm ollama-pull qwen2.5:7b \
                 && $GC up -d && $GC ps && sudo docker builder prune -af >/dev/null && df -h /" ;;
+
+            build-diarize)
+              # Speaker split (spec 2026-11-17-diarization): download the 3 pinned pyannote models (run gpu-update
+              # first: it rebuilds the asr image with pyannote), then restart the asr worker. The HF token (gated
+              # models) goes over stdin and lives only in that remote shell and the download container: never in a
+              # file, an argument or the log. HF_TOKEN is set in the step env only for this task.
+              [ -n "$HF_TOKEN" ] || { echo "secret HF_TOKEN is missing" >&2; exit 1; }
+              sudo bash "$M/deploy/aws/setup-internet.sh" on
+              trap 'sudo bash "$M/deploy/aws/setup-internet.sh" off' EXIT     # never left on, even on a failure
+              DL='sudo --preserve-env=HF_TOKEN docker compose -f deploy/aws/compose.gpu.yml --env-file .env --profile setup run --rm -e HF_TOKEN model-download'
+              printf '%s\n' "$HF_TOKEN" | "${G[@]}" "set -e; read -r HF_TOKEN; export HF_TOKEN; cd /opt/callsight \
+                && $DL pyannote/speaker-diarization-3.1 --revision 84fd25912480287da0247647c3d2b4853cb3ee5d \
+                && $DL pyannote/segmentation-3.0 --revision e66f3d3b9eb0873085418a7b813d3b369bf160bb \
+                && $DL pyannote/wespeaker-voxceleb-resnet34-LM --revision 837717ddb9ff5507820346191109dc79c958d614 \
+                && sudo docker compose -f deploy/aws/compose.gpu.yml --env-file .env up -d asr-worker \
+                && sudo docker builder prune -af >/dev/null && df -h /" ;;
 
             internet-off)
               sudo bash "$M/deploy/aws/setup-internet.sh" off

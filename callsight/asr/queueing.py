@@ -209,6 +209,30 @@ def retry_errors(session: Session, cfg: AsrConfig, since: date, limit: int, now:
     return [r.call_id for r in rows]
 
 
+def resplit(session: Session, cfg: AsrConfig, limit: int, now: datetime, segmenter: str) -> list[int]:
+    """Diarization spec: done transcripts made before word times (segmenter_version != `segmenter`) -> queued again
+    (redo) so they get word times + the speaker split. Rating-set calls first, then the newest since ASR_START_DATE.
+    Returns call ids to send."""
+    from ..db.models import RatingPick
+    if not 1 <= limit <= MAX_BACKFILL:
+        raise ValueError(f"--limit must be 1..{MAX_BACKFILL}")
+    old = (Transcript.model == cfg.model, Transcript.status == "done",
+           Transcript.segmenter_version.is_distinct_from(segmenter))
+    picked = select(RatingPick.call_id)
+    rows = list(session.scalars(select(Transcript).where(*old, Transcript.call_id.in_(picked))
+                                .order_by(Transcript.call_id).limit(limit).with_for_update()))
+    if len(rows) < limit and cfg.start_time is not None:
+        rows += session.scalars(select(Transcript).join(Call, Call.id == Transcript.call_id)
+                                .where(*old, Transcript.call_id.not_in(picked), Call.start_time >= cfg.start_time)
+                                .order_by(Call.start_time.desc()).limit(limit - len(rows))
+                                .with_for_update(of=Transcript)).all()
+    for row in rows:
+        row.status, row.tries, row.error, row.queued_at, row.redo = "queued", 0, None, now, True
+        row.started_at = row.finished_at = None
+    session.commit()
+    return [r.call_id for r in rows]
+
+
 def latency_seconds(finished_at: datetime, call_end: datetime) -> float:
     """Hang-up -> transcript done (target: within 15 min)."""
     return (finished_at - call_end).total_seconds()

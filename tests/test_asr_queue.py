@@ -507,15 +507,17 @@ def test_migration_0005_up_and_down(engine):
     assert (mod.revision, mod.down_revision) == ("0005", "0004")
     try:
         with engine.begin() as conn:
-            Base.metadata.tables["transcript_segment"].drop(conn)
-            Base.metadata.tables["transcript"].drop(conn)
+            for t in ("speaker_turn", "transcript_turn", "transcript_segment", "transcript"):   # 0024 tables first
+                Base.metadata.tables[t].drop(conn)
             with Operations.context(MigrationContext.configure(conn)):
                 mod.upgrade()
         insp = inspect(engine)
         assert {"transcript", "transcript_segment"} <= set(insp.get_table_names())
-        model_cols = {c.name for c in Base.metadata.tables["transcript"].columns} - {"search_text"}   # 0007
+        later = {"search_text", "speaker_unsure", "speaker_reason", "agent_talk_s", "customer_talk_s",   # 0007, 0024
+                 "talk_ratio", "interruptions_agent", "interruptions_customer", "longest_wait_s"}
+        model_cols = {c.name for c in Base.metadata.tables["transcript"].columns} - later
         assert {c["name"] for c in insp.get_columns("transcript")} == model_cols
-        seg_cols = {c.name for c in Base.metadata.tables["transcript_segment"].columns}
+        seg_cols = {c.name for c in Base.metadata.tables["transcript_segment"].columns} - {"words"}   # 0024
         assert {c["name"] for c in insp.get_columns("transcript_segment")} == seg_cols
         with engine.begin() as conn:
             with Operations.context(MigrationContext.configure(conn)):

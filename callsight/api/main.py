@@ -342,7 +342,7 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
             raise HTTPException(404, "no transcript")
         if t.status == "done":                   # status polling (queued/running) writes no audit row
             audit_transcript(s, user, call_id, "view")
-        return transcripts.as_dict(s, t)
+        return transcripts.as_dict(s, t, staff=user.role in auth.STAFF_ROLES)   # talk metrics: staff only
 
     @app.get("/api/calls/{call_id}/transcript.txt")
     def transcript_txt(call_id: int, user: User, s: DB) -> Response:
@@ -352,7 +352,7 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
             raise HTTPException(404, "no transcript")
         ext = c.agent_ext or c.missed_agent_ext
         agent = s.get(Agent, ext) if ext else None
-        data = transcripts.export_txt(c, agent.name if agent else None, t, transcripts.segments(s, t))
+        data = transcripts.export_txt(c, agent.name if agent else None, t, transcripts.display_rows(s, t))
         audit_transcript(s, user, call_id, "export")
         return Response(data, media_type="text/plain; charset=utf-8", headers={
             "Content-Disposition": f'attachment; filename="{transcripts.txt_filename(c)}"',

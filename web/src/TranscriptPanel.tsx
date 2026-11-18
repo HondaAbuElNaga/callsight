@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, NotFound, Unauthorized, type Transcript } from "./api";
+import { api, NotFound, Unauthorized, type TalkMetrics, type Transcript } from "./api";
 import { mmss } from "./format";
 
 interface Props {
@@ -13,12 +13,29 @@ interface Props {
 const POLL_MS = 15_000;          // while queued/running (status checks write no audit row)
 const USER_PAUSE_MS = 5_000;     // auto-scroll waits this long after the user scrolls or uses the keyboard
 
+const SPEAKER: Record<string, string> = {
+  agent: "الموظف", customer: "العميل", speaker_1: "متحدث 1", speaker_2: "متحدث 2", unknown: "متحدث",
+};
+
 const STATUS_TEXT: Record<string, string> = {
   queued: "المكالمة في انتظار التفريغ…",
   running: "جارٍ تفريغ المكالمة الآن…",
   error: "تعذر تفريغ هذه المكالمة.",
   skipped: "هذه المكالمة لا تُفرَّغ (قصيرة جداً أو طويلة جداً أو بلا تسجيل).",
 };
+
+function TalkLine({ talk }: { talk: TalkMetrics }) {
+  const pct = talk.ratio === null ? null : Math.round(talk.ratio * 100);
+  return (
+    <p className="talk-line small">
+      {pct !== null && <span>كلام الموظف <b className="num">{pct}%</b> · العميل <b className="num">{100 - pct}%</b></span>}
+      <span>قاطع الموظف العميل <b className="num">{talk.interruptions_agent ?? 0}</b> مرة</span>
+      <span>قاطع العميل الموظف <b className="num">{talk.interruptions_customer ?? 0}</b> مرة</span>
+      {talk.longest_wait_s !== null && <span>أطول انتظار بعد كلام العميل <b className="num">{Math.round(talk.longest_wait_s)}</b> ث</span>}
+      <span className="muted">(للعرض فقط، آلي)</span>
+    </p>
+  );
+}
 
 export function TranscriptPanel({ callId, canSeek, time, onSeek, onExpired }: Props) {
   const [data, setData] = useState<Transcript | null>(null);
@@ -88,9 +105,14 @@ export function TranscriptPanel({ callId, canSeek, time, onSeek, onExpired }: Pr
       {data?.status === "done" && (
         <>
           <p className="muted small">
-            تفريغ آلي وقد يحتوي أخطاء. كل سطر يغطي حتى 30 ثانية من الصوت
+            {data.split
+              ? (data.speaker_unsure
+                ? "تفريغ آلي وقد يحتوي أخطاء. لم يُعرف أي المتحدثَين هو الموظف، لذلك يظهران «متحدث 1 / 2»"
+                : "تفريغ آلي وقد يحتوي أخطاء. الفصل بين الموظف والعميل آلي أيضاً وقد يخطئ")
+              : "تفريغ آلي وقد يحتوي أخطاء. كل سطر يغطي حتى 30 ثانية من الصوت"}
             {canSeek ? "؛ اضغط على سطر لسماعه من بدايته." : "."}
           </p>
+          {data.talk && <TalkLine talk={data.talk} />}
           {segs.length === 0 && <p className="muted small">لا يوجد كلام مفهوم في هذه المكالمة.</p>}
           <ol className="segments" ref={listRef}
             onScroll={() => { if (ownScroll.current) ownScroll.current = false; else userBusy(); }}
@@ -100,6 +122,9 @@ export function TranscriptPanel({ callId, canSeek, time, onSeek, onExpired }: Pr
                 <button type="button" className={`seg ${i === active ? "on" : ""}`} disabled={!canSeek}
                   aria-current={i === active ? "true" : undefined} onClick={() => onSeek(s.start)}>
                   <span dir="ltr" className="seg-time">{mmss(s.start)}</span>
+                  {data.split && !s.dropped && s.speaker && (
+                    <span className={`seg-who who-${s.speaker}`}>{SPEAKER[s.speaker] ?? "متحدث"}</span>
+                  )}
                   <span className={s.dropped ? "seg-text muted" : "seg-text"}>
                     {s.dropped ? "— (صمت/غير واضح)" : s.text}
                   </span>

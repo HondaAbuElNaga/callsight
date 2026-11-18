@@ -12,7 +12,7 @@ from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.orm import Session
 
 from .config import RIYADH
-from .db.models import Agent, Call, CallLeg, ReconcileRun
+from .db.models import Agent, Call, CallLeg, ReconcileRun, Transcript
 from .followups import early_hangup_sql
 from .ingest.classify import TeamConfig
 from .ingest.service import day_bounds
@@ -171,6 +171,24 @@ def _agent_inbound(s: Session, lo, hi, exts) -> dict[str, tuple[int, float | Non
     return {e: (n, _f(a)) for e, n, a in rows}
 
 
+def _talk(s: Session, lo, hi, exts) -> dict[str | None, dict]:
+    """Diarization spec: averages of the speaker-split calls (agent named, not unsure), per agent ext and for all
+    (key None). Show-only: never part of a score. One transcript per call (the newest split one)."""
+    one = (select(Transcript.call_id, func.max(Transcript.id).label("tid"))
+           .where(Transcript.status == "done", Transcript.diarization_version.is_not(None),
+                  Transcript.speaker_unsure.is_(False)).group_by(Transcript.call_id).subquery())
+    cols = (func.count(), func.avg(Transcript.talk_ratio), func.avg(Transcript.interruptions_agent),
+            func.avg(Transcript.interruptions_customer), func.avg(Transcript.longest_wait_s))
+    base = (select(Call.agent_ext, *cols).join(one, one.c.call_id == Call.id).join(Transcript, Transcript.id == one.c.tid)
+            .where(Call.agent_ext.in_(exts), Call.start_time >= lo, Call.start_time < hi))
+    pack = lambda n, r, ia, ic, w: {"calls": n, "ratio": _f(r), "interruptions_agent": _f(ia),   # noqa: E731
+                                    "interruptions_customer": _f(ic), "longest_wait_s": _f(w)}
+    out = {e: pack(*rest) for e, *rest in s.execute(base.group_by(Call.agent_ext))}
+    total = s.execute(base.with_only_columns(*cols)).one()
+    out[None] = pack(*total)
+    return out
+
+
 def _agent_outbound(s: Session, lo, hi, exts) -> dict[str, dict]:
     rows = s.execute(select(Call.agent_ext, *_OUT_COLS)
                      .where(Call.direction == "outbound", Call.agent_ext.in_(exts),
@@ -279,6 +297,10 @@ def compute(session: Session, start: date, end: date, *, teams: TeamConfig, team
     summary["satisfaction"] = None   # Phase 3: shown as "غير متاح", never 0
     if agent is not None:
         repeat_rows = [r for r in repeat_rows if r.credited == agent]
+    talk = _talk(session, lo, hi, exts)
+    for r in rows:
+        r["talk"] = talk.get(r["ext"])
+    summary["talk"] = talk[None] if talk[None]["calls"] else None
     return {"summary": summary, "agents": rows, "by_status": by_status, "top_repeaters": _top_repeaters(repeat_rows),
             "days": _days(session, period_days, lo, hi, names, agent)}
 
@@ -335,6 +357,8 @@ def format_text(data: dict) -> str:
              f"{'yes' if data['trusted'] else 'NO'}",
              f"  {'KPI':22} {'period':>10} {'previous':>10}"]
     for key, cur in data["summary"].items():
+        if key == "talk":                      # show-only speaker numbers: page only, not this check text
+            continue
         lines.append(f"  {key:22} {_txt(cur, key):>10} {_txt(data['previous'].get(key), key):>10}")
     if data["by_status"]:
         lines.append("  inbound by status: " + ", ".join(f"{k} {v}" for k, v in data["by_status"].items()))

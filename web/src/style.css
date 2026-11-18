@@ -362,3 +362,10 @@ span.chip.rule-word { border: 1px solid var(--line); }
 .rule-edit textarea, .rule-edit input:not([type="checkbox"]) { width: 100%; max-width: 640px; font: inherit; }
 .filters label.grow { flex: 1 1 260px; }
 .filters label.grow input { width: 100%; }
+
+/* speaker lines (spec 2026-11-17-diarization): two colours, label before the text */
+.seg-who { flex: none; font-size: 12px; font-weight: 600; border-radius: 4px; padding: 0 6px; }
+.who-agent { color: var(--accent); background: #e8f0fa; }
+.who-customer { color: var(--ok); background: var(--ok-bg); }
+.who-speaker_1, .who-speaker_2, .who-unknown { color: var(--neutral); background: var(--neutral-bg); }
+.talk-line { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 8px; }

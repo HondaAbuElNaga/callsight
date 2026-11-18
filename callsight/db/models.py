@@ -271,6 +271,15 @@ class Transcript(Base):
     # left out of the live latency figure (its finish time says nothing about hang-up -> transcript)
     segmenter_version: Mapped[str | None] = mapped_column(String(30))
     diarization_version: Mapped[str | None] = mapped_column(String(30))   # NULL until speaker split exists
+    # speaker split (spec 2026-11-17-diarization): NULL = not split yet. unsure = agent not named ("متحدث 1 / 2")
+    speaker_unsure: Mapped[bool | None] = mapped_column(Boolean)
+    speaker_reason: Mapped[str | None] = mapped_column(String(20))   # first_greets / other_greets / ...
+    agent_talk_s: Mapped[float | None] = mapped_column(Float)
+    customer_talk_s: Mapped[float | None] = mapped_column(Float)
+    talk_ratio: Mapped[float | None] = mapped_column(Float)          # agent share of speech 0..1 (staff only)
+    interruptions_agent: Mapped[int | None] = mapped_column(Integer)
+    interruptions_customer: Mapped[int | None] = mapped_column(Integer)
+    longest_wait_s: Mapped[float | None] = mapped_column(Float)       # silence after the customer stopped
     error: Mapped[str | None] = mapped_column(String(300))        # ids/reasons only, never transcript text
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # never rewritten by retries/reaper/--force: decides "live call" for the latency figure
@@ -306,8 +315,35 @@ class TranscriptSegment(Base):
     speaker: Mapped[str | None] = mapped_column(String(20))        # NULL until diarization
     text: Mapped[str] = mapped_column(Text, default="")
     flag: Mapped[str | None] = mapped_column(String(20))
+    # [[word, start, end], ...] in call seconds (Whisper alignment heads); NULL = transcribed before word times
+    words: Mapped[list | None] = mapped_column(JSONB)
 
     transcript: Mapped[Transcript] = relationship(back_populates="segments")
+
+
+class SpeakerTurn(Base):
+    """Raw pyannote output: who speaks when (labels SPEAKER_00/01). Source of talk ratio / interruptions."""
+    __tablename__ = "speaker_turn"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    transcript_id: Mapped[int] = mapped_column(ForeignKey("transcript.id", ondelete="CASCADE"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    speaker_raw: Mapped[str] = mapped_column(String(20))
+    start_seconds: Mapped[float] = mapped_column(Float)
+    end_seconds: Mapped[float] = mapped_column(Float)
+
+
+class TranscriptTurn(Base):
+    """One line of one speaker (agent / customer / unknown): Whisper words grouped by pyannote turns.
+    The transcript view and the .txt export read these when they exist; text is call content (erased with it)."""
+    __tablename__ = "transcript_turn"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    transcript_id: Mapped[int] = mapped_column(ForeignKey("transcript.id", ondelete="CASCADE"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    speaker: Mapped[str] = mapped_column(String(10))                # agent / customer / unknown
+    start_seconds: Mapped[float] = mapped_column(Float)
+    end_seconds: Mapped[float] = mapped_column(Float)
+    text: Mapped[str] = mapped_column(Text)
+    segment_seq: Mapped[int] = mapped_column(Integer)               # window of its first word
 
     __table_args__ = (UniqueConstraint("transcript_id", "seq", name="uq_transcript_segment_seq"),)
 

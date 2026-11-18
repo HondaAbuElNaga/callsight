@@ -90,6 +90,8 @@ def process(session: Session, call_id: int, model: str, holder, audio_dir: Path,
         audio = load(path)
         with holder.use() as adapter:
             result = engine.transcribe_audio(adapter, audio)
+            split = getattr(holder, "speaker_turns", None)     # diarization spec: None = no speaker split
+            turns = split(audio) if split is not None else None
     except engine.AudioError as exc:
         return _fail(session, row, str(exc), now())
     except engine.ModelNotReady as exc:          # model was unloaded and could not be re-loaded
@@ -110,6 +112,8 @@ def process(session: Session, call_id: int, model: str, holder, audio_dir: Path,
 
     try:
         _save(session, row, result, holder.revision, round(time.perf_counter() - t0, 2), now())
+        if turns is not None:
+            save_speakers(session, row, result, turns, call.direction, getattr(holder, "diarizer_version", None))
     except Exception as exc:                     # noqa: BLE001  DB errors may quote the text: never re-raise them
         session.rollback()
         return _fail(session, row, f"saving transcript failed ({type(exc).__name__})", now())
@@ -124,7 +128,9 @@ def _save(session: Session, row: Transcript, result, revision: str | None, compu
     from .engine import SEGMENTER_VERSION
     session.execute(delete(TranscriptSegment).where(TranscriptSegment.transcript_id == row.id))   # --force redo
     session.add_all(TranscriptSegment(transcript_id=row.id, seq=s.seq, start_seconds=s.start, end_seconds=s.end,
-                                      text=s.text, flag=s.flag) for s in result.segments)
+                                      text=s.text, flag=s.flag,
+                                      words=[list(w) for w in s.words] if getattr(s, "words", None) else None)
+                    for s in result.segments)
     from ..transcripts import search_text
     row.status, row.text, row.error = "done", result.text, None
     row.search_text = search_text(result.segments)        # dropped windows are not searchable
@@ -133,6 +139,35 @@ def _save(session: Session, row: Transcript, result, revision: str | None, compu
     row.dropped_windows, row.segmenter_version = result.dropped_windows, SEGMENTER_VERSION
     row.compute_seconds, row.finished_at = compute_s, now
     session.commit()
+
+
+SPEAKER_FIELDS = ("speaker_unsure", "speaker_reason", "agent_talk_s", "customer_talk_s", "talk_ratio",
+                  "interruptions_agent", "interruptions_customer", "longest_wait_s", "diarization_version")
+
+
+def save_speakers(session: Session, row: Transcript, result, turns, direction: str, version: str | None) -> None:
+    """pyannote turns + the window words -> agent / customer lines and talk metrics (diarization spec).
+    Replaces an earlier split of this transcript. A failure here leaves the transcript itself untouched."""
+    from ..db.models import SpeakerTurn, TranscriptTurn
+    from . import diarize as dz
+    try:
+        words = [dz.Word(w, s, e, seg.seq) for seg in result.segments for (w, s, e) in (getattr(seg, "words", None) or [])]
+        lines, naming, m = dz.split_call(words, list(turns), direction)
+        session.execute(delete(SpeakerTurn).where(SpeakerTurn.transcript_id == row.id))
+        session.execute(delete(TranscriptTurn).where(TranscriptTurn.transcript_id == row.id))
+        session.add_all(SpeakerTurn(transcript_id=row.id, seq=i, speaker_raw=t.speaker[:20], start_seconds=t.start,
+                                    end_seconds=t.end) for i, t in enumerate(sorted(turns, key=lambda t: t.start)))
+        session.add_all(TranscriptTurn(transcript_id=row.id, seq=i, speaker=ln.speaker, start_seconds=ln.start,
+                                       end_seconds=ln.end, text=ln.text, segment_seq=ln.seq)
+                        for i, ln in enumerate(lines))
+        row.speaker_unsure, row.speaker_reason = naming.unsure, naming.reason
+        row.agent_talk_s, row.customer_talk_s, row.talk_ratio = m.agent_talk_s, m.customer_talk_s, m.talk_ratio
+        row.interruptions_agent, row.interruptions_customer = m.interruptions_agent, m.interruptions_customer
+        row.longest_wait_s, row.diarization_version = m.longest_wait_s, (version or "unknown")[:30]
+        session.commit()
+    except Exception as exc:                     # noqa: BLE001  DB errors may quote text: never re-raise them
+        session.rollback()
+        log.warning("speaker split for call %s not saved (%s)", row.call_id, type(exc).__name__)
 
 
 def _park(call_id: int, model: str, due_in_s: int) -> None:
@@ -223,8 +258,17 @@ def holder():
         from .engine import ModelHolder
         cfg = queueing.AsrConfig.from_env()
         _holder = ModelHolder(cfg.model, idle_unload_s=cfg.idle_unload_s, on_unload=_gpu_free,
-                              before_use=lambda: _gpu_take(cfg.idle_unload_s))
+                              before_use=lambda: _gpu_take(cfg.idle_unload_s), diarizer_factory=_diarizer_factory())
     return _holder
+
+
+def _diarizer_factory():
+    """DIARIZATION=off turns the speaker split off (default on; a missing model only logs a warning)."""
+    import os
+    if os.getenv("DIARIZATION", "on").strip().lower() in ("off", "false", "0", "no"):
+        return None
+    from .diarize import Pyannote
+    return Pyannote
 
 
 @worker_init.connect
