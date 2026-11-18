@@ -421,7 +421,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
     def call_summary(call_id: int, user: User, s: DB) -> dict:
         from ..analysis import views
         owned_call(s, call_id, user)
-        topics, pv = cfg_analysis()
+        topics, pv = cfg_analysis(s)
         a = views.shown_analysis(s, call_id, cfg.llm_model, pv)
         content = views._content(a, topics)   # noqa: SLF001 - same shaping as the staff panel
         if not content:
@@ -433,15 +433,10 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
             audit_analysis(s, user, call_id)
         return {"call_id": call_id, "analysis": keep}
 
-    def cfg_analysis() -> tuple[dict, str]:
-        import os
-        from pathlib import Path
-
+    def cfg_analysis(s: Session) -> tuple[dict, str]:
         from ..analysis.llm import prompt_version
-        from ..analysis.settings import load_topics
-        from ..config import ROOT
-        topics = cfg.topics() if cfg.topics else load_topics(Path(os.getenv("TOPICS_FILE",
-                                                                            str(ROOT / "config" / "topics.yaml"))))
+        from ..analysis.rulestore import current_topics
+        topics = cfg.topics() if cfg.topics else current_topics(s)     # the rules page list (or topics.yaml)
         return topics, prompt_version(topics)
 
     # ---------- shared calls (decision 10: one-way note, agent marks seen) ----------

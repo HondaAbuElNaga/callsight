@@ -1,10 +1,13 @@
 # Rules for call flags and silence metrics (spec 2026-11-14-call-analysis, decisions 10 + 11). No LLM involved.
-# Edits apply to new analyses at once; recompute old calls with: python -m callsight flags --recompute
+# WORD LISTS (bad_words, escalation, competitor, competitor_rule own / ignore_next) are now edited on the web page
+# "القواعد" (spec 2026-11-17-rules-editor). This file only filled the database once (migration 0023); after that the
+# database wins and editing the lists here changes nothing. silence, analysis and competitor_rule word/label still
+# apply from this file. Re-check old calls on the page, or: python -m callsight flags --recompute
 #
 # Phrases are matched as whole words on the normalised transcript (same normalisation as the word search:
 # hamza/alif forms, ة/ه and ى/ي are folded). Only kept windows are searched (silence/hallucination windows never).
 # Every flag means "needs listening": dialect, negation ("ما ابي المدير") and ASR errors give false hits.
-# Recommended starter lists (written 2026-11-15 on the manager's request; the manager can add or remove lines).
+# Recommended starter lists (written 2026-11-15 on the manager's request; the admin adds or removes words on the page).
 # The recording has both voices on one channel, so a hit does not say WHO spoke (agent or customer).
 flags:
   bad_words:

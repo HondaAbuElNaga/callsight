@@ -31,5 +31,20 @@ editing `forward_people.yaml` and `teams.yaml` (later idea).
 - [ ] Re-check of 7 days runs and updates the flags
 - [ ] Browser check by the user
 
+## Decisions taken while building (2026-11-18)
+- One row per list (`rule_list.items` JSON), names: bad_words, escalation, competitor, competitor_own,
+  competitor_ignore, topics. History in `rule_change` (+ one `admin_log` row per save).
+- Seeded topics keep their labels exactly, so the prompt version does not change at deploy (no re-analysis).
+- Words: letters and spaces only; competitor_own / competitor_ignore one word each. Topics: max 30, label 40,
+  'other' stays, a label used twice is refused.
+- Stays in `rules.yaml`: silence, max_dropped_share, competitor_rule `word` + `label`.
+- Re-check: worker task on queue `ingest` (DB only), last 7 days, at most once per 5 minutes.
+- Ignore-list words must start with ال (the matcher only checks such next words); own words with/without ال are one.
+- A task whose prompt version the worker does not know yet re-reads the lists at once (no 1-minute gap after a
+  topic edit, review finding).
+- Accepted (review, low): history protected by code only (same as admin_log); opening the page may fill missing
+  lists; migration 0023 reuses `rulestore.yaml_lists` (wrapped, never blocks a deploy); server messages in English
+  (same as the other pages).
+
 ## Open questions
 1. Also edit topics (`topics.yaml`) on the page? **Recommended: yes**, same page, second tab.

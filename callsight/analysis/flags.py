@@ -1,4 +1,4 @@
-"""Warning flags from config/rules.yaml word lists (no LLM, decision 10).
+"""Warning flags from the rules page word lists (DB, first filled from config/rules.yaml; no LLM, decision 10).
 
 Phrases and transcript windows go through the same `search_normalize` as the word search; a phrase matches only
 as whole words. Dropped / hallucination-flagged windows are never searched. Each hit keeps its window time so the
@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from ..db.models import CallFlag, Transcript, TranscriptSegment
+from ..db.models import Call, CallFlag, Transcript, TranscriptSegment
 from ..transcripts import search_normalize
 from .settings import Rules
 
@@ -77,12 +78,17 @@ def store(session: Session, call_id: int, transcript: Transcript, rules: Rules) 
     return len(hits)
 
 
-def recompute(session: Session, rules: Rules, asr_model: str, call_id: int | None = None, batch: int = 200) -> int:
-    """`flags --recompute`: every call with a done transcript (or one call). Returns calls processed."""
+def recompute(session: Session, rules: Rules, asr_model: str, call_id: int | None = None, batch: int = 200,
+              since: datetime | None = None) -> int:
+    """`flags --recompute`: every call with a done transcript (or one call; or calls started at/after `since`, the
+    rules page re-check). Returns calls processed."""
     from ..transcripts import displayed
     q = select(Transcript.call_id).where(Transcript.status == "done").distinct().order_by(Transcript.call_id)
     if call_id is not None:
         q = q.where(Transcript.call_id == call_id)
+    if since is not None:
+        q = q.where(Transcript.call_id.in_(select(Call.id).where(Call.start_time >= since,
+                                                                  Call.content_deleted_at.is_(None))))
     ids = list(session.scalars(q))
     for i, cid in enumerate(ids, 1):
         t = displayed(session, cid, asr_model)

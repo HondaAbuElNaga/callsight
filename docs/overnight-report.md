@@ -42,7 +42,7 @@ The plan and every judges' decision are in `docs/overnight-plan.md`. Each spec's
 5. Call analysis:
    - turn it on: `docker compose --profile llm up -d ollama nlp-worker`, then `NLP_ENABLED=true` in `.env`;
    - rate **500 calls** on "تقييم المكالمات": the first 100 are the blind test set (final, no hints), then 400 more;
-   - put the real bad-word / escalation / competitor lists in `config/rules.yaml`;
+   - check the bad-word / escalation / competitor lists on the page "القواعد" (admin; since the rules editor);
    - get a legal/HR OK for internal use of the LLM estimate (it is never in KPIs or PDFs, and agents do not see it);
    - then download CAMeLBERT-DA and run the training (commands in `specs/2026-11-14-call-analysis/tasks.md`, task 10).
 6. Accounts, backups, retention:

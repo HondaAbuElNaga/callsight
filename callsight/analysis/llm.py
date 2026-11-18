@@ -1,7 +1,7 @@
 """Local LLM (Ollama) call analysis: summary, topic, action items, first satisfaction estimate, escalation.
 
 - The transcript goes between clear delimiters and the system prompt says it is data only (decision 5).
-- Ollama `format` = the full JSON schema (topic enum from config/topics.yaml, score integer 1-10, max lengths);
+- Ollama `format` = the full JSON schema (topic enum from the rules page topic list (DB; first filled from config/topics.yaml), score integer 1-10, max lengths);
   the answer is then checked again with pydantic. Invalid output is never stored: 1 retry, then an error (req. 1).
 - `num_ctx` is set explicitly; long calls are trimmed head+tail and marked; `prompt_eval_count` is checked so a
   silently cut prompt is never accepted (decision 4).

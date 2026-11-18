@@ -204,13 +204,14 @@ def _queue_analysis(call_id: int) -> None:
     try:
         from ..analysis import llm
         from ..analysis import queueing as nlpq
-        from ..analysis.settings import LlmConfig, load_topics
+        from ..analysis.rulestore import current_topics
+        from ..analysis.settings import LlmConfig
         from ..jobs import send_analyze
         cfg = LlmConfig.from_env()
         if not cfg.enabled:
             return
-        pv = llm.prompt_version(load_topics(cfg.topics_file))
         with wiring.session_factory()() as s:
+            pv = llm.prompt_version(current_topics(s, cfg.topics_file))
             nlpq.after_transcript(s, call_id, cfg.model, pv, lambda cid: send_analyze(cid, cfg.model, pv))
     except Exception as exc:                     # noqa: BLE001
         log.warning("analysis not queued for call %s: %s", call_id, type(exc).__name__)

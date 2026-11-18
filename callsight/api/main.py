@@ -63,6 +63,8 @@ class ApiConfig:
     # the training look-up (spec "Part 4: the training lookup"): phone 05xxxxxxxx -> students (training_api.parse
     # shape); raises training_api.TrainingUnavailable. None = TRAINING_API_KEY empty (the box is not shown)
     training_lookup: Callable[[str], list[dict]] | None = None
+    # rules page (spec 2026-11-17-rules-editor): queue the flag re-check of the last N days on the worker
+    rules_recheck: Callable[[int], None] | None = None
 
 
 class LoginIn(BaseModel):
@@ -448,12 +450,10 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
     # ---------- call analysis + rating (spec 2026-11-14-call-analysis): admin + supervisor only ----------
     # Agents get 403 for all of it (decision 9). The LLM estimate is blind-aware (decision 8).
 
-    def analysis_setup() -> tuple[dict, str]:
+    def analysis_setup(s: Session) -> tuple[dict, str]:
         from ..analysis.llm import prompt_version
-        from ..analysis.settings import load_topics
-        from ..config import ROOT
-        topics = cfg.topics() if cfg.topics else load_topics(Path(os.getenv("TOPICS_FILE",
-                                                                            str(ROOT / "config" / "topics.yaml"))))
+        from ..analysis.rulestore import current_topics
+        topics = cfg.topics() if cfg.topics else current_topics(s)     # the rules page list (or topics.yaml)
         return topics, prompt_version(topics)
 
     def staff_call(s: Session, call_id: int) -> Call:
@@ -467,7 +467,7 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
     def call_analysis(call_id: int, user: Manager, s: DB) -> dict:
         from ..analysis import views
         staff_call(s, call_id)
-        topics, pv = analysis_setup()
+        topics, pv = analysis_setup(s)
         result = views.call_analysis(s, call_id, user.id, topics, cfg.llm_model, pv)
         if views.has_done_analysis(result):      # summary/reason = derived personal data: audited like a view
             audit_transcript(s, user, call_id, "analysis")
@@ -481,7 +481,7 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
     @app.get("/api/rating/calls/{call_id}")
     def rating_call(call_id: int, user: Manager, s: DB) -> dict:
         from ..analysis import views
-        topics, pv = analysis_setup()
+        topics, pv = analysis_setup(s)
         result = views.rating_call(s, staff_call(s, call_id), user.id, topics, cfg.llm_model, pv)
         if views.has_done_analysis(result):
             audit_transcript(s, user, call_id, "analysis")
@@ -586,6 +586,8 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
     work_routes.register(app, DB=DB, User=User, Manager=Manager, cfg=cfg,
                          audit_analysis=lambda s, user, call_id: audit_transcript(s, user, call_id, "analysis"))
     admin_routes.register(app, DB=DB, Admin=Admin, cfg=cfg)
+    from . import rules as rules_routes
+    rules_routes.register(app, DB=DB, Manager=Manager, Admin=Admin, cfg=cfg)   # the rules page
     from . import forwards as forward_routes
     forward_routes.register(app, DB=DB, Manager=Manager,      # the forwards page (staff only)
                             audit_analysis=lambda s, user, call_id: audit_transcript(s, user, call_id, "analysis"))
@@ -613,7 +615,7 @@ def _app_from_env() -> FastAPI:
         listen_enabled=lambda: os.getenv("LISTEN_ENABLED", "false").strip().lower() in ("1", "true", "yes"),
         listen_client=lambda: _listen_adapter(), live_lookup=_live_lookup_from_env(),
         delete_backup_copy=_send_backup_delete, forward_enabled=_forward_enabled, forward_send=_send_forward,
-        training_lookup=_training_lookup_from_env()))
+        training_lookup=_training_lookup_from_env(), rules_recheck=_send_rules_recheck))
 
 
 def _forward_enabled() -> bool:
@@ -630,6 +632,11 @@ def _training_lookup_from_env() -> Callable[[str], list[dict]] | None:
 def _send_forward() -> None:
     from ..jobs import FORWARD_TASK, celery
     celery.send_task(FORWARD_TASK, queue="ingest")
+
+
+def _send_rules_recheck(days: int) -> None:
+    from ..jobs import RULES_RECHECK_TASK, celery
+    celery.send_task(RULES_RECHECK_TASK, args=[days], queue="ingest")
 
 
 def _send_backup_delete(call_id: int, rel_path: str) -> None:
