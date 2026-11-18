@@ -72,7 +72,14 @@ def norm_word(raw: str, list_name: str) -> str:
         raise RuleError(f"«{n[:MAX_LETTERS]}…»: at most {MAX_LETTERS} letters")
     if list_name in SINGLE_WORD and " " in n:
         raise RuleError(f"«{n}»: one word only in this list")
+    if list_name == IGNORE and not (n.startswith("ال") and len(n) > 3):
+        raise RuleError(f"«{n}»: must start with ال (only such next words are checked)")
     return n
+
+
+def _same(name: str, w: str) -> str:
+    """The form the matcher compares: own words with or without ال are one word (flags._other_name_matcher)."""
+    return w[2:] if name == OWN and w.startswith("ال") and len(w) > 3 else w
 
 
 def check_topic(key: str, label: str) -> tuple[str, str]:
@@ -227,21 +234,22 @@ def change_words(session: Session, name: str, user_id: int, add: list[str], remo
     reason = _reason(reason)
     row = _locked_row(session, name)
     items = list(row.items or [])
-    new_add: list[str] = []
-    for w in add:
-        n = norm_word(w, name)
-        if n in items or n in new_add:
-            raise RuleError(f"«{n}» is already in the list")
-        new_add.append(n)
     gone: list[str] = []
     for w in remove:
         n = search_normalize(" ".join(str(w or "").split()))
         if n not in items or n in gone:
             raise RuleError(f"«{n[:MAX_LETTERS]}» is not in the list")
         gone.append(n)
+    kept = [w for w in items if w not in gone]
+    new_add: list[str] = []
+    for w in add:
+        n = norm_word(w, name)
+        if _same(name, n) in {_same(name, x) for x in kept + new_add}:
+            raise RuleError(f"«{n}» is already in the list")
+        new_add.append(n)
     if not new_add and not gone:
         raise RuleError("nothing to change")
-    items = [w for w in items if w not in gone] + new_add
+    items = kept + new_add
     if len(items) > MAX_ITEMS:
         raise RuleError(f"at most {MAX_ITEMS} words in one list")
     row.items, row.updated_by, row.updated_at = items, user_id, _now()
@@ -271,14 +279,15 @@ def change_topics(session: Session, user_id: int, set_: dict[str, str], remove: 
         k, v = check_topic(k, v)
         if topics.get(k) == v:
             continue
-        if any(lbl == v for kk, lbl in topics.items() if kk != k):
-            raise RuleError(f"label «{v}» is already used")
         if k in topics:
             gone.append(f"{k}: {topics[k]}")
         topics[k] = v
         added.append(f"{k}: {v}")
     if not added and not gone:
         raise RuleError("nothing to change")
+    labels = list(topics.values())
+    if len(set(labels)) != len(labels):                # checked on the final list: two labels may be swapped
+        raise RuleError("a label is used twice")
     if len(topics) > MAX_TOPICS:
         raise RuleError(f"at most {MAX_TOPICS} topics")
     items = [[k, v] for k, v in topics.items()]

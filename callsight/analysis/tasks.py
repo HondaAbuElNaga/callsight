@@ -2,7 +2,7 @@
 
 Run in the normal app image (HTTP to Ollama only, no torch):
     celery -A callsight.analysis.tasks worker -Q nlp --concurrency=1
-Order inside one task: flags (rules.yaml) + silence metrics (audio) -> skip check -> GPU lock -> Ollama -> save.
+Order inside one task: flags (rules page word lists) + silence metrics (audio) -> skip check -> GPU lock -> Ollama -> save.
 Privacy (requirement 3): results and logs hold ids, counts and reasons only - never transcript text, summary or
 reason, also not on exceptions (their messages are never logged; only the exception type).
 """
@@ -209,11 +209,14 @@ def _gpu_lock(ttl: int):
     return cm
 
 
-def deps_from_env() -> Deps:
+def deps_from_env(fresh: bool = False) -> Deps:
+    """fresh=True skips the 1-minute cache of the rules page lists (a task came with a prompt version this worker
+    does not know yet: the topics were just edited)."""
     import os
     from . import rulestore
     cfg = LlmConfig.from_env()
-    rules, topics = rulestore.cached(wiring.session_factory(), cfg.rules_file, cfg.topics_file)   # rules page lists
+    rules, topics = rulestore.cached(wiring.session_factory(), cfg.rules_file, cfg.topics_file,
+                                     max_age=0 if fresh else rulestore.CACHE_SECONDS)
     return Deps(cfg=cfg, topics=topics, rules=rules,
                 client=llm.Ollama(cfg), gpu=_gpu_lock(int(cfg.timeout_s * llm.MAX_TRIES) + 120),
                 audio_dir=wiring.settings().audio_dir,
@@ -244,6 +247,8 @@ def _park(call_id: int, model: str, pv: str, due_in_s: int) -> None:
 @celery.task(name=queueing.TASK_NAME, soft_time_limit=15 * 60, time_limit=16 * 60, ignore_result=False)
 def analyze_call(call_id: int, model: str | None = None, prompt_version: str | None = None) -> dict:
     deps = deps_from_env()
+    if prompt_version and prompt_version != deps.prompt_version:   # never call a newer topic list "outdated"
+        deps = deps_from_env(fresh=True)
     model, pv = model or deps.cfg.model, prompt_version or deps.prompt_version
     if _maint_busy():
         _park(call_id, model, pv, MAINT_WAIT_S)

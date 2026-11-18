@@ -344,7 +344,8 @@ def queue_analyses() -> dict:
 @celery.task
 def reap_analyses() -> dict:
     from .analysis import queueing as nlpq
-    cfg, _ = _analysis_setup()
+    from .analysis.settings import LlmConfig
+    cfg = LlmConfig.from_env()                # the reaper needs no topic list (rows keep their own version)
     if not cfg.enabled:
         return {"enabled": False}
     ql = asr_queue_length(NLP_QUEUE)

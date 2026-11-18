@@ -85,7 +85,7 @@ call has a transcript within 15 min of hang-up.
 - [~] Fine-tune CAMeLBERT-DA (Apache-2.0; MARBERT excluded: research-only licence) as 1–10 regressor; compare with LLM-only baseline on the blind set — training code `callsight/analysis/train.py` + Docker self-test done; real run waits for ≥ 500 labels; customer-side text needs diarization ([spec](../specs/2026-11-14-call-analysis/spec.md)) (idea: user)
 - [~] `nlp` worker: score each call; store score + model version; re-score job when model updates — built for the LLM first estimate (model + prompt version stored, `analyze --rescore`); the tuned model's score comes after training ([spec](../specs/2026-11-14-call-analysis/spec.md)) (idea: user)
 - [~] LLM call summary: summary, topic, action items — local Ollama `qwen2.5:7b`, JSON schema + validation; automatic on AWS since 2026-11-16 (`NLP_ENABLED=true`, main queues, GPU runs) ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [transcriptionstream/transcriptionstream](https://github.com/transcriptionstream/transcriptionstream))
-- [~] Bad words / escalation flags — matching built (`config/rules.yaml`, whole words, normalised); real word lists ⚠ NEEDS USER ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
+- [~] Bad words / escalation flags — matching built (whole words, normalised; lists edited on the page "القواعد" since the rules editor, first filled from `config/rules.yaml`); user checks the starter lists on the page ⚠ NEEDS USER ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
 - [~] Silence, interruption & talk-ratio metrics from channel timings — silence metrics built (RMS, no diarization); talk ratio + interruptions need diarization (recordings are mono) ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
 
 ## Phase 4: KPI engine & reports ([spec](../specs/2026-11-14-kpi-reports/spec.md); built 2026-11-14, "Done when" hand check ⚠ open)
@@ -115,7 +115,7 @@ the supervisor's phone and connects silently to the chosen call (customer + agen
 **Done when:** restore-from-backup drill succeeds; load test of 2,000 calls/day processes without backlog.
 
 - [x] Roles & permissions (admin / supervisor / agent sees own calls only) ([spec](../specs/2026-11-14-hardening/spec.md))
-- [ ] Rules editor UI: manager edits bad-word lists, thresholds, KPI targets without code (source: [Azure-Samples/tayra](https://github.com/Azure-Samples/tayra))
+- [~] Rules editor UI: admin edits word lists + topics on the page "القواعد" (history, test a sentence, re-check 7 days) — built + reviewed 2026-11-18, waits for "ok push"; thresholds / KPI targets stay in code (spec scope) ([spec](../specs/2026-11-17-rules-editor/spec.md)) (source: [Azure-Samples/tayra](https://github.com/Azure-Samples/tayra))
 - [x] Backups (DB + audio), retention policy for recordings, disk alerts ([spec](../specs/2026-11-14-hardening/spec.md))
 - [x] Trust the PBX's own self-signed certificate (`YEASTAR_CA_FILE`) instead of `YEASTAR_VERIFY_SSL=false` (review 2026-11-12) ([spec](../specs/2026-11-14-hardening/spec.md))
 - [x] Pin exact dependency versions with hashes (pip-tools) (review 2026-11-12) ([spec](../specs/2026-11-14-hardening/spec.md))

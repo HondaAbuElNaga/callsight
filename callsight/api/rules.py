@@ -6,10 +6,11 @@ only a person, logged in.
 No `from __future__ import annotations`: the route signatures use Annotated types passed in at runtime.
 """
 from datetime import datetime, timedelta, timezone
+from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..analysis import rulestore as rs
@@ -20,23 +21,27 @@ RECHECK_DAYS = 7
 RECHECK_GAP = timedelta(minutes=5)       # one re-check at a time is plenty (the worker runs them one by one)
 
 
+Word = Annotated[str, Field(max_length=200)]          # far above 40 letters; stops huge strings before normalising
+Short = Annotated[str, Field(max_length=100)]
+
+
 class WordsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    add: list[str] = Field(default_factory=list, max_length=rs.MAX_ITEMS)
-    remove: list[str] = Field(default_factory=list, max_length=rs.MAX_ITEMS)
+    add: list[Word] = Field(default_factory=list, max_length=rs.MAX_ITEMS)
+    remove: list[Word] = Field(default_factory=list, max_length=rs.MAX_ITEMS)
     reason: str = Field(max_length=300)
 
 
 class TopicsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    set: dict[str, str] = Field(default_factory=dict, max_length=rs.MAX_TOPICS)
-    remove: list[str] = Field(default_factory=list, max_length=rs.MAX_TOPICS)
+    set: dict[Short, Short] = Field(default_factory=dict, max_length=rs.MAX_TOPICS)
+    remove: list[Short] = Field(default_factory=list, max_length=rs.MAX_TOPICS)
     reason: str = Field(max_length=300)
 
 
 class SentenceIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    text: str = Field(min_length=1, max_length=500)
+    text: str                        # length checked in the route: a 422 must never echo the sentence
 
 
 def _now() -> datetime:
@@ -118,6 +123,8 @@ def register(app: FastAPI, *, DB, Manager, Admin, cfg) -> None:
 
     @app.post("/api/rules/test")
     def test_sentence(body: SentenceIn, user: Manager, s: DB) -> dict:
+        if not 1 <= len(body.text.strip()) <= 500:
+            raise HTTPException(422, "1-500 characters")
         rules, _ = rs.current(s)
         return {"hits": rs.match_sentence(body.text, rules)}     # the sentence is never stored or logged
 
@@ -126,15 +133,17 @@ def register(app: FastAPI, *, DB, Manager, Admin, cfg) -> None:
         by_hand(request)
         if cfg.rules_recheck is None:
             raise HTTPException(503, "the worker is not connected")
+        s.execute(text("SELECT pg_advisory_xact_lock(hashtext('callsight.rules_recheck'))"))   # two clicks: one wins
         last = s.scalar(select(AdminLog.at).where(AdminLog.action == "rules_recheck")
                         .order_by(AdminLog.at.desc()).limit(1))
         if last is not None and _now() - last < RECHECK_GAP:
             raise HTTPException(429, "a re-check was started a few minutes ago; wait 5 minutes")
-        s.add(AdminLog(user_id=user.id, action="rules_recheck", target=f"last {RECHECK_DAYS} days", at=_now()))
-        s.commit()
         try:
             cfg.rules_recheck(RECHECK_DAYS)
-        except Exception:  # noqa: BLE001 - the log row stays; the admin may try again after the gap
-            raise HTTPException(503, "the re-check could not be queued; try again in 5 minutes") from None
+        except Exception:  # noqa: BLE001 - nothing logged: the admin may try again at once
+            s.rollback()
+            raise HTTPException(503, "the re-check could not be queued; try again") from None
+        s.add(AdminLog(user_id=user.id, action="rules_recheck", target=f"last {RECHECK_DAYS} days", at=_now()))
+        s.commit()                                   # ends the advisory lock too
         return {"queued": True, "days": RECHECK_DAYS}
 

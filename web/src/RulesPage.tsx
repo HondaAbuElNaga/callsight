@@ -8,9 +8,9 @@ interface Props { me: Me; onBack: () => void; onLogout: () => void; onExpired: (
 const LISTS: { name: RuleListName; title: string; help: string }[] = [
   { name: "bad_words", title: "كلمات مسيئة", help: "كلمة أو عبارة مسيئة في المكالمة." },
   { name: "escalation", title: "تصعيد وشكوى", help: "طلب المدير، شكوى رسمية، استرجاع المبلغ، غضب شديد." },
-  { name: "competitor", title: "منافسون", help: "عبارات تدل على معهد آخر (الأسماء التي لا تبدأ بـ «ال»)." },
-  { name: "competitor_own", title: "اسمنا بعد «معهد»", help: "كلمة واحدة: «معهد» + هذه الكلمة = نحن، لا تنبيه." },
-  { name: "competitor_ignore", title: "ليست اسم معهد", help: "كلمة واحدة: «معهد» + هذه الكلمة لا تعني معهدًا آخر (اليوم، الرسوم…)." },
+  { name: "competitor", title: "منافسون", help: "عبارات تدل على منافس (الأسماء التي لا تبدأ بـ «ال»)." },
+  { name: "competitor_own", title: "اسمنا", help: "كلمة واحدة: «{w}» + هذه الكلمة = نحن، لا تنبيه." },
+  { name: "competitor_ignore", title: "ليست اسم منافس", help: "كلمة واحدة تبدأ بـ «ال»: «{w}» + هذه الكلمة لا تعني منافسًا (اليوم، الرسوم…)." },
 ];
 const LIST_TITLE: Record<string, string> = { ...Object.fromEntries(LISTS.map((l) => [l.name, l.title])), topics: "المواضيع" };
 const KIND_TITLE: Record<string, string> = { bad_words: "كلمات مسيئة", escalation: "تصعيد وشكوى", competitor: "منافسون" };
@@ -105,7 +105,7 @@ function WordList({ name, title, help, items, rules, run }: {
   return (
     <section className="panel">
       <h2>{title} <span className="muted small num">{items.length} / {rules.limits.items}</span></h2>
-      <p className="muted small">{help}{name === "competitor_own" || name === "competitor_ignore"
+      <p className="muted small">{help.replace("{w}", rules.competitor_word ?? "")}{name === "competitor_own" || name === "competitor_ignore"
         ? ` يظهر التنبيه باسم «${rules.competitor_label ?? ""}».` : ""}</p>
       <div className="chips">
         {items.length === 0 && <span className="muted small">القائمة فارغة.</span>}
@@ -163,7 +163,9 @@ function Topics({ rules, run }: { rules: Rules; run: Run }) {
   useEffect(() => { setLabels(Object.fromEntries(rules.topics)); setRemove(new Set()); }, [rules]);
   const set: Record<string, string> = {};
   for (const [k, v] of rules.topics) if (!remove.has(k) && (labels[k] ?? v).trim() !== v) set[k] = (labels[k] ?? v).trim();
-  if (key.trim() && label.trim()) set[key.trim()] = label.trim();
+  const keyTaken = rules.topics.some(([k]) => k === key.trim());
+  if (key.trim() && label.trim() && !keyTaken) set[key.trim()] = label.trim();
+  const half = !!key.trim() !== !!label.trim();     // a new topic needs both key and label
   const changed = Object.keys(set).length > 0 || remove.size > 0;
   const save = async () => {
     if (await run(() => api.changeTopics(set, [...remove], reason.trim()), "حُفظت المواضيع.")) {
@@ -175,7 +177,7 @@ function Topics({ rules, run }: { rules: Rules; run: Run }) {
       <h2>المواضيع <span className="muted small num">{rules.topics.length} / {rules.limits.topics}</span></h2>
       <p className="muted small">
         الذكاء الاصطناعي يختار موضوعًا واحدًا من هذه القائمة لكل مكالمة. أي تغيير يجعل المكالمات الجديدة تُحلَّل بالقائمة الجديدة؛
-        المكالمات القديمة تحتفظ بموضوعها. «other» (أخرى) لا يُحذف. المفتاح لا يتغير بعد إنشائه.
+        المكالمات القديمة تحتفظ بموضوعها وتحليلها (لا يُعاد تحليلها تلقائيًا). «other» (أخرى) لا يُحذف. المفتاح لا يتغير بعد إنشائه.
       </p>
       <div className="table-wrap"><table>
         <thead><tr><th>المفتاح</th><th>الاسم الظاهر</th>{rules.can_edit && <th>حذف</th>}</tr></thead>
@@ -201,12 +203,14 @@ function Topics({ rules, run }: { rules: Rules; run: Run }) {
             <label>موضوع جديد: المفتاح (a-z و _ فقط)
               <input dir="ltr" value={key} maxLength={30} pattern="[a-z_]{1,30}" placeholder="training"
                 onChange={(e) => setKey(e.target.value.toLowerCase())} /></label>
+            {keyTaken && <span className="error small">هذا المفتاح موجود؛ عدّل اسمه في الجدول.</span>}
             <label>الاسم الظاهر <input value={label} maxLength={rules.limits.label} onChange={(e) => setLabel(e.target.value)} /></label>
           </div>
           <label>السبب (مطلوب)
             <input value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} /></label>
           <div className="filter-actions">
-            <button className="primary" disabled={!changed || reason.trim().length < 3}>حفظ</button>
+            {half && <span className="muted small">اكتب المفتاح والاسم معًا للموضوع الجديد.</span>}
+            <button className="primary" disabled={!changed || half || keyTaken || reason.trim().length < 3}>حفظ</button>
           </div>
         </form>
       )}

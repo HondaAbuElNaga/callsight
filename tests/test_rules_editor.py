@@ -320,3 +320,65 @@ def test_api_key_never_edits_rules(api):
                        headers=h).status_code == 403
     assert client.post("/api/rules/topics", json={"set": {"x": "y"}, "reason": "by key"}, headers=h).status_code == 403
     assert client.post("/api/rules/recheck", headers=h).status_code == 403 and sent == []
+
+
+def test_competitor_rule_lists_match_like_the_matcher(Session):
+    with Session() as s:
+        u = _admin(s)
+        with pytest.raises(rs.RuleError, match="ال"):
+            rs.change_words(s, rs.IGNORE, u.id, ["يوم"], [], "no al")       # never checked by the matcher
+        s.rollback()
+        with pytest.raises(rs.RuleError, match="already"):
+            rs.change_words(s, rs.OWN, u.id, ["سعودي"], [], "same as السعودي")
+        s.rollback()
+        rs.change_words(s, rs.IGNORE, u.id, ["الخليج"], [], "not a competitor here")
+        s.commit()
+        rules, _ = rs.current(s)
+        assert rs.match_sentence("سجلت في معهد الخليج", rules) == []
+
+
+def test_api_recheck_send_failure_does_not_block(Session):
+    calls = []
+
+    def broken(days):
+        calls.append(days)
+        if len(calls) == 1:
+            raise RuntimeError("redis down")
+    with Session() as s:
+        auth.create_user(s, "root", PASSWORD, "admin")
+    client = TestClient(create_app(Session, ApiConfig(secret=SECRET, audio_dir=__import__("pathlib").Path("."),
+                                                      rules_recheck=broken)))
+    r = as_(client, "root")
+    assert r.post("/api/rules/recheck").status_code == 503
+    assert r.post("/api/rules/recheck").status_code == 200 and calls == [7, 7]
+
+
+def test_api_test_sentence_too_long_never_echoed(api):
+    client, *_ = api
+    r = as_(client, "boss").post("/api/rules/test", json={"text": "سر" * 300})
+    assert r.status_code == 422 and "سر" not in r.text
+
+
+def test_worker_rereads_lists_for_a_newer_prompt_version(Session, files, monkeypatch):
+    """Topics edited: a task queued with the new prompt version is never called "outdated" by a stale cache."""
+    from callsight import app as wiring
+    from callsight.analysis import tasks
+    monkeypatch.setattr(wiring, "session_factory", lambda: Session)
+    with Session() as s:
+        u = _admin(s)
+        rs.ensure_seeded(s)
+        s.commit()
+        old = tasks.deps_from_env().prompt_version                        # cached now
+        rs.change_topics(s, u.id, {"training": "تدريب"}, [], "new topic")
+        s.commit()
+        new = llm.prompt_version(rs.current_topics(s))
+    assert tasks.deps_from_env().prompt_version == old != new           # still cached ...
+    assert tasks.deps_from_env(fresh=True).prompt_version == new         # ... the task asks for a fresh read
+
+
+def test_swap_labels_and_readd_in_one_save(Session):
+    with Session() as s:
+        u = _admin(s)
+        items = rs.change_topics(s, u.id, {"inquiry": "فاتورة", "billing": "استفسار"}, [], "swap")
+        assert ["inquiry", "فاتورة"] in items and ["billing", "استفسار"] in items
+        assert rs.change_words(s, "bad_words", u.id, ["حمار"], ["حمار"], "same word") == ["غبي", "حمار"]

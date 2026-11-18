@@ -7,7 +7,7 @@
 # Phrases are matched as whole words on the normalised transcript (same normalisation as the word search:
 # hamza/alif forms, ة/ه and ى/ي are folded). Only kept windows are searched (silence/hallucination windows never).
 # Every flag means "needs listening": dialect, negation ("ما ابي المدير") and ASR errors give false hits.
-# Recommended starter lists (written 2026-11-15 on the manager's request; the manager can add or remove lines).
+# Recommended starter lists (written 2026-11-15 on the manager's request; the admin adds or removes words on the page).
 # The recording has both voices on one channel, so a hit does not say WHO spoke (agent or customer).
 flags:
   bad_words:

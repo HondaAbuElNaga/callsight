@@ -166,7 +166,7 @@ def test_asr_idle_unload_zero_is_refused(monkeypatch):
 
 def _wrapper(monkeypatch, Session_, client, maint=False):
     sent = []
-    monkeypatch.setattr(tasks, "deps_from_env", lambda: deps(client))
+    monkeypatch.setattr(tasks, "deps_from_env", lambda fresh=False: deps(client))
     monkeypatch.setattr(tasks, "_maint_busy", lambda: maint)
     monkeypatch.setattr(tasks, "send_analyze", lambda cid, m, pv, countdown=None: sent.append((cid, m, pv, countdown)))
     monkeypatch.setattr(tasks.wiring, "session_factory", lambda: Session_)
@@ -202,10 +202,10 @@ def test_wrapper_runs_and_resends_on_gpu_busy_and_outdated(Session, monkeypatch)
         queued(s, c2)
         queued(s, c3, pv="ca1-old")
     assert tasks.analyze_call.run(c.id)["status"] == "done" and sent == []         # defaults: current model/prompt
-    monkeypatch.setattr(tasks, "deps_from_env", lambda: deps(client, gpu=GpuSpy(free=False)))
+    monkeypatch.setattr(tasks, "deps_from_env", lambda fresh=False: deps(client, gpu=GpuSpy(free=False)))
     assert tasks.analyze_call.run(c2.id, "qwen2.5:7b", PV)["gpu_busy"]
     assert sent == [(c2.id, "qwen2.5:7b", PV, tasks.GPU_WAIT_S)]
-    monkeypatch.setattr(tasks, "deps_from_env", lambda: deps(client))
+    monkeypatch.setattr(tasks, "deps_from_env", lambda fresh=False: deps(client))
     assert tasks.analyze_call.run(c3.id, "qwen2.5:7b", "ca1-old")["outdated"]      # old prompt: current one queued
     assert sent[-1] == (c3.id, "qwen2.5:7b", PV, None)
     with Session() as s:

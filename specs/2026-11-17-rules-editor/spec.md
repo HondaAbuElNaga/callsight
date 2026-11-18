@@ -39,6 +39,12 @@ editing `forward_people.yaml` and `teams.yaml` (later idea).
   'other' stays, a label used twice is refused.
 - Stays in `rules.yaml`: silence, max_dropped_share, competitor_rule `word` + `label`.
 - Re-check: worker task on queue `ingest` (DB only), last 7 days, at most once per 5 minutes.
+- Ignore-list words must start with ال (the matcher only checks such next words); own words with/without ال are one.
+- A task whose prompt version the worker does not know yet re-reads the lists at once (no 1-minute gap after a
+  topic edit, review finding).
+- Accepted (review, low): history protected by code only (same as admin_log); opening the page may fill missing
+  lists; migration 0023 reuses `rulestore.yaml_lists` (wrapped, never blocks a deploy); server messages in English
+  (same as the other pages).
 
 ## Open questions
 1. Also edit topics (`topics.yaml`) on the page? **Recommended: yes**, same page, second tab.

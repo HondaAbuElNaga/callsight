@@ -1,4 +1,4 @@
-"""Warning flags from config/rules.yaml word lists (no LLM, decision 10).
+"""Warning flags from the rules page word lists (DB, first filled from config/rules.yaml; no LLM, decision 10).
 
 Phrases and transcript windows go through the same `search_normalize` as the word search; a phrase matches only
 as whole words. Dropped / hallucination-flagged windows are never searched. Each hit keeps its window time so the
