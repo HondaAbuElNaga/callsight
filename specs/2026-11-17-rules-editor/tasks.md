@@ -8,6 +8,6 @@
 - [x] 5. nlp worker reads DB lists (1-minute cache, `analysis/rulestore.cached`); API, CLI, forward, asr, jobs read
       topics from the DB too (same prompt version everywhere).
 - [x] 6. Page "القواعد" (tabs: word lists + test + re-check, topics, history).
-- [ ] 7. 3-agent review; fix. "ok push" → live; gpu-update (worker code changed).
+- [x] 7. 3-agent review; fix. "ok push" → live 2026-11-18 (main d8c5cfb); gpu-update done 14:54 Riyadh.
 - [ ] 8. User reviews the starter word lists on the page (closes call-analysis task 10 lists part).
 - [ ] 9. Roadmap: Phase 6 rules editor ticked.
