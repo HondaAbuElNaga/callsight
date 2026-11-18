@@ -1,6 +1,6 @@
 # Spec: Redaction — hide spoken ID, card and phone numbers
 
-**Status:** approved (2026-11-18, user: "approve all" — every open question = the recommendation) · **Plan step:** 7 of [finish plan](../../product/finish-plan.md)
+**Status:** CANCELLED (2026-11-19, user: "not important"). Kept for reference; bring back if a legal / PDPL check asks for it. · **Plan step:** 7 of [finish plan](../../product/finish-plan.md)
 **Roadmap items:** Phase 2 "Later idea: redaction of spoken ID/card/phone numbers (PDPL)" (transcript-view
 decision 9).
 

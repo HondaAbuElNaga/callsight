@@ -12,7 +12,7 @@ One list, in build order. Each line is one spec folder under `specs/`. Build one
 | 4 | [2026-11-17-diarization](../specs/2026-11-17-diarization/spec.md) | Agent / customer separated in every transcript; talk ratio, interruptions | a free Hugging Face token (click by click) | approved |
 | 5 | [2026-11-17-satisfaction-model](../specs/2026-11-17-satisfaction-model/spec.md) | Trusted 1–10 score (Phase 3 "Done when") | the 500 ratings | approved |
 | 6 | [2026-11-17-rules-editor](../specs/2026-11-17-rules-editor/spec.md) | Admin edits word lists and limits on a page, no code | nothing | approved |
-| 7 | [2026-11-17-redaction](../specs/2026-11-17-redaction/spec.md) | Spoken ID / card / phone numbers hidden in texts (PDPL) | nothing | approved |
+| 7 | [2026-11-17-redaction](../specs/2026-11-17-redaction/spec.md) | Spoken ID / card / phone numbers hidden in texts (PDPL) | nothing | **cancelled** (user 2026-11-19) |
 | 8 | [2026-11-17-legal-retention](../specs/2026-11-17-legal-retention/spec.md) | Recording announcement, keep-days on, HR OK → follow-up KPIs on | legal / HR answers | approved |
 | 9 | [2026-11-17-listen](../specs/2026-11-17-listen/spec.md) | "Listen" button rings the supervisor's phone (Phase 5 "Done when") | step 8 done; one PBX setting | approved |
 | 10 | [2026-11-17-acceptance](../specs/2026-11-17-acceptance/spec.md) | Every phase "Done when" checked, guides written, AWS cost check, project closed | one week of your own call count | approved |
