@@ -115,7 +115,7 @@ the supervisor's phone and connects silently to the chosen call (customer + agen
 **Done when:** restore-from-backup drill succeeds; load test of 2,000 calls/day processes without backlog.
 
 - [x] Roles & permissions (admin / supervisor / agent sees own calls only) ([spec](../specs/2026-11-14-hardening/spec.md))
-- [~] Rules editor UI: admin edits word lists + topics on the page "القواعد" (history, test a sentence, re-check 7 days) — built + reviewed 2026-11-18, waits for "ok push"; thresholds / KPI targets stay in code (spec scope) ([spec](../specs/2026-11-17-rules-editor/spec.md)) (source: [Azure-Samples/tayra](https://github.com/Azure-Samples/tayra))
+- [~] Rules editor UI: admin (only) edits word lists + topics on the page "القواعد" (history, test a sentence, re-check 7 days) — built + reviewed 2026-11-18, waits for "ok push"; thresholds / KPI targets stay in code (spec scope) ([spec](../specs/2026-11-17-rules-editor/spec.md)) (source: [Azure-Samples/tayra](https://github.com/Azure-Samples/tayra))
 - [x] Backups (DB + audio), retention policy for recordings, disk alerts ([spec](../specs/2026-11-14-hardening/spec.md))
 - [x] Trust the PBX's own self-signed certificate (`YEASTAR_CA_FILE`) instead of `YEASTAR_VERIFY_SSL=false` (review 2026-11-12) ([spec](../specs/2026-11-14-hardening/spec.md))
 - [x] Pin exact dependency versions with hashes (pip-tools) (review 2026-11-12) ([spec](../specs/2026-11-14-hardening/spec.md))

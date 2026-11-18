@@ -1,4 +1,4 @@
-// Rules page (spec 2026-11-17-rules-editor): word lists + topics. Admin edits, supervisor reads.
+// Rules page (spec 2026-11-17-rules-editor): word lists + topics. Admin only.
 import { useCallback, useEffect, useState } from "react";
 import { api, Refused, Unauthorized, type Me, type RuleChangeRow, type RuleHit, type RuleListName, type RulesPage as Rules } from "./api";
 import { formatDateTime } from "./format";

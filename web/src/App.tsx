@@ -54,7 +54,7 @@ export function App() {
     page = <RatingPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "live" && isStaff)
     page = <LivePage me={me} onCalls={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
-  else if (view === "rules" && isStaff)   // admin edits, supervisor reads (spec 2026-11-17-rules-editor)
+  else if (view === "rules" && isAdmin)   // admin only (spec 2026-11-17-rules-editor, user 2026-11-18)
     page = <RulesPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "users" && isAdmin)
     page = <UsersPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
@@ -80,7 +80,7 @@ export function App() {
         onRating={isStaff ? () => setView("rating") : undefined}
         onFollowups={() => { setOpenCall(null); setView("followups"); }}
         onUsers={isAdmin ? () => setView("users") : undefined}
-        onRules={isStaff ? () => setView("rules") : undefined}
+        onRules={isAdmin ? () => setView("rules") : undefined}
         openCallId={openCall}
         onOpened={() => setOpenCall(null)}
       />

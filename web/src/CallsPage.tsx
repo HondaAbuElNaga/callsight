@@ -18,7 +18,7 @@ interface Props {
   onForwards?: () => void;      // the forwards page (staff)
   onFollowups?: () => void;
   onUsers?: () => void;
-  onRules?: () => void;         // the rules page (staff; admin edits)
+  onRules?: () => void;         // the rules page (admin only)
   openCallId?: number | null;      // open this call's panel at once (from the follow-ups page)
   onOpened?: () => void;           // called once openCallId was used (so it never reopens later)
   detailOnly?: boolean;            // agents: no call list, only the opened call (their home is the follow-ups page)

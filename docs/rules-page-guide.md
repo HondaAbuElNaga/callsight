@@ -17,14 +17,14 @@ Before, only the developer could change the words. Now the admin can do it here,
 1. Open https://calls.mohanadyehia.com and log in as **admin**.
 2. On the main page (سجل المكالمات), look at the links at the top.
 3. Click **القواعد**. It is between «النصوص المرجعية» and «حالة النظام».
-4. If you don't see it, press **Ctrl + F5** once to load the newest version of the site.
+4. Only the **admin** sees this link. If you don't see it, press **Ctrl + F5** once to load the newest version of the site.
 
 Who can do what:
 
 | Role | Can see the page | Can change words |
 |---|---|---|
 | Admin | Yes | Yes |
-| Supervisor | Yes | No (read only) |
+| Supervisor | No | No |
 | Agent | No | No |
 
 ## 3. The word lists (first tab: قوائم الكلمات)

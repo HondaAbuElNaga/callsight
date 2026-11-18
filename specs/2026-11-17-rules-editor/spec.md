@@ -17,7 +17,7 @@ editing `forward_people.yaml` and `teams.yaml` (later idea).
 ## Requirements
 1. Lists stored in the DB (table `rule_list` + `rule_change` history). On first start the DB is filled from the
    YAML files; after that the DB wins and the YAML is only the starting copy.
-2. Page for admin only (supervisor read-only): add / remove a word, one list at a time, save with a short reason.
+2. Page for admin only (user 2026-11-18: supervisors do not see it at all; before: read-only): add / remove a word, one list at a time, save with a short reason.
 3. Words normalised the same way as the matcher (no tashkeel, alef forms) and shown normalised; duplicates refused;
    max 500 words per list, 40 letters per word.
 4. "Test a sentence": type a sentence → shows which lists match.

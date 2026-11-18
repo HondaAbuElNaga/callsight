@@ -264,22 +264,23 @@ def as_(client, user):
     return client
 
 
-def test_api_admin_edits_supervisor_reads_agent_nothing(api):
+def test_api_admin_only_supervisor_and_agent_nothing(api):
+    """User 2026-11-18: the rules page is admin only; supervisors neither see nor read it."""
     client, Session, _ = api
-    c = as_(client, "boss")
-    page = c.get("/api/rules").json()                                     # first open fills the lists
-    assert page["can_edit"] is False and page["lists"]["bad_words"] == ["غبي", "حمار"]
+    for who in ("boss", "ali"):
+        c = as_(client, who)
+        for url in ("/api/rules", "/api/rules/history"):
+            assert c.get(url).status_code == 403, (who, url)
+        assert c.post("/api/rules/test", json={"text": "يا حمار"}).status_code == 403
+        assert c.post("/api/rules/lists/bad_words", json={"add": ["زفت"], "reason": "test"}).status_code == 403
+        assert c.post("/api/rules/topics", json={"set": {"x": "y"}, "reason": "test"}).status_code == 403
+        assert c.post("/api/rules/recheck").status_code == 403
+    r = as_(client, "root")
+    page = r.get("/api/rules").json()                                     # first open fills the lists
+    assert page["can_edit"] is True and page["lists"]["bad_words"] == ["غبي", "حمار"]
     assert page["topics"][-1] == ["other", "أخرى"] and page["limits"]["items"] == 500
-    assert c.post("/api/rules/lists/bad_words", json={"add": ["زفت"], "reason": "test"}).status_code == 403
-    assert c.post("/api/rules/topics", json={"set": {"x": "y"}, "reason": "test"}).status_code == 403
-    assert c.post("/api/rules/recheck").status_code == 403
-    assert c.post("/api/rules/test", json={"text": "يا حمار"}).json()["hits"] == [
+    assert r.post("/api/rules/test", json={"text": "يا حمار"}).json()["hits"] == [
         {"kind": "bad_words", "phrase": "حمار"}]
-    assert c.get("/api/rules/history").status_code == 200
-    a = as_(client, "ali")
-    for url in ("/api/rules", "/api/rules/history"):
-        assert a.get(url).status_code == 403
-    assert a.post("/api/rules/test", json={"text": "x"}).status_code == 403
     r = as_(client, "root")
     res = r.post("/api/rules/lists/bad_words", json={"add": ["زِفت"], "remove": ["حمار"], "reason": "manager asked"})
     assert res.status_code == 200 and res.json()["items"] == ["غبي", "زفت"]
@@ -355,7 +356,7 @@ def test_api_recheck_send_failure_does_not_block(Session):
 
 def test_api_test_sentence_too_long_never_echoed(api):
     client, *_ = api
-    r = as_(client, "boss").post("/api/rules/test", json={"text": "سر" * 300})
+    r = as_(client, "root").post("/api/rules/test", json={"text": "سر" * 300})
     assert r.status_code == 422 and "سر" not in r.text
 
 

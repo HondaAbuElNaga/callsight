@@ -1,4 +1,5 @@
-"""Rules page (spec 2026-11-17-rules-editor): word lists and topics. Admin edits, supervisor reads.
+"""Rules page (spec 2026-11-17-rules-editor): word lists and topics. Admin only (user 2026-11-18: supervisors do
+not see the page).
 
 Every edit writes a rule_change row (who, when, added / removed, reason; never deleted) and one admin_log row.
 The nlp worker picks the change up within one minute (rulestore.cached). API keys (other systems) never edit:
@@ -77,7 +78,7 @@ def register(app: FastAPI, *, DB, Manager, Admin, cfg) -> None:
         return HTTPException(422, str(exc))
 
     @app.get("/api/rules")
-    def get_rules(user: Manager, s: DB) -> dict:
+    def get_rules(user: Admin, s: DB) -> dict:
         try:
             if rs.ensure_seeded(s):                  # first open on a DB the migration could not fill
                 s.commit()
@@ -86,7 +87,7 @@ def register(app: FastAPI, *, DB, Manager, Admin, cfg) -> None:
         return page(s, user)
 
     @app.get("/api/rules/history")
-    def history(user: Manager, s: DB) -> list[dict]:
+    def history(user: Admin, s: DB) -> list[dict]:
         names = dict(s.execute(select(AppUser.id, AppUser.username)).all())
         rows = s.scalars(select(RuleChange).order_by(RuleChange.at.desc(), RuleChange.id.desc())
                          .limit(HISTORY_LIMIT))
@@ -122,7 +123,7 @@ def register(app: FastAPI, *, DB, Manager, Admin, cfg) -> None:
         return {"name": rs.TOPICS, "items": items}
 
     @app.post("/api/rules/test")
-    def test_sentence(body: SentenceIn, user: Manager, s: DB) -> dict:
+    def test_sentence(body: SentenceIn, user: Admin, s: DB) -> dict:
         if not 1 <= len(body.text.strip()) <= 500:
             raise HTTPException(422, "1-500 characters")
         rules, _ = rs.current(s)
