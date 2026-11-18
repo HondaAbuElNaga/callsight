@@ -135,6 +135,8 @@ ssh cs-gpu "sudo rm /etc/callsight/stay-on && sudo systemctl start callsight-gpu
 | Why did it power off | `ssh cs-gpu "journalctl -u callsight-gpu -n 50"` (reasons: `idle`, `cap`, `no-answer`) |
 | Update the code | `git archive HEAD \| ssh cs-main "tar -x -C /opt/callsight"`, then `up -d --build`; same for `cs-gpu` (stay-on file + download switch on while it builds) |
 | Change word lists (`config/`) | Copy the file to `/opt/callsight/config/` on the main server; the GPU server reads the same folder |
+| Speaker split (agent / customer), first time | In this order: Actions → GPU setup → `gpu-update` (rebuilds the image with pyannote) → `build-diarize` (downloads the 3 pinned pyannote models with the `HF_TOKEN` secret, internet off again after) → `internet-off` (check) → `ssh cs-main "cd /opt/callsight && sudo docker compose exec -T worker python -m callsight transcribe --resplit --limit 500"` (rating set first; run again for more). GPU time per call: to be measured on the T4 (PC: Whisper +33 % for the word times, plus pyannote) |
+| Turn the speaker split off | `DIARIZATION=off` in `/opt/callsight/.env` on the GPU server, then `up -d asr-worker`; transcripts are saved as before |
 
 Stack updates: never change the two "System image" fields or the setup key afterwards. A new value there makes
 CloudFormation **replace the server** (its disk is deleted). Changing the other fields is safe.

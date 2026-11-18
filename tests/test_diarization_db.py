@@ -133,13 +133,16 @@ def test_resplit_queues_rating_set_first_then_newest(env, monkeypatch):
         for c in old:
             add_transcript(s, c, ["نص"])
         new = make_call(s, hour=12)
-        add_transcript(s, new, ["نص"]).segmenter_version = SEGMENTER_VERSION     # already has word times
+        done = add_transcript(s, new, ["نص"])                                     # already has times + speakers
+        done.segmenter_version, done.diarization_version = SEGMENTER_VERSION, "pa31-test"
+        unsplit = add_transcript(s, make_call(s, hour=8), ["نص"])                 # times, but pyannote failed
+        unsplit.segmenter_version = SEGMENTER_VERSION
         s.add(RatingPick(call_id=old[0].id, rank=1, day=date(2026, 11, 10), salt="x"))
         s.commit()
         now = datetime.now(timezone.utc)
         assert queueing.resplit(s, cfg, 2, now, SEGMENTER_VERSION) == [old[0].id, old[2].id]
         assert s.scalar(select(Transcript.redo).where(Transcript.call_id == old[0].id)) is True
-        assert queueing.resplit(s, cfg, 5, now, SEGMENTER_VERSION) == [old[1].id]   # the 2 already queued are not "done"
+        assert queueing.resplit(s, cfg, 5, now, SEGMENTER_VERSION) == [old[1].id, unsplit.call_id]   # no times first, unsplit last
         with pytest.raises(ValueError):
             queueing.resplit(s, cfg, 501, now, SEGMENTER_VERSION)
 
@@ -167,3 +170,32 @@ def test_migration_0024_down_and_up(env, engine):
             assert {c["name"] for c in insp.get_columns(t)} == {c.name for c in Base.metadata.tables[t].columns}, t
     finally:
         Base.metadata.create_all(engine)
+
+
+def test_redo_clears_the_old_split_when_no_new_one_comes(env):
+    _, Session = env
+    _, tid = saved(Session)
+    with Session() as s:
+        row = s.get(Transcript, tid)
+        tasks._save(s, row, result(), None, 1.0, datetime.now(timezone.utc))      # pyannote missing this time
+        assert s.scalar(select(func.count()).select_from(TranscriptTurn)) == 0
+        assert s.scalar(select(func.count()).select_from(SpeakerTurn)) == 0
+        assert row.diarization_version is None and row.talk_ratio is None
+
+
+def test_re_decode_with_word_times_keeps_the_old_text_of_a_changed_window(env, caplog):
+    _, Session = env
+    with Session() as s:
+        c = make_call(s)
+        row = add_transcript(s, c, ["القديم هنا", "نفس النص"])
+        row.segmenter_version = SEGMENTER_VERSION.removesuffix("-wts")              # made before word times
+        row.text = "القديم هنا نفس النص"
+        s.commit()
+        res = Result(segments=[Segment(0, 0, 29.5, "الجديد هنا", words=[("الجديد", 0.1, 0.5), ("هنا", 0.5, 0.9)]),
+                               Segment(1, 29.5, 59, "نفس النص", words=[("نفس", 30.0, 30.4), ("النص", 30.4, 30.9)])],
+                     text="الجديد هنا نفس النص", audio_seconds=59)
+        tasks._save(s, row, res, None, 1.0, datetime.now(timezone.utc))
+        segs = sorted(row.segments, key=lambda x: x.seq)
+        assert row.text == "القديم هنا نفس النص" and segs[0].text == "القديم هنا" and segs[0].words is None
+        assert segs[1].words and row.segmenter_version == SEGMENTER_VERSION
+        assert "changed 1 window" in caplog.text and "القديم" not in caplog.text and "الجديد" not in caplog.text

@@ -99,7 +99,7 @@ def display_rows(session: Session, t: Transcript) -> list[dict]:
     out = [{"start": x.start_seconds, "end": x.end_seconds, "speaker": x.speaker, "dropped": False, "text": x.text}
            for x in tt]
     out += [{"start": s.start_seconds, "end": s.end_seconds, "speaker": None, "dropped": is_dropped(s),
-             "text": "" if is_dropped(s) else s.text} for s in segs if is_dropped(s) or not s.words]
+             "text": "" if is_dropped(s) else s.text} for s in segs if is_dropped(s) or s.words is None]
     return sorted(out, key=lambda d: (d["start"], d["dropped"]))
 
 

@@ -124,12 +124,43 @@ def process(session: Session, call_id: int, model: str, holder, audio_dir: Path,
             "dropped": result.dropped_windows, "audio_s": result.audio_seconds, "latency_s": round(latency)}
 
 
-def _save(session: Session, row: Transcript, result, revision: str | None, compute_s: float, now: datetime) -> None:
+def _keep_old_text(session: Session, row: Transcript, result) -> int:
+    """Diarization spec: the one-time re-decode with word times (`transcribe --resplit`: old segmenter version +
+    "-wts") must not change a call's text. A window whose text differs keeps its old text and flag, without word
+    times (no speaker for it). Returns the number of such windows (logged as a count, never the text)."""
     from .engine import SEGMENTER_VERSION
+    if not row.segmenter_version or SEGMENTER_VERSION != row.segmenter_version + "-wts":
+        return 0
+    old = {x.seq: x for x in session.scalars(select(TranscriptSegment)
+                                             .where(TranscriptSegment.transcript_id == row.id))}
+    if len(old) != len(result.segments):
+        return 0                                           # different windows: nothing comparable
+    changed = 0
+    for seg in result.segments:
+        o = old.get(seg.seq)
+        if o is not None and ((o.text or "") != (seg.text or "") or o.flag != seg.flag):
+            seg.text, seg.flag, seg.words = o.text or "", o.flag, None
+            changed += 1
+    if changed:
+        result.text = row.text or ""
+        result.dropped_windows = sum(1 for x in result.segments if x.flag)
+        log.warning("call %s: re-decode changed %d window(s); old text kept there", row.call_id, changed)
+    return changed
+
+
+def _save(session: Session, row: Transcript, result, revision: str | None, compute_s: float, now: datetime) -> None:
+    from ..db.models import SpeakerTurn, TranscriptTurn
+    from .engine import SEGMENTER_VERSION
+    _keep_old_text(session, row, result)
     session.execute(delete(TranscriptSegment).where(TranscriptSegment.transcript_id == row.id))   # --force redo
+    # a redo replaces the windows: an earlier speaker split no longer fits them (save_speakers writes a new one)
+    session.execute(delete(SpeakerTurn).where(SpeakerTurn.transcript_id == row.id))
+    session.execute(delete(TranscriptTurn).where(TranscriptTurn.transcript_id == row.id))
+    for name in SPEAKER_FIELDS:
+        setattr(row, name, None)
     session.add_all(TranscriptSegment(transcript_id=row.id, seq=s.seq, start_seconds=s.start, end_seconds=s.end,
                                       text=s.text, flag=s.flag,
-                                      words=[list(w) for w in s.words] if getattr(s, "words", None) else None)
+                                      words=None if getattr(s, "words", None) is None else [list(w) for w in s.words])
                     for s in result.segments)
     from ..transcripts import search_text
     row.status, row.text, row.error = "done", result.text, None

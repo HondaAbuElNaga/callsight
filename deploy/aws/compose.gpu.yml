@@ -41,6 +41,7 @@ services:
     environment:
       <<: *main-links
       ASR_IDLE_UNLOAD_S: ${ASR_IDLE_UNLOAD_S:-300}
+      DIARIZATION: ${DIARIZATION:-on}      # speaker split (spec 2026-11-17-diarization); off = transcripts as before
       HF_HOME: /models
       HF_HUB_OFFLINE: "1"                  # models come from the volume filled once by model-download
     volumes:

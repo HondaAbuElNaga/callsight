@@ -320,6 +320,8 @@ class TranscriptSegment(Base):
 
     transcript: Mapped[Transcript] = relationship(back_populates="segments")
 
+    __table_args__ = (UniqueConstraint("transcript_id", "seq", name="uq_transcript_segment_seq"),)
+
 
 class SpeakerTurn(Base):
     """Raw pyannote output: who speaks when (labels SPEAKER_00/01). Source of talk ratio / interruptions."""
@@ -344,8 +346,6 @@ class TranscriptTurn(Base):
     end_seconds: Mapped[float] = mapped_column(Float)
     text: Mapped[str] = mapped_column(Text)
     segment_seq: Mapped[int] = mapped_column(Integer)               # window of its first word
-
-    __table_args__ = (UniqueConstraint("transcript_id", "seq", name="uq_transcript_segment_seq"),)
 
 
 class TranscriptAccess(Base):

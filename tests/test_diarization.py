@@ -70,7 +70,7 @@ def test_engine_keeps_word_times_and_the_same_text():
                                     audio)
     assert with_w.text == plain.text == "السلام عليكم"
     assert with_w.segments[0].words == [("السلام", 0.5, 0.9), ("عليكم", 0.9, 1.3)]
-    assert plain.segments[0].words == []
+    assert plain.segments[0].words is None                         # no times at all (not "no words here")
     assert engine.SEGMENTER_VERSION.endswith("-wts")
 
 
@@ -105,9 +105,9 @@ def test_inbound_first_speaker_who_greets_is_the_agent():
     assert (n.agent, n.reason) == (A, "first_greets")
 
 
-def test_inbound_other_speaker_greets_when_the_first_does_not():
+def test_inbound_unsure_when_only_the_second_speaker_greets():
     n = dz.name_speakers(_lines((A, 0.0, "الو"), (B, 2.5, "السلام عليكم حياك")), TURNS, "inbound")
-    assert (n.agent, n.reason) == (B, "other_greets")
+    assert (n.agent, n.reason) == (None, "no_greeting")
 
 
 def test_unsure_without_a_greeting_or_with_one_speaker():
@@ -164,3 +164,51 @@ def test_split_call_end_to_end():
     assert [(ln.speaker, ln.text) for ln in lines] == [(dz.AGENT, "السلام عليكم معك"), (dz.CUSTOMER, "ابي الفاتورة")]
     assert naming.agent == A and m.talk_ratio == pytest.approx(0.5)
     assert dz.rules_hash() and dz.Pyannote().version.startswith("pa31-84fd259-")
+
+
+class TwoWindows:
+    """Two loud windows; the second one is flagged as a repeat by its text, the first has a word in the overlap."""
+    window_s = 30.0
+
+    def __init__(self):
+        self.n = 0
+
+    def transcribe_words(self, audio):
+        self.n += 1
+        if self.n == 1:
+            return "نعم تمام", [("نعم", 1.0, 1.4), ("تمام", 25.0, 25.3)]   # midpoint past the boundary
+        return "", []
+
+
+def test_words_at_the_edge_stay_when_the_next_window_has_no_times():
+    audio = [3000, -3000] * 8000 * 50                  # 50 s -> 2 windows of ~25.5 s, display boundary 25 s
+    res = engine.transcribe_audio(TwoWindows(), audio)
+    assert len(res.segments) == 2 and res.segments[1].words is None
+    assert [w for w, _, _ in res.segments[0].words] == ["نعم", "تمام"]       # not cut at the display boundary
+
+
+def test_time_limit_is_never_swallowed(monkeypatch):
+    from callsight.asr.models import is_time_limit
+    SoftTimeLimitExceeded = type("SoftTimeLimitExceeded", (Exception,), {})
+    assert is_time_limit(SoftTimeLimitExceeded()) and not is_time_limit(ValueError())
+
+    class Slow:
+        def load(self):
+            pass
+
+        def turns(self, audio):
+            raise SoftTimeLimitExceeded()
+
+    h = engine.ModelHolder("whisper-large-v3", start_timer=False, factory=lambda n: None, diarizer_factory=Slow)
+    with pytest.raises(SoftTimeLimitExceeded):
+        h.speaker_turns([0.0])
+    h2 = engine.ModelHolder("whisper-large-v3", start_timer=False, factory=lambda n: None,
+                            diarizer_factory=type("Bad", (Slow,), {"turns": lambda self, a: 1 / 0}))
+    assert h2.speaker_turns([0.0]) is None                         # any other error: transcript without speakers
+
+
+def test_cli_resplit_takes_only_limit(capsys):
+    from callsight import cli
+    with pytest.raises(SystemExit):
+        cli.main(["transcribe", "--resplit", "--days", "3"])
+    assert "--resplit takes only --limit" in capsys.readouterr().err

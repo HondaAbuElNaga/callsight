@@ -27,6 +27,11 @@ def read_wav(path: Path) -> tuple[array, int]:
     return samples, rate
 
 
+def is_time_limit(exc: BaseException) -> bool:
+    """Celery's soft time limit (an Exception subclass): "never fail" handlers must let it through."""
+    return type(exc).__name__ == "SoftTimeLimitExceeded"
+
+
 BAD_CHAR = "�"                      # a half-decoded UTF-8 letter (its other byte is in the next token)
 
 
@@ -101,7 +106,9 @@ class WhisperLargeV3:
         seq = ids[0].tolist()
         try:
             times = self.token_times(feats, ids, len(audio16k))
-        except Exception:                                  # noqa: BLE001  no times -> window without speakers
+        except Exception as exc:                           # noqa: BLE001  no times -> window without speakers
+            if is_time_limit(exc):
+                raise                                      # the task's 15 min limit must still end the task
             return text, []
         return text, token_words(self.processor.tokenizer, seq, times, text, len(audio16k) / TARGET_RATE)
 

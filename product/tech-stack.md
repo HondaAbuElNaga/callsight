@@ -20,7 +20,7 @@ workers / a second GPU box, not a rewrite.
 | Asterisk-based PBX (FreePBX/Issabel/MikoPBX…) | AMI (events, originate ChanSpy) + CDR MySQL + MixMonitor recordings | ❓ | Most common; ChanSpy with `q` option = silent listen |
 | 3CX / Yeastar / Grandstream | Their REST/Call-Control API + recording export | ❓ | Fallback if not Asterisk |
 | Recording format | **Mono WAV, 8 kHz, 16-bit** (confirmed 2026-11-12) | ✅ | Both voices mixed, so agent/customer separation needs diarization |
-| Speaker diarization | pyannote-audio (as used in whisper-diarization / whisperX), local | 🔜 | Recordings are mono; sentiment must run on the customer's speech only |
+| Speaker diarization | pyannote.audio **3.3.2** + speaker-diarization-3.1 (models pinned by commit, local, offline; pins in `docker/asr-worker/requirements-diarize.txt`) | ✅ | Recordings are mono; sentiment must run on the customer's speech only |
 
 ## Backend
 | Area | Choice | Status | Why |

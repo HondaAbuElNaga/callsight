@@ -61,6 +61,30 @@ Speaker turns are matched to Whisper segments by time overlap.
   a call whose text differs is logged and keeps its old text). After that, diarization alone can re-run.
 - Migration **0024** (not 0009).
 
+## Changes found while building (2026-11-19)
+- **Word times without changing the text.** `generate(return_token_timestamps=True)` switches the decoder to
+  "eager" attention; its fp16 rounding changed 3 words in 1 window of 8 test clips. So the code does the normal
+  decode (same text as today), then ONE teacher-forced eager pass over that same token sequence for the
+  cross-attentions, then transformers' own DTW (alignment heads, median filter), cropped to the real audio length.
+  Checked on the PC GPU: 9/9 windows identical text, times within 0.02 s of transformers' method, **+33 % Whisper
+  time** (pyannote comes on top; measure on the T4, R7).
+- **Agent naming (R2) exactly as written:** inbound = the first speaker if they greet in the first 10 s, else
+  unsure (no guess from the second speaker). Outbound / internal = the first to say the institute or a greeting.
+  Risk: a customer who answers an outgoing call with "السلام عليكم" is named agent → the 30-row check includes
+  outgoing calls.
+- **Interruption (R5):** a turn that starts more than 0.3 s after the other speaker's turn began, while that turn is
+  still going, and overlaps it by more than 1 s (back-channels "اها / نعم" under 1 s do not count).
+- **"Longest customer silence" (R5)** = longest wait after the customer stopped before anyone spoke again
+  (`longest_wait_s`).
+- **Talk numbers** (ratio, interruptions, wait) are returned to admin / supervisor only (open question 2), on the
+  call page and as show-only averages on the KPI page; never in the PDF or a score.
+- **Re-run** = `transcribe --resplit [--limit N]` (rating set first, then newest since ASR_START_DATE, max 500 per
+  run). It also picks calls that have word times but no speaker split (pyannote missing / failed). A window whose
+  re-decoded text differs keeps its old text and gets no speaker (count logged, never text). A redo always clears
+  the old split first. Re-run of the naming rules alone (CPU, from stored words + turns) is left for later.
+- `DIARIZATION=off` (asr worker env) turns the split off; a missing model only logs a warning and transcripts are
+  saved as before.
+
 ## Open questions
 1. pyannote 3.1 (**recommended**: best open model, MIT, used by whisperX) vs a simple 2-voice clustering of our
    own (no token, weaker on overlapping speech)?

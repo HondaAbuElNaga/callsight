@@ -54,7 +54,7 @@ class Line:
 @dataclass(frozen=True)
 class Naming:
     agent: str | None                    # raw label of the agent, None = unsure
-    reason: str                          # first_greets / other_greets / says_institute / no_greeting / one_speaker
+    reason: str                          # first_greets / says_institute / no_greeting / one_speaker
 
     @property
     def unsure(self) -> bool:
@@ -110,8 +110,9 @@ def _has(text: str, phrases) -> bool:
 
 
 def name_speakers(lines: list[Line], turns: list[Turn], direction: str) -> Naming:
-    """Requirement 2: who is the agent. Inbound: the first speaker if they greet in the first 10 s, else the other
-    one if they greet; outbound / internal: the first speaker to say the institute's name or a greeting.
+    """Requirement 2: who is the agent. Inbound: the first speaker, if they greet in the first 10 s (the spec's
+    rule; no guess from the other speaker); outbound / internal: the first speaker to say the institute's name or a
+    greeting.
     Anything else = unsure (the page then shows "متحدث 1 / 2")."""
     speakers = sorted({t.speaker for t in turns})
     if len(speakers) < 2:
@@ -122,9 +123,6 @@ def name_speakers(lines: list[Line], turns: list[Turn], direction: str) -> Namin
     if direction == "inbound":
         if _has(said[first_s], GREETINGS):
             return Naming(first_s, "first_greets")
-        other = next(sp for sp in speakers if sp != first_s)
-        if _has(said[other], GREETINGS):
-            return Naming(other, "other_greets")
         return Naming(None, "no_greeting")
     for ln in sorted(lines, key=lambda x: x.start):           # outbound: the first to name the institute / greet
         if ln.speaker in speakers and (_has(ln.text, INSTITUTE) or _has(ln.text, GREETINGS)):

@@ -507,6 +507,8 @@ def _transcribe(a: argparse.Namespace, p: argparse.ArgumentParser) -> int:
                 " | --resplit [--limit N]")
     if a.retry_errors and (a.since is None or a.days is not None):
         p.error("transcribe: --retry-errors needs --since YYYY-MM-DD (and optional --limit)")
+    if a.resplit and (a.days is not None or a.since is not None):
+        p.error("transcribe: --resplit takes only --limit")
     if not a.retry_errors and not a.resplit and (a.days is not None and a.limit is None or a.limit is not None and a.days is None):
         p.error("transcribe: backfill needs both --days and --limit")
     cfg = queueing.AsrConfig.from_env()

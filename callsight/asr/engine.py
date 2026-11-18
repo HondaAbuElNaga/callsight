@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 from .chunking import chunk_bounds, merge_texts
-from .models import MODELS, TARGET_RATE, read_wav, to_16k
+from .models import MODELS, TARGET_RATE, is_time_limit, read_wav, to_16k
 from .normalize import normalize
 
 log = logging.getLogger(__name__)
@@ -60,7 +60,9 @@ class Segment:
     end: float
     text: str
     flag: str | None = None              # silence / blocklist / repeat / too_fast
-    words: list = field(default_factory=list)   # [(word, start, end)] in call seconds; [] = no times (old / dropped)
+    # [(word, start, end)] in call seconds. None = no word times (dropped window, old adapter, times failed);
+    # [] = times, but every word of the overlap belongs to the neighbour window
+    words: list | None = None
 
 
 @dataclass
@@ -133,20 +135,22 @@ def transcribe_audio(adapter, audio, rate: int = TARGET_RATE, silence_rms: float
     bounds = chunk_bounds(len(audio), rate, min(WINDOW_S, adapter.window_s), OVERLAP_S)
     res = Result(audio_seconds=round(len(audio) / rate, 3))
     runs: list[list[str]] = [[]]          # texts of back-to-back kept windows; a dropped window starts a new run
+    raw: list = []                        # (window, window-relative word times, audio start, audio end)
     for i, ((s, e), (start, end)) in enumerate(zip(bounds, display_times(bounds, rate))):
         piece = audio[s:e]
         if rms(piece) < silence_rms:
             seg = Segment(i, start, end, "", "silence")
         else:
-            words = []
+            words = None
             if hasattr(adapter, "transcribe_words"):      # word times for the speaker split (diarization spec)
                 text, words = adapter.transcribe_words(piece)
             else:
                 text = adapter.transcribe(piece)
             text = (text or "").replace("\x00", "").strip()   # Postgres refuses NUL
             flag = hallucination_flag(text, (e - s) / rate)
-            seg = Segment(i, start, end, "" if flag else text, flag,
-                          [] if flag else window_words(words, s / rate, start, end))
+            seg = Segment(i, start, end, "" if flag else text, flag)
+            if not flag and text and words:
+                raw.append((i, words, s / rate, e / rate))
         if seg.flag:
             res.dropped_windows += 1
             runs.append([])
@@ -156,6 +160,14 @@ def transcribe_audio(adapter, audio, rate: int = TARGET_RATE, silence_rms: float
         else:
             runs.append([])                # empty window = gap too: no overlap to remove across it
         res.segments.append(seg)
+    # Word times: the 1 s overlap is counted once, at the display boundary, but only between two windows that both
+    # have times; next to a dropped / silent / timeless window a window keeps its words up to its own audio edge.
+    timed = {i for i, *_ in raw}
+    for i, words, w_start, w_end in raw:
+        seg = res.segments[i]
+        lo = seg.start if i - 1 in timed else w_start
+        hi = seg.end if i + 1 in timed else w_end + 1
+        seg.words = window_words(words, w_start, lo, hi)
     # Overlap words are only removed between neighbouring windows: across a gap the "repeat" is real speech.
     res.text = " ".join(m for m in (merge_texts(r) for r in runs) if m)
     res.speech_seconds = round(res.speech_seconds, 3)
@@ -268,6 +280,8 @@ class ModelHolder:
                 d = self.diarizer_factory()
                 d.load()
             except Exception as exc:                       # noqa: BLE001
+                if is_time_limit(exc):
+                    raise
                 self.diarizer_failed_at = self.clock()
                 free_gpu()
                 log.warning("speaker split not available (%s): transcripts are saved without speakers",
@@ -277,6 +291,8 @@ class ModelHolder:
         try:
             return self.diarizer.turns(audio)
         except Exception as exc:                           # noqa: BLE001  never fail the transcript
+            if is_time_limit(exc):
+                raise
             if "out of memory" in str(exc).lower():
                 self.diarizer = None
             free_gpu()
