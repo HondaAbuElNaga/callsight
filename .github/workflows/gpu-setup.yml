@@ -101,7 +101,8 @@ jobs:
 
             build-diarize)
               # Speaker split (spec 2026-11-17-diarization): download the 3 pinned pyannote models (run gpu-update
-              # first: it rebuilds the asr image with pyannote), then restart the asr worker. The HF token (gated
+              # first: it rebuilds the asr image with pyannote), then RESTART the asr worker (it may have tried pyannote before the files were there and would
+              # wait 1 h before trying again). The HF token (gated
               # models) goes over stdin and lives only in that remote shell and the download container: never in a
               # file, an argument or the log. HF_TOKEN is set in the step env only for this task.
               [ -n "$HF_TOKEN" ] || { echo "secret HF_TOKEN is missing" >&2; exit 1; }
@@ -112,7 +113,7 @@ jobs:
                 && $DL pyannote/speaker-diarization-3.1 --revision 84fd25912480287da0247647c3d2b4853cb3ee5d \
                 && $DL pyannote/segmentation-3.0 --revision e66f3d3b9eb0873085418a7b813d3b369bf160bb \
                 && $DL pyannote/wespeaker-voxceleb-resnet34-LM --revision 837717ddb9ff5507820346191109dc79c958d614 \
-                && sudo docker compose -f deploy/aws/compose.gpu.yml --env-file .env up -d asr-worker \
+                && sudo docker compose -f deploy/aws/compose.gpu.yml --env-file .env restart asr-worker \
                 && sudo docker builder prune -af >/dev/null && df -h /" ;;
 
             internet-off)
