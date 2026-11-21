@@ -17,7 +17,7 @@
   set-ext NAME --ext 104 new extension for a user (ends that user's open logins)
   set-password NAME [--generate]   new password (ends that user's open logins)
   disable-user NAME      block a web login
-  goldset pick [--n 30 --seconds 60 --seed 1]   choose + cut the ASR gold-set clips (once)
+  goldset pick [--n 30 --seconds 60 --seed 1 --split-only]   choose + cut the gold-set clips (once)
   goldset score [--bench-dir data/asr-bench --out docs/asr-benchmark.md]
   goldset drafts [--bench-dir data/asr-bench]   pre-fill model drafts (rotating source) for the typist to correct
                          WER/CER per model from the typed texts -> benchmark report
@@ -94,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     g = sub.add_parser("goldset"); g.add_argument("action", choices=("pick", "score", "drafts"))
     g.add_argument("--n", type=int, default=30); g.add_argument("--seconds", type=float, default=60.0)
     g.add_argument("--seed", type=int, default=1)
+    g.add_argument("--split-only", action="store_true", help="pick: only calls that already have the speaker split")
     g.add_argument("--bench-dir", default="data/asr-bench"); g.add_argument("--out", default="docs/asr-benchmark.md")
     rp = sub.add_parser("report"); rp.add_argument("--period", choices=("week", "month"), default="week")
     rp.add_argument("--start", type=date.fromisoformat); rp.add_argument("--team"); rp.add_argument("--agent")
@@ -422,7 +423,8 @@ def _goldset(a: argparse.Namespace) -> int:
     team = wiring.teams()
     try:
         with wiring.session_factory()() as s:
-            clips = pick(s, wiring.settings().audio_dir, sorted(team.ext_team), n=a.n, seconds=a.seconds, seed=a.seed)
+            clips = pick(s, wiring.settings().audio_dir, sorted(team.ext_team), n=a.n, seconds=a.seconds, seed=a.seed,
+                         split_only=a.split_only)
             calls = [s.get(Call, c.call_id) for c in clips]
     except (ValueError, OSError) as exc:
         print("ERROR:", exc, file=sys.stderr)

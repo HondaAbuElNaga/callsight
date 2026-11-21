@@ -45,13 +45,18 @@ def _long_enough(path: Path, seconds: float) -> bool:
         return False
 
 
-def candidates(session: Session, agents: list[str], min_talk: float) -> dict[str, list[Call]]:
-    """Answered inbound/outbound team calls with a downloaded recording and enough talk time, per agent."""
-    rows = session.scalars(
-        select(Call).where(Call.status == "answered", Call.recording_status == "ok",
+def candidates(session: Session, agents: list[str], min_talk: float,
+               split_only: bool = False) -> dict[str, list[Call]]:
+    """Answered inbound/outbound team calls with a downloaded recording and enough talk time, per agent.
+    split_only: only calls whose transcript already has the speaker split (first-speaker check, ready at once)."""
+    from ..db.models import Transcript
+    q = select(Call).where(Call.status == "answered", Call.recording_status == "ok",
                            Call.direction.in_(("inbound", "outbound")), Call.agent_ext.in_(agents),
                            Call.talk_seconds >= min_talk)
-        .order_by(Call.id)).all()
+    if split_only:
+        q = q.where(select(Transcript.id).where(Transcript.call_id == Call.id, Transcript.status == "done",
+                                                Transcript.speaker_unsure.is_not(None)).exists())
+    rows = session.scalars(q.order_by(Call.id)).all()
     out: dict[str, list[Call]] = defaultdict(list)
     for c in rows:
         out[c.agent_ext].append(c)
@@ -59,12 +64,12 @@ def candidates(session: Session, agents: list[str], min_talk: float) -> dict[str
 
 
 def pick(session: Session, audio_dir: Path, agents: list[str], n: int = 30, seconds: float = 60.0,
-         seed: int = 1, margin: float = 15.0) -> list[GoldClip]:
+         seed: int = 1, margin: float = 15.0, split_only: bool = False) -> list[GoldClip]:
     """Choose n calls round-robin over the agents (fixed seed -> same choice), cut the middle `seconds` of each."""
     if session.scalar(select(GoldClip.id).limit(1)) is not None:
         raise ValueError("gold set already exists; it is kept so typed texts are never lost")
     rng = random.Random(seed)
-    pools = candidates(session, agents, seconds + margin)
+    pools = candidates(session, agents, seconds + margin, split_only)
     for pool in pools.values():
         rng.shuffle(pool)
     order = [a for a in agents if pools.get(a)]

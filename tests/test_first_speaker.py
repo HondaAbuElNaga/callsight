@@ -160,3 +160,16 @@ def test_migration_0025_down_and_up(env, engine):
             mod.upgrade()
     cols = {c["name"] for c in inspect(engine).get_columns("gold_clip")}
     assert cols == {c.name for c in Base.metadata.tables["gold_clip"].columns}
+
+
+def test_goldset_candidates_split_only(env):
+    from callsight.asr.goldset import candidates
+    _, Session = env
+    with Session() as s:
+        a, b = make_call(s, hour=9), make_call(s, hour=10)
+        for c in (a, b):
+            c.recording_status, c.talk_seconds = "ok", 200
+        split(s, add_transcript(s, a, ["نص"]), [("agent", 0.1)])
+        add_transcript(s, b, ["نص"])                                        # done, not split
+        assert {c.id for c in candidates(s, ["119"], 75)["119"]} == {a.id, b.id}
+        assert [c.id for c in candidates(s, ["119"], 75, split_only=True)["119"]] == [a.id]

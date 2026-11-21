@@ -152,12 +152,11 @@ jobs:
                 "select 'finished per hour (UTC)', date_trunc('hour', finished_at), count(*) from transcript
                  where finished_at > now() - interval '12 hours' group by 2 order by 2" ;;
 
-            goldset-pick)         # main server: choose + cut the 30 gold calls (once; refuses if a set exists), then
-              # queue their speaker split first (page "من يتكلم أولاً", diarization acceptance). Prints counts only.
+            goldset-pick)         # main server: choose + cut the 30 gold calls (once; refuses if a set exists) from calls
+              # that already have the speaker split, so page "من يتكلم أولاً" is ready at once. Prints counts only.
               cd "$M"
               MC=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml)
-              "${MC[@]}" exec -T worker python -m callsight goldset pick
-              "${MC[@]}" exec -T worker python -m callsight transcribe --resplit --limit 30 ;;
+              "${MC[@]}" exec -T worker python -m callsight goldset pick --split-only ;;
 
             nlp-on)             # automatic AI analysis on: main server (queues analyses) + GPU server (runs them)
               cd "$M"
