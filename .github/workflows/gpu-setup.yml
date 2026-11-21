@@ -26,6 +26,7 @@ on:
           - main-ps
           - gpu-update
           - blind-reset
+          - goldset-pick
       value:
         description: "start-date: YYYY-MM-DD | blind-reset: yes-delete-blind-set | gpu-cmd: one command on the GPU server (never .env / compose config: the log is kept)"
         required: false
@@ -150,6 +151,13 @@ jobs:
               "${MC[@]}" exec -T postgres psql -U callsight -d callsight -At -c \
                 "select 'finished per hour (UTC)', date_trunc('hour', finished_at), count(*) from transcript
                  where finished_at > now() - interval '12 hours' group by 2 order by 2" ;;
+
+            goldset-pick)         # main server: choose + cut the 30 gold calls (once; refuses if a set exists), then
+              # queue their speaker split first (page "من يتكلم أولاً", diarization acceptance). Prints counts only.
+              cd "$M"
+              MC=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml)
+              "${MC[@]}" exec -T worker python -m callsight goldset pick
+              "${MC[@]}" exec -T worker python -m callsight transcribe --resplit --limit 30 ;;
 
             nlp-on)             # automatic AI analysis on: main server (queues analyses) + GPU server (runs them)
               cd "$M"
