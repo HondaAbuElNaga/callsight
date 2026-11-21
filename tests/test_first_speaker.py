@@ -8,19 +8,23 @@ from callsight import transcripts
 from callsight.api import auth
 from callsight.asr import queueing
 from callsight.asr.engine import SEGMENTER_VERSION
-from callsight.db.models import GoldClip, RatingPick, Transcript, TranscriptTurn
+from callsight.db.models import GoldClip, RatingPick, SpeakerTurn, Transcript, TranscriptTurn
 from test_transcript_view import MODEL, PASSWORD, add_transcript, engine, env, login, make_call  # noqa: F401
 
 
-def split(s, t, lines, unsure=False):
-    """Give transcript `t` a speaker split: lines = [(speaker, start), ...]."""
+def split(s, t, lines, unsure=False, turns=()):
+    """Give transcript `t` a speaker split: lines = [(speaker, start), ...] (1 s each), turns = [(raw, start, end)]."""
     t.segmenter_version, t.diarization_version, t.speaker_unsure = SEGMENTER_VERSION, "pa31-test", unsure
     s.add_all([TranscriptTurn(transcript_id=t.id, seq=i, speaker=who, start_seconds=st, end_seconds=st + 1,
                               text="x", segment_seq=0) for i, (who, st) in enumerate(lines)])
+    s.add_all([SpeakerTurn(transcript_id=t.id, seq=i, speaker_raw=raw, start_seconds=a, end_seconds=b)
+               for i, (raw, a, b) in enumerate(turns)])
     s.commit()
 
 
-def gold(s, call):
+def gold(s, call, recorded=True):
+    if recorded:
+        call.recording_status, call.recording_path = "ok", f"2026/11/10/{call.id}.wav"
     g = GoldClip(call_id=call.id, start_seconds=30, seconds=60, file=f"goldset/clip_{call.id}.wav")
     s.add(g)
     s.commit()
@@ -42,10 +46,18 @@ def test_system_first_speaker_values(env):
         t = add_transcript(s, c, ["نص"])
         assert transcripts.system_first_speaker(s, c.id, MODEL) == "not_split"      # done, but no split yet
         split(s, t, [("unknown", 0.1), ("customer", 0.5), ("agent", 0.2)])
-        assert transcripts.system_first_speaker(s, c.id, MODEL) == "agent"          # earliest named line
+        assert transcripts.system_first_speaker(s, c.id, MODEL) == "agent"          # no turns: earliest named line
         u = make_call(s)
         split(s, add_transcript(s, u, ["نص"]), [("agent", 0.1)], unsure=True)
         assert transcripts.system_first_speaker(s, u.id, MODEL) == "unsure"
+        # the first turn's "ألو" (0-0.6 s) lost its words: its speaker (A) is found through A's later turns
+        d = make_call(s)
+        split(s, add_transcript(s, d, ["نص"]), [("customer", 1.0), ("agent", 3.0)],
+              turns=[("A", 0.0, 0.6), ("B", 0.9, 2.2), ("A", 2.9, 4.5)])
+        assert transcripts.system_first_speaker(s, d.id, MODEL) == "agent"
+        e = make_call(s)
+        split(s, add_transcript(s, e, ["نص"]), [("unknown", 0.1)])                    # split, no named line
+        assert transcripts.system_first_speaker(s, e.id, MODEL) == "unsure"
 
 
 def test_first_speaker_admin_only(env):
@@ -60,21 +72,23 @@ def test_answers_saved_and_score_hidden_until_all_answered(env):
     client, Session = env
     admin(client, Session)
     with Session() as s:
-        calls = [make_call(s, hour=h) for h in (9, 10, 11)]
-        clips = [gold(s, c) for c in calls]
+        calls = [make_call(s, hour=h) for h in (8, 9, 10, 11, 12)]
+        clips = [gold(s, c, recorded=c is not calls[4]) for c in calls]      # the last one has no recording
         for c, lines, unsure in ((calls[0], [("agent", 0.2)], False), (calls[1], [("agent", 0.3)], False),
-                                 (calls[2], [("agent", 0.1)], True)):
+                                 (calls[2], [("agent", 0.1)], True), (calls[3], [("agent", 0.1)], False)):
             split(s, add_transcript(s, c, ["نص"]), lines, unsure)
     r = client.get("/api/first-speaker").json()
-    assert (r["answered"], r["total"], r["score"]) == (0, 3, None) and [x["n"] for x in r["rows"]] == [1, 2, 3]
+    assert (r["answered"], r["total"], r["score"]) == (1, 5, None) and [x["n"] for x in r["rows"]] == [1, 2, 3, 4, 5]
+    assert [x["has_recording"] for x in r["rows"]] == [True, True, True, True, False]
     assert client.put(f"/api/first-speaker/{clips[0].id}", json={"who": "agent"}).json()["first_speaker"] == "agent"
     assert client.put(f"/api/first-speaker/{clips[1].id}", json={"who": "customer"}).status_code == 200
-    r = client.get("/api/first-speaker").json()
-    assert r["answered"] == 2 and r["score"] is None and not any("system" in x for x in r["rows"])   # not steered
     client.put(f"/api/first-speaker/{clips[2].id}", json={"who": "agent"})
     r = client.get("/api/first-speaker").json()
-    assert r["score"] == {"right": 1, "wrong": 1, "unsure": 1, "not_split": 0}
-    assert [x["system"] for x in r["rows"]] == ["agent", "agent", "unsure"]
+    assert r["answered"] == 4 and r["score"] is None and not any("system" in x for x in r["rows"])   # not steered
+    client.put(f"/api/first-speaker/{clips[3].id}", json={"who": "skip"})                 # cannot tell
+    r = client.get("/api/first-speaker").json()
+    assert r["score"] == {"right": 1, "wrong": 1, "unsure": 1, "not_split": 0, "scored": 3, "skipped": 2, "target": 3}
+    assert [x.get("system") for x in r["rows"]] == ["agent", "agent", "unsure", None, None]
     with Session() as s:
         g = s.get(GoldClip, clips[0].id)
         assert g.first_speaker_by is not None and g.first_speaker_at is not None
@@ -82,6 +96,18 @@ def test_answers_saved_and_score_hidden_until_all_answered(env):
     with Session() as s:
         g = s.get(GoldClip, clips[0].id)
         assert (g.first_speaker, g.first_speaker_by, g.first_speaker_at) == (None, None, None)
+    assert client.get("/api/first-speaker").json()["score"] is None
+
+
+def test_target_is_ninety_percent_rounded_up(env):
+    client, Session = env
+    admin(client, Session)
+    with Session() as s:
+        clips = [gold(s, make_call(s, hour=8 + i % 12)) for i in range(30)]
+    for g in clips:
+        client.put(f"/api/first-speaker/{g.id}", json={"who": "agent"})
+    sc = client.get("/api/first-speaker").json()["score"]
+    assert (sc["scored"], sc["target"], sc["not_split"]) == (30, 27, 30)
 
 
 def test_first_speaker_bad_input(env):

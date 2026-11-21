@@ -186,14 +186,26 @@ def reindex(session: Session, batch: int = 200) -> int:
 
 def system_first_speaker(session: Session, call_id: int, model: str) -> str:
     """First-speaker check: who the speaker split says talks first in the shown transcript.
-    agent / customer, or unsure (agent not named: "متحدث 1 / 2"), or not_split (no speaker lines yet)."""
-    from .db.models import TranscriptTurn
+    agent / customer, or unsure (agent not named: "متحدث 1 / 2", or no named line at all), or not_split.
+    Read from the pyannote turns the naming used (the first turn's speaker), mapped to agent / customer through the
+    lines that overlap that speaker's turns: a short first "ألو" that Whisper dropped still counts for its speaker."""
+    from .db.models import SpeakerTurn, TranscriptTurn
     t = displayed(session, call_id, model)
     if t is None or t.status != "done" or t.speaker_unsure is None:
         return "not_split"
     if t.speaker_unsure:
         return "unsure"
-    first = session.scalars(select(TranscriptTurn.speaker).where(TranscriptTurn.transcript_id == t.id,
-                                                                 TranscriptTurn.speaker.in_(("agent", "customer")))
-                            .order_by(TranscriptTurn.start_seconds, TranscriptTurn.seq).limit(1)).first()
-    return first or "not_split"
+    turns = list(session.scalars(select(SpeakerTurn).where(SpeakerTurn.transcript_id == t.id)
+                                 .order_by(SpeakerTurn.start_seconds, SpeakerTurn.seq)))
+    lines = list(session.scalars(select(TranscriptTurn).where(TranscriptTurn.transcript_id == t.id,
+                                                              TranscriptTurn.speaker.in_(("agent", "customer")))
+                                 .order_by(TranscriptTurn.start_seconds, TranscriptTurn.seq)))
+    if turns:
+        own = [x for x in turns if x.speaker_raw == turns[0].speaker_raw]
+        weight = {"agent": 0.0, "customer": 0.0}
+        for ln in lines:
+            weight[ln.speaker] += sum(max(0.0, min(ln.end_seconds, x.end_seconds) - max(ln.start_seconds, x.start_seconds))
+                                      for x in own)
+        if max(weight.values()) > 0 and weight["agent"] != weight["customer"]:
+            return max(weight, key=weight.get)
+    return lines[0].speaker if lines else "unsure"

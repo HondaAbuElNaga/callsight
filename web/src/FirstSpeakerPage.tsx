@@ -1,31 +1,55 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, Unauthorized, type FirstSpeakerList, type Me } from "./api";
 
 interface Props { me: Me; onBack: () => void; onLogout: () => void; onExpired: () => void }
+type Who = "agent" | "customer" | "skip";
 
-const DIR: Record<string, string> = { inbound: "واردة", outbound: "صادرة" };
+const DIR: Record<string, string> = { inbound: "واردة", outbound: "صادرة", internal: "داخلية" };
 const WHO: Record<string, string> = { agent: "الموظف", customer: "العميل", unsure: "غير متأكد", not_split: "لم يُقسَّم بعد" };
 
 // First-speaker check (diarization acceptance): the admin listens to the START of each of the 30 gold calls and
-// marks who speaks first. The system's answer is shown only after every row is answered.
+// marks who speaks first. The system's answer is shown only after every row is answered (no steering).
 export function FirstSpeakerPage({ me, onBack, onLogout, onExpired }: Props) {
   const [data, setData] = useState<FirstSpeakerList | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  const fail = (e: unknown) => {
+  const fail = (e: unknown, text: string) => {
     if (e instanceof Unauthorized) onExpired();
-    else setErr("حدث خطأ، لم يتم الحفظ. حاول مرة أخرى.");
+    else setErr(text);
   };
-  const load = () => api.firstSpeaker().then(setData).catch(fail);
+  const saves = useRef(0);                           // a load started before a later save is dropped (stale)
+  const [version, setVersion] = useState(0);         // bumps on each save: re-fetches the score after a dropped load
+  const load = () => {
+    const at = saves.current;
+    api.firstSpeaker().then((d) => { if (at === saves.current) setData(d); })
+      .catch((e) => fail(e, "تعذر تحميل الصفحة. حدّث الصفحة."));
+  };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
 
-  async function mark(id: number, who: "agent" | "customer") {
+  async function mark(id: number, who: Who) {
     setErr(null);
-    try { await api.saveFirstSpeaker(id, who); await load(); } catch (e) { fail(e); }
+    try {
+      const saved = await api.saveFirstSpeaker(id, who);
+      saves.current += 1;
+      setVersion((v) => v + 1);
+      setData((d) => {                               // update this row from its own save (no reload race)
+        if (!d) return d;
+        const rows = d.rows.map((r) => (r.id === saved.id ? { ...r, first_speaker: saved.first_speaker } : r));
+        const answered = rows.filter((r) => r.first_speaker !== null || !r.has_recording).length;
+        return { ...d, rows, answered, score: null };   // any change: the score is fetched again
+      });
+    } catch (e) { fail(e, "حدث خطأ، لم يتم الحفظ. حاول مرة أخرى."); }
   }
 
+  // every row answered but no score yet (or an answer changed): fetch the score
+  const needScore = !!data && data.total > 0 && data.answered === data.total && data.score === null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (needScore) load(); }, [needScore, version]);
+
   const s = data?.score;
+  const waiting = !!s && s.not_split > 0;
+  const pass = !!s && !waiting && s.right >= s.target;
   return (
     <div className="page">
       <header className="topbar">
@@ -43,16 +67,19 @@ export function FirstSpeakerPage({ me, onBack, onLogout, onExpired }: Props) {
       ) : (
         <section className="fs">
           <ul className="gold-help">
-            <li>شغّل بداية كل مكالمة واسمع أول 10 ثوانٍ فقط.</li>
-            <li>اختر من تكلم أولاً: الموظف أو العميل. يُحفظ الاختيار فوراً، ويمكن تغييره.</li>
-            <li>تظهر النتيجة بعد الإجابة على كل المكالمات ({data.answered} من {data.total}).</li>
+            <li>شغّل بداية كل مكالمة واسمع حتى أول كلمة مفهومة (تجاهل الرنين والرسالة الآلية).</li>
+            <li>اختر من تكلم أولاً: الموظف أو العميل. إذا لم تستطع التمييز اختر «لا أعرف».</li>
+            <li>يُحفظ الاختيار فوراً ويمكن تغييره. تظهر النتيجة بعد الإجابة على الكل ({data.answered} من {data.total}).</li>
           </ul>
           <div className="gold-progress"><div style={{ width: `${(data.answered / data.total) * 100}%` }} /></div>
 
           {s && (
-            <div className={s.right >= Math.ceil(data.total * 0.9) ? "saved fs-score" : "error fs-score"}>
-              صح {s.right} من {data.total} (المطلوب {Math.ceil(data.total * 0.9)} على الأقل)
+            <div className={waiting ? "muted fs-score" : pass ? "saved fs-score" : "error fs-score"}>
+              {waiting && <div>بعض المكالمات لم يُقسَّم كلامها بعد ({s.not_split}). انتظر حتى يكتمل ثم حدّث الصفحة.</div>}
+              صح {s.right} من {s.scored} (المطلوب {s.target} على الأقل)
               {" · "}خطأ {s.wrong} · غير متأكد {s.unsure} · لم يُقسَّم بعد {s.not_split}
+              {s.skipped > 0 && <> · «لا أعرف» أو بدون تسجيل {s.skipped} (لا تُحسب)</>}
+              <div className="small">«غير متأكد» = النظام لم يحدد الموظف، فلا تُحسب صحيحة.</div>
             </div>
           )}
 
@@ -62,15 +89,19 @@ export function FirstSpeakerPage({ me, onBack, onLogout, onExpired }: Props) {
               {data.rows.map((r) => (
                 <tr key={r.id}>
                   <td>{r.n}</td>
-                  <td className="small">تحويلة {r.agent_ext ?? "—"} · {DIR[r.direction ?? ""] ?? ""}</td>
+                  <td className="small">تحويلة {r.agent_ext ?? "—"}{DIR[r.direction ?? ""] ? ` · ${DIR[r.direction ?? ""]}` : ""}</td>
                   <td>{r.has_recording
                     ? <audio controls preload="none" src={api.recordingUrl(r.call_id)} />
-                    : <span className="muted small">لا يوجد تسجيل</span>}</td>
+                    : <span className="muted small">لا يوجد تسجيل (لا تُحسب)</span>}</td>
                   <td className="fs-pick">
-                    <button className={r.first_speaker === "agent" ? "primary" : ""} onClick={() => mark(r.id, "agent")}>الموظف</button>
-                    <button className={r.first_speaker === "customer" ? "primary" : ""} onClick={() => mark(r.id, "customer")}>العميل</button>
+                    {r.has_recording && (["agent", "customer", "skip"] as Who[]).map((w) => (
+                      <button key={w} className={r.first_speaker === w ? "primary" : ""} onClick={() => mark(r.id, w)}>
+                        {w === "skip" ? "لا أعرف" : WHO[w]}
+                      </button>
+                    ))}
                   </td>
-                  {s && <td className={r.system === r.first_speaker ? "done" : "bad"}>{WHO[r.system ?? ""] ?? ""}</td>}
+                  {s && <td className={r.system === undefined ? "muted" : r.system === r.first_speaker ? "done" : "bad"}>
+                    {r.system === undefined ? "—" : WHO[r.system]}</td>}
                 </tr>
               ))}
             </tbody>

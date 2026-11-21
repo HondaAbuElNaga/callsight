@@ -90,3 +90,13 @@ Speaker turns are matched to Whisper segments by time overlap.
    own (no token, weaker on overlapping speech)?
 2. Agents see the talk-ratio number? **Recommended: no** (same rule as the score: show-only for staff until
    checked).
+
+## First-speaker check page (2026-11-21, user: "ok make it")
+- Gold clips are cut from the MIDDLE of each call, so the 30-row form plays the START of the full recording
+  (`/api/calls/{id}/recording`, audited as usual). Page "من يتكلم أولاً" (admin only), migration **0025**
+  (`gold_clip.first_speaker` agent / customer / skip, by, at).
+- Answers: الموظف / العميل / لا أعرف. "لا أعرف" and calls without a recording are left out; target = 90 % of the
+  answered rows rounded up (27 of 30). "unsure" (agent not named) counts as not right. No pass/fail while a call is
+  not split yet. The system's answer appears only after every row is answered.
+- System answer = the speaker of the first pyannote turn, mapped to agent / customer through the lines overlapping
+  that speaker's turns (a dropped first "ألو" still counts for its speaker). `--resplit` takes the gold calls first.

@@ -78,7 +78,7 @@ class GoldTextIn(BaseModel):
 
 class FirstSpeakerIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    who: Literal["agent", "customer"] | None          # None clears the answer
+    who: Literal["agent", "customer", "skip"] | None   # skip = cannot tell (no speech / ring only); None clears
 
 
 class LabelIn(BaseModel):
@@ -446,20 +446,26 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
     def first_rows(s: Session) -> list[dict]:
         rows = s.execute(select(GoldClip, Call).join(Call, Call.id == GoldClip.call_id).order_by(GoldClip.id)).all()
         return [{"id": c.id, "n": i, "call_id": c.call_id, "agent_ext": call.agent_ext, "direction": call.direction,
-                 "has_recording": call.recording_status == "ok", "first_speaker": c.first_speaker}
+                 "has_recording": call.recording_status == "ok" and bool(call.recording_path),
+                 "first_speaker": c.first_speaker}
                 for i, (c, call) in enumerate(rows, 1)]
 
     @app.get("/api/first-speaker")
     def first_speaker_list(user: Admin, s: DB) -> dict:
         rows = first_rows(s)
-        answered = sum(r["first_speaker"] is not None for r in rows)
-        out = {"rows": rows, "answered": answered, "total": len(rows), "score": None}
-        if rows and answered == len(rows):
-            for r in rows:
+        # a row is done when answered, or when there is nothing to hear (no recording: left out, like "skip")
+        done = [r for r in rows if r["first_speaker"] is not None or not r["has_recording"]]
+        out = {"rows": rows, "answered": len(done), "total": len(rows), "score": None}
+        if rows and len(done) == len(rows):
+            scored = [r for r in rows if r["first_speaker"] in ("agent", "customer")]
+            for r in scored:
                 r["system"] = transcripts.system_first_speaker(s, r["call_id"], cfg.asr_model)
-            out["score"] = {k: sum(r["system"] == k for r in rows) for k in ("not_split", "unsure")}
-            out["score"]["right"] = sum(r["system"] == r["first_speaker"] for r in rows)
-            out["score"]["wrong"] = len(rows) - sum(out["score"].values())
+            sc = {k: sum(r["system"] == k for r in scored) for k in ("not_split", "unsure")}
+            sc["right"] = sum(r["system"] == r["first_speaker"] for r in scored)
+            sc["wrong"] = len(scored) - sum(sc.values())
+            sc["scored"], sc["skipped"] = len(scored), len(rows) - len(scored)
+            sc["target"] = (len(scored) * 9 + 9) // 10            # 90 % rounded up: 27 of 30 (spec)
+            out["score"] = sc
         return out
 
     @app.put("/api/first-speaker/{clip_id}")

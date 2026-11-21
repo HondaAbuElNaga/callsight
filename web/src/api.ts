@@ -79,12 +79,13 @@ export interface Filters {
 
 export interface FirstSpeakerRow {
   id: number; n: number; call_id: number; agent_ext: string | null; direction: string | null;
-  has_recording: boolean; first_speaker: "agent" | "customer" | null;
-  system?: "agent" | "customer" | "unsure" | "not_split";   // only once every row is answered
+  has_recording: boolean; first_speaker: "agent" | "customer" | "skip" | null;
+  system?: "agent" | "customer" | "unsure" | "not_split";   // only once every row is answered (not on skipped rows)
 }
 export interface FirstSpeakerList {
   rows: FirstSpeakerRow[]; answered: number; total: number;
-  score: { right: number; wrong: number; unsure: number; not_split: number } | null;
+  score: { right: number; wrong: number; unsure: number; not_split: number;
+           scored: number; skipped: number; target: number } | null;
 }
 
 export interface GoldClip {
@@ -476,8 +477,8 @@ export const api = {
   goldClip: (id: number) => get<GoldClip>(`/api/goldset/${id}`),
   goldAudioUrl: (id: number) => `/api/goldset/${id}/audio`,
   firstSpeaker: () => get<FirstSpeakerList>("/api/first-speaker"),
-  saveFirstSpeaker: (id: number, who: "agent" | "customer" | null) =>
-    send<{ id: number; first_speaker: string | null }>("PUT", `/api/first-speaker/${id}`, { who }),
+  saveFirstSpeaker: (id: number, who: "agent" | "customer" | "skip" | null) =>
+    send<{ id: number; first_speaker: "agent" | "customer" | "skip" | null }>("PUT", `/api/first-speaker/${id}`, { who }),
   async saveGoldText(id: number, text: string): Promise<GoldClip> {
     const r = await fetch(`/api/goldset/${id}`, {
       method: "PUT",
