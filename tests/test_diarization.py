@@ -212,3 +212,32 @@ def test_cli_resplit_takes_only_limit(capsys):
     with pytest.raises(SystemExit):
         cli.main(["transcribe", "--resplit", "--days", "3"])
     assert "--resplit takes only --limit" in capsys.readouterr().err
+
+
+def test_full_torch_load_forces_full_pickle_only_inside_and_restores():
+    calls = []
+
+    class FakeTorch:
+        @staticmethod
+        def load(*args, **kwargs):
+            calls.append(kwargs.get("weights_only"))
+            return "ok"
+
+    original = FakeTorch.load
+    with dz.full_torch_load(FakeTorch):
+        assert FakeTorch.load("f", weights_only=True) == "ok"     # lightning may pass True: still loads in full
+        FakeTorch.load("f")
+    assert FakeTorch.load is original
+    FakeTorch.load("f")
+    assert calls == [False, False, None]
+
+
+def test_full_torch_load_restores_after_an_error():
+    class FakeTorch:
+        load = staticmethod(lambda *a, **k: None)
+
+    original = FakeTorch.load
+    with pytest.raises(RuntimeError):
+        with dz.full_torch_load(FakeTorch):
+            raise RuntimeError("boom")
+    assert FakeTorch.load is original

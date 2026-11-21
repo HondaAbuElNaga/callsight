@@ -8,6 +8,7 @@ turns, never from word times (word times are +-0.3 s).
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from .normalize import normalize
@@ -197,6 +198,24 @@ def split_call(words: list[Word], turns: list[Turn], direction: str) -> tuple[li
 
 # ---------- pyannote on the GPU (asr image only) ----------
 
+@contextmanager
+def full_torch_load(torch):
+    """torch >= 2.6 loads with weights_only=True by default, and the pyannote 3.x checkpoints (pickled
+    Specifications / TorchVersion objects) then fail with UnpicklingError. Only while our own pinned, local model
+    files load (Pyannote.load, under the engine lock) torch.load runs with weights_only=False; restored after."""
+    original = torch.load
+
+    def load(*args, **kwargs):
+        kwargs["weights_only"] = False
+        return original(*args, **kwargs)
+
+    torch.load = load
+    try:
+        yield
+    finally:
+        torch.load = original
+
+
 class Pyannote:
     """pyannote/speaker-diarization-3.1, 2 speakers, from the local HF cache (HF_HUB_OFFLINE=1 in the image)."""
     repo = "pyannote/speaker-diarization-3.1"
@@ -226,7 +245,8 @@ class Pyannote:
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "config.yaml"
             path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-            pipeline = Pipeline.from_pretrained(str(path))
+            with full_torch_load(torch):
+                pipeline = Pipeline.from_pretrained(str(path))
         if pipeline is None:
             raise RuntimeError("pyannote pipeline did not load")
         self.pipeline = pipeline.to(torch.device("cuda"))
