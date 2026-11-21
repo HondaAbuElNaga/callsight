@@ -41,6 +41,7 @@ STAFF_ONLY = {
     ("GET", "/api/reports/pdf"), ("GET", "/api/reports"), ("GET", "/api/reports/{report_id}/pdf"),
     ("GET", "/api/goldset"), ("GET", "/api/goldset/{clip_id}"), ("PUT", "/api/goldset/{clip_id}"),
     ("GET", "/api/goldset/{clip_id}/audio"), ("GET", "/api/health"),
+    ("GET", "/api/first-speaker"), ("PUT", "/api/first-speaker/{clip_id}"),   # speaker-split check (admin only)
     # call analysis (spec 2026-11-14-call-analysis, decision 9): agents see nothing of it
     ("GET", "/api/calls/{call_id}/analysis"), ("GET", "/api/rating/queue"), ("GET", "/api/rating/calls/{call_id}"),
     ("PUT", "/api/rating/calls/{call_id}"),

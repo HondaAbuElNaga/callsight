@@ -170,6 +170,10 @@ class GoldClip(Base):
     reference_text: Mapped[str | None] = mapped_column(Text)
     typed_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     typed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # first-speaker check (diarization acceptance): who the admin heard first at the call's start (agent / customer)
+    first_speaker: Mapped[str | None] = mapped_column(String(10))
+    first_speaker_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    first_speaker_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

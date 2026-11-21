@@ -83,6 +83,7 @@ R = read, W = write. "own" = only calls of the agent's own extension.
 | Route | What | Admin | Supervisor | Agent |
 |---|---|---|---|---|
 | GET/PUT /api/goldset/{id}, audio | gold-set text editor | R/W | ❌ | ❌ |
+| GET /api/first-speaker, PUT /api/first-speaker/{id} | "من يتكلم أولاً" check of the speaker split (30 gold calls) | R/W | ❌ | ❌ |
 | GET /api/health | health page | R | ❌ | ❌ |
 | GET/POST/PATCH /api/admin/users…, …/password | users: create, change role/ext, enable/disable, new password | R/W | ❌ | ❌ |
 | GET/PUT /api/admin/settings | follow-up start date, KPI start date | R/W | ❌ | ❌ |

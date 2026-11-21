@@ -212,22 +212,27 @@ def retry_errors(session: Session, cfg: AsrConfig, since: date, limit: int, now:
 def resplit(session: Session, cfg: AsrConfig, limit: int, now: datetime, segmenter: str) -> list[int]:
     """Diarization spec: done transcripts made before word times (segmenter_version != `segmenter`), or with word
     times but no speaker split yet (pyannote was missing / failed) -> queued again (redo) so they get word times +
-    the speaker split. Rating-set calls first, then the newest since ASR_START_DATE.
+    the speaker split. Gold-set calls (first-speaker check) first, then the rating set, then the newest since
+    ASR_START_DATE.
     Returns call ids to send."""
-    from ..db.models import RatingPick
+    from ..db.models import GoldClip, RatingPick
     if not 1 <= limit <= MAX_BACKFILL:
         raise ValueError(f"--limit must be 1..{MAX_BACKFILL}")
     old = (Transcript.model == cfg.model, Transcript.status == "done",
            or_(Transcript.segmenter_version.is_distinct_from(segmenter), Transcript.diarization_version.is_(None)))
-    picked = select(RatingPick.call_id)
+    gold = select(GoldClip.call_id)        # the first-speaker check's 30 calls before everything else
+    rating = select(RatingPick.call_id)
     # calls still without word times first; calls that have them but no split (pyannote missing / failed) last, so
     # they never block the others when the split keeps failing
     has_times = Transcript.segmenter_version.is_not_distinct_from(segmenter)
-    rows = list(session.scalars(select(Transcript).where(*old, Transcript.call_id.in_(picked))
-                                .order_by(has_times, Transcript.call_id).limit(limit).with_for_update()))
+    first = or_(Transcript.call_id.in_(gold), Transcript.call_id.in_(rating))
+    rows = list(session.scalars(select(Transcript).where(*old, first)
+                                .order_by(Transcript.call_id.not_in(gold), has_times, Transcript.call_id)
+                                .limit(limit).with_for_update()))
     if len(rows) < limit and cfg.start_time is not None:
         rows += session.scalars(select(Transcript).join(Call, Call.id == Transcript.call_id)
-                                .where(*old, Transcript.call_id.not_in(picked), Call.start_time >= cfg.start_time)
+                                .where(*old, Transcript.call_id.not_in(rating),
+                                       Transcript.call_id.not_in(gold), Call.start_time >= cfg.start_time)
                                 .order_by(has_times, Call.start_time.desc()).limit(limit - len(rows))
                                 .with_for_update(of=Transcript)).all()
     for row in rows:

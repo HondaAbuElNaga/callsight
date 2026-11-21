@@ -5,6 +5,7 @@ import { api, type Me } from "./api";
 import { Login } from "./Login";
 import { CallsPage } from "./CallsPage";
 import { GoldsetPage } from "./GoldsetPage";
+import { FirstSpeakerPage } from "./FirstSpeakerPage";
 import { KpiPage } from "./KpiPage";
 import { ForwardsPage } from "./ForwardsPage";
 import { HealthPage } from "./HealthPage";
@@ -14,7 +15,7 @@ import { RulesPage } from "./RulesPage";
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = still checking
-  const [view, setView] = useState<"calls" | "goldset" | "kpi" | "health" | "live" | "rating" | "followups" | "users" | "forwards" | "rules">("calls");
+  const [view, setView] = useState<"calls" | "goldset" | "firstspeaker" | "kpi" | "health" | "live" | "rating" | "followups" | "users" | "forwards" | "rules">("calls");
   const [openCall, setOpenCall] = useState<number | null>(null);   // follow-ups page -> open that call's panel
   const [problems, setProblems] = useState(0);
   const isAdmin = me?.role === "admin";
@@ -50,6 +51,8 @@ export function App() {
     page = <HealthPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "goldset" && isAdmin)
     page = <GoldsetPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
+  else if (view === "firstspeaker" && isAdmin)
+    page = <FirstSpeakerPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "rating" && isStaff)
     page = <RatingPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "live" && isStaff)
@@ -81,6 +84,7 @@ export function App() {
         onFollowups={() => { setOpenCall(null); setView("followups"); }}
         onUsers={isAdmin ? () => setView("users") : undefined}
         onRules={isAdmin ? () => setView("rules") : undefined}
+        onFirstSpeaker={isAdmin ? () => setView("firstspeaker") : undefined}
         openCallId={openCall}
         onOpened={() => setOpenCall(null)}
       />

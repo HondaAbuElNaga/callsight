@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Annotated, Callable, Iterator
+from typing import Annotated, Callable, Iterator, Literal
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Path as FPath, Query, Request, Response
@@ -74,6 +74,11 @@ class LoginIn(BaseModel):
 
 class GoldTextIn(BaseModel):
     text: str = Field(max_length=10_000)
+
+
+class FirstSpeakerIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    who: Literal["agent", "customer"] | None          # None clears the answer
 
 
 class LabelIn(BaseModel):
@@ -434,6 +439,38 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         c.typed_by, c.typed_at = (user.id, datetime.now(timezone.utc)) if text else (None, None)
         s.commit()
         return clip_dict(c, s.get(Call, c.call_id), True)
+
+    # ---------- first-speaker check (diarization acceptance, admin only): who speaks first at the call start ----------
+    # The system's answer per row is shown only once every clip is answered (the admin must not be steered).
+
+    def first_rows(s: Session) -> list[dict]:
+        rows = s.execute(select(GoldClip, Call).join(Call, Call.id == GoldClip.call_id).order_by(GoldClip.id)).all()
+        return [{"id": c.id, "n": i, "call_id": c.call_id, "agent_ext": call.agent_ext, "direction": call.direction,
+                 "has_recording": call.recording_status == "ok", "first_speaker": c.first_speaker}
+                for i, (c, call) in enumerate(rows, 1)]
+
+    @app.get("/api/first-speaker")
+    def first_speaker_list(user: Admin, s: DB) -> dict:
+        rows = first_rows(s)
+        answered = sum(r["first_speaker"] is not None for r in rows)
+        out = {"rows": rows, "answered": answered, "total": len(rows), "score": None}
+        if rows and answered == len(rows):
+            for r in rows:
+                r["system"] = transcripts.system_first_speaker(s, r["call_id"], cfg.asr_model)
+            out["score"] = {k: sum(r["system"] == k for r in rows) for k in ("not_split", "unsure")}
+            out["score"]["right"] = sum(r["system"] == r["first_speaker"] for r in rows)
+            out["score"]["wrong"] = len(rows) - sum(out["score"].values())
+        return out
+
+    @app.put("/api/first-speaker/{clip_id}")
+    def save_first_speaker(clip_id: int, body: FirstSpeakerIn, user: Admin, s: DB) -> dict:
+        c = s.get(GoldClip, clip_id)
+        if c is None:
+            raise HTTPException(404, "no such clip")
+        c.first_speaker = body.who
+        c.first_speaker_by, c.first_speaker_at = (user.id, datetime.now(timezone.utc)) if body.who else (None, None)
+        s.commit()
+        return {"id": c.id, "first_speaker": c.first_speaker}
 
     @app.get("/api/goldset/{clip_id}/audio")
     def gold_audio(clip_id: int, user: Admin, s: DB) -> Response:

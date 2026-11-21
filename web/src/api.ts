@@ -77,6 +77,16 @@ export interface Filters {
   words: string;               // transcript words: sent to the API only, never put in the page URL
 }
 
+export interface FirstSpeakerRow {
+  id: number; n: number; call_id: number; agent_ext: string | null; direction: string | null;
+  has_recording: boolean; first_speaker: "agent" | "customer" | null;
+  system?: "agent" | "customer" | "unsure" | "not_split";   // only once every row is answered
+}
+export interface FirstSpeakerList {
+  rows: FirstSpeakerRow[]; answered: number; total: number;
+  score: { right: number; wrong: number; unsure: number; not_split: number } | null;
+}
+
 export interface GoldClip {
   id: number;
   call_id: number;
@@ -465,6 +475,9 @@ export const api = {
   goldset: () => get<GoldClip[]>("/api/goldset"),
   goldClip: (id: number) => get<GoldClip>(`/api/goldset/${id}`),
   goldAudioUrl: (id: number) => `/api/goldset/${id}/audio`,
+  firstSpeaker: () => get<FirstSpeakerList>("/api/first-speaker"),
+  saveFirstSpeaker: (id: number, who: "agent" | "customer" | null) =>
+    send<{ id: number; first_speaker: string | null }>("PUT", `/api/first-speaker/${id}`, { who }),
   async saveGoldText(id: number, text: string): Promise<GoldClip> {
     const r = await fetch(`/api/goldset/${id}`, {
       method: "PUT",

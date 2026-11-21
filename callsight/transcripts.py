@@ -182,3 +182,18 @@ def reindex(session: Session, batch: int = 200) -> int:
             n += 1
         session.commit()
         last = ids[-1]
+
+
+def system_first_speaker(session: Session, call_id: int, model: str) -> str:
+    """First-speaker check: who the speaker split says talks first in the shown transcript.
+    agent / customer, or unsure (agent not named: "متحدث 1 / 2"), or not_split (no speaker lines yet)."""
+    from .db.models import TranscriptTurn
+    t = displayed(session, call_id, model)
+    if t is None or t.status != "done" or t.speaker_unsure is None:
+        return "not_split"
+    if t.speaker_unsure:
+        return "unsure"
+    first = session.scalars(select(TranscriptTurn.speaker).where(TranscriptTurn.transcript_id == t.id,
+                                                                 TranscriptTurn.speaker.in_(("agent", "customer")))
+                            .order_by(TranscriptTurn.start_seconds, TranscriptTurn.seq).limit(1)).first()
+    return first or "not_split"
