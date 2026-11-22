@@ -41,25 +41,62 @@ function problemBody(p: Problem, keepExpected = "", priority = "", askPriority =
   if (!p.solved) return { error: "اختر: هل حُلّت المشكلة؟" };
   const prio = askPriority ? { priority } : {};
   if (p.solved === "yes") return { body: { what_happened: p.what.trim(), solved: true, ...prio } };
-  if (!p.resp || !p.expected) return { error: "حدد المسؤول ووقت الحل المتوقع (خلال يومين)" };
+  if (!p.resp) return { error: "اختر من يجب أن يحلّها" };
+  const [kind, uid] = p.resp.split(":");
+  if (kind === "forward")      // the chain has its own times (24 h per person): no expected / callback time here
+    return { body: { what_happened: p.what.trim(), solved: false, ...prio, responsible_kind: kind,
+      ...(uid ? { forward_person_id: Number(uid), forward_note: p.fnote.trim() } : {}) } };
+  if (!p.expected) return { error: "حدد وقت الحل المتوقع (خلال يومين)" };
   const left = (v: string) => new Date(fromRiyadhInput(v)).getTime() - Date.now();
   if (priority === "high" && left(p.expected) > MAX_SOLVE_HIGH_MS)        // the server checks this even unchanged
     return { error: "أقصى وقت لحل مشكلة عالية الأولوية يوم واحد" };
   if (p.expected !== keepExpected && left(p.expected) > MAX_SOLVE_MS) return { error: "أقصى وقت لحل المشكلة يومان" };
   if (p.callback && left(p.callback) <= 0) return { error: "وقت معاودة الاتصال يجب أن يكون في المستقبل" };
   if (p.callback && left(p.callback) > MAX_SOLVE_MS) return { error: "وقت معاودة الاتصال خلال يومين على الأكثر" };
-  const [kind, uid] = p.resp.split(":");
-  const who = kind === "forward"
-    ? (uid ? { forward_person_id: Number(uid), forward_note: p.fnote.trim() } : {})   // the person: first form only
-    : { responsible_user_id: uid ? Number(uid) : null };
+  const who = { responsible_user_id: uid ? Number(uid) : null };
   return { body: { what_happened: p.what.trim(), solved: false, ...prio, responsible_kind: kind, ...who,
     expected_at: fromRiyadhInput(p.expected), ...(p.callback ? { callback_at: fromRiyadhInput(p.callback) } : {}) } };
 }
 
-function ProblemFields({ p, set, options, label, afterText, high, forwardOptions = [], forwardedTo }:
+const WHAT_MAX = 500;      // = the textarea and the server (followups.validate)
+
+/** «ماذا حدث؟» text made from the AI summary of the call: the summary, then the action points, cut to 500. */
+export function summaryText(a: AgentSummary["analysis"]): string {
+  if (!a || a.status !== "done") return "";
+  const items = (a.action_items ?? []).map((x) => x.trim()).filter(Boolean).map((x) => `- ${x}`);
+  return [(a.summary ?? "").trim(), ...items].filter(Boolean).join("\n");
+}
+
+/** Put `add` in the box: an empty box gets it, a box with the agent's own text keeps it and gets it below. */
+export function fillWhat(current: string, add: string): string {
+  const out = current.trim() ? `${current.trimEnd()}\n${add}` : add;
+  return out.length <= WHAT_MAX ? out : out.slice(0, WHAT_MAX - 1) + "…";
+}
+
+/** Feature 1 (docs/followup-form-and-forward.md): fill «ماذا حدث؟» from the call summary. It only fills the text:
+ *  the agent reads and fixes it, then «حفظ» saves (and sends it to the forward person, if one is picked). */
+function FillFromSummary({ summary, what, onFill }:
+  { summary: AgentSummary["analysis"] | undefined; what: string; onFill: (text: string) => void }) {
+  const [filled, setFilled] = useState(false);
+  if (!summary || summary.status === "error") return null;         // no analysis for this call: no button
+  const text = summaryText(summary);
+  if (summary.status !== "done" || !text)
+    return <div className="fill-row"><button type="button" disabled>املأ من ملخص المكالمة</button>
+      <span className="muted small">الملخص قيد التجهيز…</span></div>;
+  return (
+    <div className="fill-row">
+      <button type="button" onClick={() => { onFill(fillWhat(what, text)); setFilled(true); }}>
+        {what.trim() ? "أضف ملخص المكالمة للنص" : "املأ من ملخص المكالمة"}</button>
+      {filled && <span className="muted small">راجع النص وعدّله قبل الحفظ: يُحفظ ويُرسل كما هو.</span>}
+    </div>
+  );
+}
+
+function ProblemFields({ p, set, options, label, afterText, high, forwardOptions = [], forwardedTo, summary }:
   { p: Problem; set: (p: Problem) => void; options: Person[]; label: string; afterText?: ReactNode; high?: boolean;
     forwardOptions?: ForwardOption[];   // first form, link on: the branch supervisors
-    forwardedTo?: Forward | null }) {   // a note on a forwarded problem: only the supervisor closes it
+    forwardedTo?: Forward | null;       // a note on a forwarded problem: only the supervisor closes it
+    summary?: AgentSummary["analysis"] }) {   // first form only: the «املأ من ملخص المكالمة» button
   const max = high ? toRiyadhInput(new Date(Date.now() + MAX_SOLVE_HIGH_MS).toISOString()) : maxIn();
   const toSupervisor = p.resp.startsWith("forward:");
   const [fq, setFq] = useState("");          // search in the ~474 employees of the other system
@@ -70,8 +107,9 @@ function ProblemFields({ p, set, options, label, afterText, high, forwardOptions
   return (
     <>
       <label>{label}
-        <textarea value={p.what} maxLength={500} rows={3} onChange={(e) => set({ ...p, what: e.target.value })} />
+        <textarea value={p.what} maxLength={WHAT_MAX} rows={3} onChange={(e) => set({ ...p, what: e.target.value })} />
       </label>
+      {summary !== undefined && <FillFromSummary summary={summary} what={p.what} onFill={(what) => set({ ...p, what })} />}
       {afterText}
       {forwardedTo ? <p className="muted small">المشكلة محوّلة إلى {(forwardedTo.holders?.length ? forwardedTo.holders
         : [forwardedTo.name ?? ""]).join("، ")}: {(forwardedTo.holders?.length ?? 0) > 1 ? "هم من يغلقونها" : "هو من يغلقها"}.</p> : (
@@ -107,8 +145,12 @@ function ProblemFields({ p, set, options, label, afterText, high, forwardOptions
           {toSupervisor && <label>ملاحظة للمسؤول (اختياري)
             <textarea value={p.fnote} maxLength={500} rows={2} onChange={(e) => set({ ...p, fnote: e.target.value })} />
           </label>}
-          <label>وقت الحل المتوقع ({high ? "خلال يوم واحد: أولوية عالية" : "خلال يومين على الأكثر"}) <input type="datetime-local" value={p.expected} min={nowIn()} max={max} onChange={(e) => set({ ...p, expected: e.target.value })} /></label>
-          <label>وقت معاودة الاتصال بالعميل (اختياري) <input type="datetime-local" value={p.callback} min={nowIn()} max={maxIn()} onChange={(e) => set({ ...p, callback: e.target.value })} /></label>
+          {/* a forward has its own times (the chain): no expected / callback time (user, 2026-11-22) */}
+          {toSupervisor || forwardedTo ? <p className="muted small">لا يُطلب وقت حل أو معاودة اتصال: للتحويل مهلته
+            الخاصة (24 ساعة لكل مسؤول).</p> : <>
+            <label>وقت الحل المتوقع ({high ? "خلال يوم واحد: أولوية عالية" : "خلال يومين على الأكثر"}) <input type="datetime-local" value={p.expected} min={nowIn()} max={max} onChange={(e) => set({ ...p, expected: e.target.value })} /></label>
+            <label>وقت معاودة الاتصال بالعميل (اختياري) <input type="datetime-local" value={p.callback} min={nowIn()} max={maxIn()} onChange={(e) => set({ ...p, callback: e.target.value })} /></label>
+          </>}
         </>
       )}
     </>
@@ -273,6 +315,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
   const [prio, setPrio] = useState("");             // first form only (set once)
   const [note, setNote] = useState<Problem>(EMPTY);
   const [student, setStudent] = useState<StudentLookup | null>(null);
+  const [summary, setSummary] = useState<AgentSummary["analysis"]>(null);
   const fail = useFail(onExpired, setError);
 
   const load = (v: FollowupView) => {
@@ -295,6 +338,13 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
     setStudent(null);
     if (lookUp) api.student(callId).then(setStudent).catch((e) => { if (e instanceof Unauthorized) onExpired(); });
     /* eslint-disable-next-line */ }, [callId, lookUp]);
+  // the call summary for «املأ من ملخص المكالمة»: only while the agent can fill the form; an error only hides the button
+  const wantSummary = !staff && !!view?.needed && view.can_edit;
+  useEffect(() => {
+    setSummary(null);
+    if (wantSummary) api.agentSummary(callId).then((d) => setSummary(d.analysis))
+      .catch((e) => { if (e instanceof Unauthorized) onExpired(); });
+    /* eslint-disable-next-line */ }, [callId, wantSummary]);
   // first form, "not solved", nobody picked yet: pre-pick the suggested person (the agent can change it)
   const sug = student?.suggestion;
   const sugOk = !!sug && !!view?.needed && !view.form && !!view.forward_enabled
@@ -382,14 +432,21 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
           {view.form && <legend>تعديل النموذج</legend>}
           {!view.form && <button type="button" onClick={() => saveForm({ no_followup: true })}>لا تحتاج متابعة (رقم خطأ، استفسار انتهى…)</button>}
           <ProblemFields p={form} set={setForm} options={view.options} label="ماذا حدث؟" high={prio === "high"}
-            forwardOptions={view.forward_enabled ? view.forward_options : []}
+            forwardOptions={view.forward_enabled ? view.forward_options : []} summary={summary}
             afterText={<label>الأولوية
               <select value={prio} required onChange={(e) => setPrio(e.target.value)}>
                 <option value="">اختر…</option>
                 {PRIORITIES.map((k) => <option key={k} value={k}>{PRIORITY_LABEL[k]}</option>)}
               </select>
             </label>} />
-          <button type="button" className="primary" onClick={submitForm}>حفظ</button>
+          {/* «حفظ» also sends the problem when a forward person is picked: the label says so */}
+          <button type="button" className="primary" onClick={submitForm}>{(() => {
+            const to = form.solved === "no" && form.resp.startsWith("forward:")
+              ? (view.forward_options ?? []).find((o) => form.resp === `forward:${o.id}`) : undefined;
+            return to ? `حفظ وتحويل إلى ${to.name}` : "حفظ";
+          })()}</button>
+          {form.solved === "no" && form.resp.startsWith("forward:") &&
+            <p className="muted small">عند الحفظ تُرسل المشكلة إلى نظام خدمة العملاء (تذكرة) ولا يمكن تعديل النموذج بعدها.</p>}
         </fieldset>
       </>}
       {saved && <p className="muted small">{saved}</p>}

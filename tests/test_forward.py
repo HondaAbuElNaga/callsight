@@ -221,6 +221,13 @@ def test_forward_validation(fs):
     clean = fu.validate(s, fwd_data(pid, now), c, now, forward_ok=True)
     assert clean["forward_person_id"] == pid and clean["forward_note"] == "اتصل بعد العصر"
     assert clean["responsible_kind"] == "forward"
+    # a forward has its own times (user 2026-11-22): none needed from the agent, any sent by an old page ignored
+    bare = {k: v for k, v in fwd_data(pid, now).items() if k != "expected_at"}
+    clean = fu.validate(s, bare, c, now, forward_ok=True)
+    assert clean["expected_at"] == now + timedelta(hours=24) and clean["callback_at"] is None
+    clean = fu.validate(s, {**fwd_data(pid, now), "expected_at": now + timedelta(days=9),
+                            "callback_at": now + timedelta(hours=2)}, c, now, forward_ok=True)
+    assert clean["expected_at"] == now + timedelta(hours=24) and clean["callback_at"] is None
     # other answers carry no forward fields
     other = fu.validate(s, {**fwd_data(pid, now), "responsible_kind": "customer"}, c, now, forward_ok=True)
     assert other["forward_person_id"] is None and other["forward_note"] is None
@@ -245,10 +252,12 @@ def test_forward_save_steps_and_unsolved(fs):
     f = fu.save(s, c, fwd_data(people["صالح الغامدي"].id, now), u, now, forward_ok=True)
     assert f.forward_status == "pending" and f.forward_tries == 0
     d = rows(s, at(12))["a"]
-    assert d["step"] == "forwarded" and datetime.fromisoformat(d["solve_by"]) == now + timedelta(hours=5)
+    # the agent's time is ignored: a forward has the chain's time (24 h for the first person; user 2026-11-22)
+    assert d["step"] == "forwarded" and datetime.fromisoformat(d["solve_by"]) == now + timedelta(hours=24)
     assert d["forward"]["name"] == "صالح الغامدي" and d["forward"]["status"] == "pending"
     assert d["history"][0]["responsible"] == "صالح الغامدي"
-    assert rows(s, now + timedelta(hours=7))["a"]["step"] == "forward_overdue"
+    assert rows(s, now + timedelta(hours=7))["a"]["step"] == "forwarded"
+    assert rows(s, now + timedelta(hours=26))["a"]["step"] == "forward_overdue"
     got, _ = fu.unsolved(s, ["119"], DAY, at(12), callers=["119"])
     assert [r.call.uid for r in got] == ["a"]
     # changed to the customer before it was sent: the send is dropped
@@ -279,7 +288,8 @@ def test_note_on_a_forwarded_problem(fs):
     assert n.responsible_kind == "forward"
     d = rows(s, at(12))["a"]
     assert d["step"] == "forwarded"
-    assert datetime.fromisoformat(d["solve_by"]) == now + timedelta(hours=5)       # the form's time, not the note's
+    assert datetime.fromisoformat(d["solve_by"]) == now + timedelta(hours=24)      # the form's time, not the note's
+    assert n.callback_at is None
 
 
 # ---------- the ticket text ----------
@@ -292,7 +302,7 @@ def test_ticket_notes_fit_590_and_hold_the_facts(fs):
                      first_filled_at=at(11), updated_by=1, updated_at=at(11))
     txt = forward.ticket_notes(c, f, "علي")
     assert len(txt) <= 590
-    for part in ("عالية", "0501234567", "2026-11-10 10:00", "2026-11-10 15:00", "علي (119)", str(c.id), "ما حدث: ن",
+    for part in ("عالية", "0501234567", "2026-11-10 10:00", "24 ساعة عند كل مسؤول", "علي (119)", str(c.id), "ما حدث: ن",
                  "ملاحظة للمسؤول: م"):
         assert part in txt
     f.what_happened, f.forward_note = "قصير", None

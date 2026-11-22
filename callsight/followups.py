@@ -31,6 +31,7 @@ LATE_CALL_EXTRA = timedelta(hours=2)
 MAX_CALLBACK_DAYS = 2         # callback (optional) within 2 days
 MAX_SOLVE = timedelta(days=2)  # a problem not solved must have an expected solve time within 2 days
 MAX_SOLVE_HIGH = timedelta(days=1)   # ... within 1 day when the priority is high (spec 2026-11-16, requirement 14)
+FORWARD_HOP = timedelta(hours=24)    # a forwarded problem: each person's time (= forward.HOP_TIME); sets expected_at
 # spec 2026-11-16-priority-no-followup: fixed English codes (another system reads them), high -> low
 PRIORITIES = {"high": "عالية", "medium": "متوسطة", "low": "منخفضة"}
 CAME_BACK = timedelta(hours=72)
@@ -1017,6 +1018,12 @@ def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: d
         if len(fnote) > FORWARD_NOTE_MAX:
             raise FormError("ملاحظة المسؤول أطول من 500 حرف")
         clean.update(forward_person_id=person.id, forward_note=fnote or None)
+    if kind == "forward":
+        # the chain has its own times (24 h per person: employee -> branch supervisor -> management), so the agent
+        # gives none (user, 2026-11-22). Expected = the first person's 24 h; no callback by the agent. Times sent by
+        # an old page are ignored.
+        clean.update(responsible_kind=kind, expected_at=(real_now or now) + FORWARD_HOP, callback_at=None)
+        return clean
     uid = data.get("responsible_user_id")
     if kind == "user":
         u = s.get(AppUser, uid) if isinstance(uid, int) else None

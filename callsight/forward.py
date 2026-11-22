@@ -292,7 +292,7 @@ def ticket_notes(call: Call, f: CallFollowup, agent_name: str) -> str:
     head = [f"مشكلة محوّلة من خدمة العملاء - الأولوية: {PRIORITY_AR.get(f.priority or '', '-')}",
             f"رقم العميل: {call.customer_number or '-'}",
             f"وقت المكالمة: {_t(call.start_time)}",
-            f"الحل المتوقع قبل: {_t(f.expected_at)}",
+            "المهلة: 24 ساعة عند كل مسؤول من وقت وصولها إليه",
             f"الموظف: {agent_name or '-'} ({call.agent_ext or '-'}) - رقم المكالمة عندنا: {call.id}"]
     fixed = "\n".join(head)
     what, note = (f.what_happened or "").strip(), (f.forward_note or "").strip()

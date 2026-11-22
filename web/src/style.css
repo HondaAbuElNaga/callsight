@@ -263,9 +263,16 @@ table.health td { vertical-align: top; }
 /* agent-supervisor spec: call-panel boxes, users page */
 .panel.work { margin: 10px 0; }
 .panel.work h3 { margin: 0 0 6px; font-size: 15px; display: flex; gap: 8px; align-items: center; }
-.form { border: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
-.form label { display: flex; flex-direction: column; gap: 4px; }
+/* min-width 0: a <fieldset> is min-content wide by default, so the forward list (~474 long names) pushed the whole
+   side panel wider than the screen (cut text + a sideways scroll bar). Fields then take the panel's width. */
+.form { border: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.form label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .form textarea, .form select, .form input, .panel.work input { font: inherit; }
+.form textarea, .form select, .form input:not([type="radio"]):not([type="checkbox"]) { width: 100%; max-width: 100%; }
+.detail { overflow-x: hidden; }
+.detail .panel { overflow-wrap: anywhere; }
+.fill-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fill-row button { font-size: 13px; padding: 3px 10px; }
 .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .share { border-bottom: 1px solid var(--line); padding: 4px 0; }
 .share p { margin: 2px 0; }
