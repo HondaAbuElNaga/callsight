@@ -159,9 +159,9 @@ jobs:
               cd "$M"
               MC=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml)
               "${MC[@]}" exec -T postgres psql -U callsight -d callsight -P pager=off -c \
-                "with c as (select * from call where start_time between
-                   ((now() at time zone 'Asia/Riyadh')::date + time '$VALUE' - interval '5 min') at time zone 'Asia/Riyadh'
-                   and ((now() at time zone 'Asia/Riyadh')::date + time '$VALUE' + interval '5 min') at time zone 'Asia/Riyadh')
+                "with w as (select ((now() at time zone 'Asia/Riyadh')::date + time '$VALUE') at time zone 'Asia/Riyadh' t),
+                 c as (select call.* from call, w where call.start_time >= w.t - interval '5 min'
+                       and call.start_time < w.t + interval '5 min')
                  select c.id, c.agent_ext, c.direction, to_char(c.start_time at time zone 'Asia/Riyadh','HH24:MI:SS') start_riyadh,
                         c.talk_seconds talk_s, c.recording_status rec,
                         t.status tr, t.redo, t.tries tr_tries, to_char(t.finished_at at time zone 'Asia/Riyadh','HH24:MI') tr_done,
