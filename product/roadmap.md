@@ -4,7 +4,7 @@
 
 **Current position (2026-11-18) — START HERE in a new session:**
 
-- **2026-11-22 shared calls tab** (`specs/2026-11-22-shares-tab/spec.md`): agent tab «ملاحظات المشرف» + archive, close after reply, 24 h reply KPI. Built, not yet live.
+- **2026-11-22 shared calls tab** (`specs/2026-11-22-shares-tab/spec.md`): agent tab «ملاحظات المشرف» + archive, close after reply, 24 h reply KPI. LIVE 2026-11-22 (migration 0026). Review fixes LIVE the same day (migration 0027): each supervisor/admin has their own archive, a reply needs 10+ characters, an edit after the 24 h counts late, faster list.
 - **The plan to the end of the project:** [finish-plan.md](finish-plan.md), steps 0–10, every spec approved
   2026-11-18 ("approve all": each open question = the recommendation). Build one at a time, 3-agent review, push to
   `main` only on the user's "ok push" (push = live deploy).
