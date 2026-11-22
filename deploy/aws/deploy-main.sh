@@ -17,8 +17,10 @@ C=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml)
 
 # A database dump before every update (a new version may change the database). Skipped only on the very first
 # start, when no worker exists yet.
+# A worker stuck restarting (e.g. a broken migration from the last update) can't be exec'd: then the backup runs in
+# a one-off container of the same image (no migration, no celery).
 if [ -n "$("${C[@]}" ps -q worker 2>/dev/null)" ]; then
-  "${C[@]}" exec -T worker python -m callsight backup
+  "${C[@]}" exec -T worker python -m callsight backup || "${C[@]}" run --rm -T --no-deps worker python -m callsight backup
 fi
 
 "${C[@]}" up -d --build
