@@ -626,7 +626,10 @@ class ForwardHop(Base):
     __tablename__ = "forward_hop"
     __table_args__ = (CheckConstraint("level IN (1, 2, 3)", name="ck_forward_hop_level"),
                       CheckConstraint("result IN ('pending', 'open', 'solved', 'passed_on', 'closed_by_other', "
-                                      "'failed')", name="ck_forward_hop_result"))
+                                      "'failed')", name="ck_forward_hop_result"),
+                      CheckConstraint("erp_close IS NULL OR erp_close IN ('pending', 'done', 'failed')",
+                                      name="ck_forward_hop_erp_close"),
+                      Index("ix_forward_hop_erp_close", "erp_close", postgresql_where=sa_text("erp_close = 'pending'")))
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
     level: Mapped[int] = mapped_column(SmallInteger)
@@ -641,6 +644,11 @@ class ForwardHop(Base):
     checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(String(300))
     tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # our supervisor / admin decided this person solved it (migration 0029); None = the chain decided
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id", ondelete="SET NULL"))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # that decision: this hop's ticket must be closed there by the worker (pending -> done / failed)
+    erp_close: Mapped[str | None] = mapped_column(String(10))
 
 
 class CallFollowupNote(Base):

@@ -57,6 +57,7 @@ STAFF_ONLY = {
     ("POST", "/api/rules/topics"), ("POST", "/api/rules/test"), ("POST", "/api/rules/recheck"),
     ("GET", "/api/forwards"), ("GET", "/api/forwards/{call_id}"),      # forwards page: staff only
     ("GET", "/api/kpi/forwards"),                                      # D4: forward people KPI, staff only
+    ("POST", "/api/forwards/{call_id}/decide"),                        # staff close: who solved it (2026-11-22)
     # erp-api spec: API keys (admin, by hand only) + the live board once over HTTP (staff)
     ("GET", "/api/admin/api-clients"), ("POST", "/api/admin/api-clients"),
     ("POST", "/api/admin/api-clients/{client_id}/disable"), ("GET", "/api/live/snapshot"),

@@ -672,7 +672,8 @@ def _forward(cmd: str) -> int:
                 if cmd == "forward-poll":
                     print(forward.poll_tickets(s, client), forward.advance(s, client))
                     return 0
-                print(forward.send_pending(s, client), forward.send_messages(s, client))
+                print(forward.send_pending(s, client), forward.send_messages(s, client),
+                      forward.close_decided(s, client))
                 return 0
     except (CsError, CsUnavailable) as exc:
         print(f"customer-service system: {exc}")

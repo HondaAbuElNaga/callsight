@@ -461,6 +461,7 @@ function ForwardPeople({ from, to, agent, onExpired }: { from: string; to: strin
   const [d, setD] = useState<ForwardKpi | null>(null);
   const [open, setOpen] = useState<string | null>(null);      // "p:<level>:<id>" / "a:<ext>": its mistakes list
   const [story, setStory] = useState<number | null>(null);
+  const [reload, setReload] = useState(0);     // a supervisor's close in the story: read the numbers again
   const [error, setError] = useState("");
   const expired = useRef(onExpired);       // a new function each render must not refetch
   expired.current = onExpired;
@@ -475,7 +476,7 @@ function ForwardPeople({ from, to, agent, onExpired }: { from: string; to: strin
       });
     }, 400);
     return () => { live = false; clearTimeout(t); };
-  }, [from, to, agent]);
+  }, [from, to, agent, reload]);
   if (error) return <section className="panel"><p className="error">{error}</p></section>;
   if (!d || (d.people.length === 0 && d.agents.length === 0)) return null;
   const toggle = (k: string) => setOpen(open === k ? null : k);
@@ -536,7 +537,8 @@ function ForwardPeople({ from, to, agent, onExpired }: { from: string; to: strin
           })}</tbody>
         </table></div>
       </>}
-      {story !== null && <Story id={story} onClose={() => setStory(null)} onExpired={onExpired} />}
+      {story !== null && <Story id={story} onClose={() => setStory(null)} onExpired={onExpired}
+        onChanged={() => setReload((n) => n + 1)} />}
       <p className="muted small">
         بحسب يوم استلام كل شخص للمشكلة. كل شخص له 24 ساعة من وقته هو: الوقت الذي ينتظر فيه سؤالُه رد موظف المكالمة
         لا يُحسب عليه. «تأخر» = تجاوز وقته 24 ساعة دون أن يحلّها (انتقلت لمن بعده، أو ما زالت عنده، أو حلّها بعدها).

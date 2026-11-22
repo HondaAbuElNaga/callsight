@@ -632,7 +632,7 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
     from . import rules as rules_routes
     rules_routes.register(app, DB=DB, Manager=Manager, Admin=Admin, cfg=cfg)   # the rules page
     from . import forwards as forward_routes
-    forward_routes.register(app, DB=DB, Manager=Manager,      # the forwards page (staff only)
+    forward_routes.register(app, DB=DB, Manager=Manager, cfg=cfg,     # the forwards page (staff only)
                             audit_analysis=lambda s, user, call_id: audit_transcript(s, user, call_id, "analysis"))
 
     @app.get("/api/{rest:path}")

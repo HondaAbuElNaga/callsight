@@ -66,6 +66,7 @@ R = read, W = write. "own" = only calls of the agent's own extension.
 | POST /api/shares/{id}/seen, PUT /api/shares/{id}/reply | mark seen / reply | only the person it was shared with | same | W (shared with them) |
 | POST /api/shares/{id}/close | move to my archive (the agent and each supervisor/admin have their own) | W (any) | W (any) | W (shared with them, only after replying; the reply is then locked) |
 | GET /api/forwards, /api/forwards/{id}, /api/kpi/forwards | forwards page | R | R | ❌ |
+| POST /api/forwards/{id}/decide | close a forwarded problem: pick who in the chain solved it (KPI point); the worker closes the ticket(s) in the ERP | W | W | ❌ |
 
 ### KPIs, reports, rating, live
 

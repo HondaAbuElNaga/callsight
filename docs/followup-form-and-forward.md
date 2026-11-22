@@ -258,6 +258,22 @@ Employee (24 h) ──not solved──► Branch supervisor (24 h) ──not sol
 - If the person asks a question on the ticket, the agent sees «سؤال ينتظر ردك» and can answer;
   the answer is written on the ticket.
 
+### Supervisor close (user decision 2026-11-22, migration 0029)
+
+On the problem's story (page «التحويلات», or the KPI page), a supervisor or admin presses
+**«إغلاق: حلّها هذا الشخص»** on anyone who really got it (employee / branch supervisor / management), then
+«نعم، أغلقها». No reason, no proof call needed: the decision replaces the call check.
+
+- That person gets it as **solved**; «حلّ خلال 24 ساعة» only if his own time was within 24 h (his own close
+  time if he closed it, else the time of the decision for the one holding it, or the time it passed on).
+- The others keep their marks: whoever was already late stays late; the one holding it now ends «حلّها غيره».
+- The chain stops at once in our system (`forward.decide`, row lock on the form; busy → «حاول بعد دقيقة»).
+- The worker closes every open ticket in the ERP (`forward.close_decided`, `followup(close=True)` with
+  «أُغلقت بقرار مشرف خدمة العملاء: حلّها «الاسم»»): tried every 5 minutes for 3 days; refused → «تعذّر إغلاق التذكرة»
+  in the story, close it there by hand.
+- The story shows «بقرار <username>» and the time; every decision is in the admin log (`forward_decide`).
+- The problem's solve time (list, averages) is the decision time.
+
 ---
 
 ## 7. New feature 1: fill «ماذا حدث» from the call summary

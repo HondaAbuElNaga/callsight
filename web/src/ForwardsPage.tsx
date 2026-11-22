@@ -2,7 +2,7 @@
 // problem kept after it closes, the full story of one problem, and the numbers for the chosen dates.
 import { useEffect, useRef, useState } from "react";
 import {
-  api, Unauthorized,
+  api, Refused, Unauthorized,
   type ForwardLineItem, type ForwardPersonStats, type ForwardsList, type ForwardStory, type Me,
 } from "./api";
 import { HOP_LEVEL, HOP_RESULT, PROOF_REASON, type Priority, formatDateTime, riyadhToday } from "./format";
@@ -132,7 +132,8 @@ export function ForwardsPage({ me, onCalls, onLogout, onExpired }: Props) {
         </section>
       </>}
 
-      {open !== null && <Story id={open} onClose={() => setOpen(null)} onExpired={onExpired} />}
+      {open !== null && <Story id={open} onClose={() => setOpen(null)} onExpired={onExpired}
+        onChanged={() => setF((x) => ({ ...x }))} />}
     </div>
   );
 }
@@ -186,9 +187,35 @@ function Line({ i, onOpen }: { i: ForwardLineItem; onOpen: () => void }) {
   );
 }
 
-export function Story({ id, onClose, onExpired }: { id: number; onClose: () => void; onExpired: () => void }) {
+const ERP_CLOSE: Record<string, [string, string]> = {
+  pending: ["تُغلق التذكرة في نظام خدمة العملاء…", "off"], done: ["أُغلقت التذكرة في نظام خدمة العملاء", "ok"],
+  failed: ["تعذّر إغلاق التذكرة في نظام خدمة العملاء: أغلقها هناك يدويًا", "bad"],
+};
+
+export function Story({ id, onClose, onExpired, onChanged }:
+  { id: number; onClose: () => void; onExpired: () => void; onChanged?: () => void }) {
   const [st, setSt] = useState<ForwardStory | null>(null);
   const [error, setError] = useState("");
+  const [ask, setAsk] = useState<number | null>(null);      // the hop whose «حلّها» waits for the second click
+  const [busy, setBusy] = useState(false);
+  const [decideError, setDecideError] = useState("");
+  const shown = useRef(id);
+  shown.current = id;
+  const decide = (hopId: number) => {
+    const forId = id;
+    setBusy(true);
+    setDecideError("");
+    api.forwardDecide(forId, hopId).then((d) => {
+      onChanged?.();
+      if (shown.current !== forId) return;              // another problem is open now: keep its story
+      setSt(d);
+      setAsk(null);
+    }).catch((e) => {
+      if (shown.current !== forId) return;
+      if (e instanceof Unauthorized) expired.current();
+      else setDecideError(e instanceof Refused ? e.message : "تعذّر الحفظ");
+    }).finally(() => setBusy(false));
+  };
   const expired = useRef(onExpired);
   expired.current = onExpired;
   const close = useRef(onClose);
@@ -197,6 +224,8 @@ export function Story({ id, onClose, onExpired }: { id: number; onClose: () => v
     let live = true;
     setSt(null);
     setError("");
+    setAsk(null);
+    setDecideError("");
     api.forwardStory(id).then((d) => { if (live) setSt(d); }).catch((e) => {
       if (!live) return;
       if (e instanceof Unauthorized) expired.current(); else setError("تعذّر تحميل القصة");
@@ -209,6 +238,7 @@ export function Story({ id, onClose, onExpired }: { id: number; onClose: () => v
     <aside className="side-panel story">
       <div className="line"><h2>قصة المشكلة · مكالمة {id}</h2><button className="link" onClick={onClose}>إغلاق</button></div>
       {error && <p className="bad-text">{error}</p>}
+      {decideError && <p className="bad-text">{decideError}</p>}
       {st && <ol className="story-steps">
         <li>
           <b>موظف المكالمة {st.agent.ext} {st.agent.name} حوّلها</b>
@@ -240,7 +270,18 @@ export function Story({ id, onClose, onExpired }: { id: number; onClose: () => v
             <span className={`state ${h.result === "solved" ? "ok" : h.result === "passed_on" || h.result === "failed" ? "bad" : "off"}`}>
               {HOP_RESULT[h.result] ?? h.result}</span>
             {h.result === "passed_on" && h.ended_at && <span className="muted small"> · انتقلت {formatDateTime(h.ended_at)}</span>}
+            {h.decided_at && <span className="muted small"> · بقرار {h.decided_by ?? "المشرف"} {formatDateTime(h.decided_at)}</span>}
             {h.error && <span className="muted small"> ({h.error})</span>}
+            {h.erp_close && <div className="small"><span className={`state ${ERP_CLOSE[h.erp_close][1]}`}>
+              {ERP_CLOSE[h.erp_close][0]}</span></div>}
+            {h.can_decide && <div className="row small">
+              {ask === h.hop_id ? <>
+                <span>حلّها «{h.name ?? "–"}»؟ تُغلق المشكلة وتُحسب له، وتُغلق التذكرة في نظام خدمة العملاء.</span>
+                <button disabled={busy} onClick={() => decide(h.hop_id)}>نعم، أغلقها</button>
+                <button className="link" disabled={busy} onClick={() => setAsk(null)}>إلغاء</button>
+              </> : <button className="link" onClick={() => { setAsk(h.hop_id); setDecideError(""); }}>
+                إغلاق: حلّها هذا الشخص</button>}
+            </div>}
           </li>
         ))}
         {st.other_items && st.other_items.length > 0 && <li>

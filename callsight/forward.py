@@ -483,6 +483,10 @@ def poll_tickets(s: Session, client: CsClient, now: datetime | None = None) -> d
             done["missing"] += 1
             s.commit()
             continue
+        s.refresh(h)
+        if h.result != "open":                      # closed by our supervisor meanwhile: his close is not theirs
+            s.commit()
+            continue
         done["new_items"] += store_ticket(s, h, data, now)
         h.error = None
         done["read"] += 1
@@ -511,7 +515,8 @@ def advance(s: Session, client: CsClient, now: datetime | None = None) -> dict:
             s.rollback()
             continue
         call = s.get(Call, cid)
-        hops = list(s.scalars(select(ForwardHop).where(ForwardHop.call_id == cid).order_by(ForwardHop.id)))
+        hops = list(s.scalars(select(ForwardHop).where(ForwardHop.call_id == cid).order_by(ForwardHop.id)
+                              .execution_options(populate_existing=True)))   # never the poll's cached rows
         try:
             _advance_one(s, client, f, call, hops, now, done)
         except CsAuthError:
@@ -659,6 +664,116 @@ def _send_copy(s, client, f, call, h, now, done) -> None:
         m.status = "pending"                        # sent_to keeps the tickets that have it: only the copy gets it
 
 
+# ---------- our supervisor closes it: picks who solved it (user decision 2026-11-22) ----------
+
+DECIDE_NOTE = "أُغلقت بقرار مشرف خدمة العملاء: حلّها «{}»"
+CLOSE_WINDOW = timedelta(days=3)     # a ticket that cannot be closed there in 3 days (5-min runs) -> failed
+
+
+class DecideError(Exception):
+    """The supervisor's close cannot be done (the message is shown on the page)."""
+
+
+def decidable(h: ForwardHop) -> bool:
+    """A person who really got the problem (not a copy never made, not a failed send)."""
+    return h.sent_at is not None and h.result in ("open", "passed_on")
+
+
+def decide(s: Session, call_id: int, hop_id: int, user_id: int, now: datetime | None = None) -> ForwardHop:
+    """Our supervisor / admin says «hop_id's person solved it»: that hop is solved (his KPI point; his time is his
+    own close if he closed it, else until now, so it counts in 24 h only when it was), every other open hop is
+    closed by another, the chain stops. The open tickets are closed THERE by the worker (erp_close = pending):
+    the API never holds the key. No proof call needed: the decision replaces it. Row lock on the form (the chain
+    worker locks it too, so the two never move one problem at the same time). The caller commits."""
+    now = now or datetime.now(timezone.utc)
+    from sqlalchemy.exc import OperationalError
+    try:                                            # the chain worker may hold it during its HTTP calls
+        f = s.scalars(select(CallFollowup).where(CallFollowup.call_id == call_id).with_for_update(nowait=True)).first()
+    except OperationalError:
+        s.rollback()
+        raise DecideError("المشكلة قيد التحديث الآن، حاول بعد دقيقة") from None
+    call = s.get(Call, call_id)
+    if (f is None or call is None or call.content_deleted_at is not None or f.responsible_kind != "forward"
+            or f.forward_status != "sent"):
+        raise DecideError("لا توجد مشكلة محوّلة على هذه المكالمة")
+    hops = list(s.scalars(select(ForwardHop).where(ForwardHop.call_id == call_id).order_by(ForwardHop.id)))
+    if any(h.result == "solved" for h in hops):
+        raise DecideError("حُلّت هذه المشكلة من قبل")
+    h = next((x for x in hops if x.id == hop_id), None)
+    if h is None or not decidable(h):
+        raise DecideError("اختر شخصًا استلم المشكلة")
+    closing: set[str] = set()
+    for o in hops:
+        if o.result == "open" and o.ticket_guid and o.closed_at is None and o.ticket_guid not in closing:
+            o.erp_close = "pending"                 # closed there by the worker
+            closing.add(o.ticket_guid)
+        if o is not h and o.result in ("open", "pending"):
+            o.result, o.ended_at = "closed_by_other", now
+    if h.result == "open":
+        h.ended_at = now
+    h.result, h.decided_by, h.decided_at, h.error = "solved", user_id, now, None
+    s.flush()
+    return h
+
+
+def close_decided(s: Session, client: CsClient, now: datetime | None = None) -> dict:
+    """Close there the tickets of a supervisor's decision (oldest first, form row-locked, SKIP LOCKED). Refused ->
+    failed with the reason (shown in the story); network / busy -> tried next run, for 3 days. CsAuthError stops."""
+    now = now or datetime.now(timezone.utc)
+    done = {"erp_closed": 0, "erp_close_failed": 0}
+    seen: list[int] = []
+    while len(seen) < MSG_BATCH:
+        stmt = select(ForwardHop).where(ForwardHop.erp_close == "pending")
+        if seen:
+            stmt = stmt.where(ForwardHop.id.not_in(seen))
+        h = s.scalars(stmt.order_by(ForwardHop.id).limit(1)).first()
+        if h is None:
+            break
+        seen.append(h.id)
+        f = s.scalars(select(CallFollowup).where(CallFollowup.call_id == h.call_id)
+                      .with_for_update(skip_locked=True)).first()
+        s.refresh(h)
+        if f is None or h.erp_close != "pending":
+            s.rollback()
+            continue
+        call = s.get(Call, h.call_id)
+        solver = next((x for x in s.scalars(select(ForwardHop).where(ForwardHop.call_id == h.call_id,
+                                                                     ForwardHop.result == "solved")
+                                             .execution_options(populate_existing=True))), None)
+        if call is None or call.content_deleted_at is not None or solver is None or not h.ticket_guid:
+            h.erp_close, h.error = "failed", ERR_ENDED
+            done["erp_close_failed"] += 1
+            s.commit()
+            continue
+        if solver.decided_at is not None and now - solver.decided_at > CLOSE_WINDOW:
+            h.erp_close, h.error = "failed", ERR_EXPIRED   # never close a ticket that may be reopened since
+            done["erp_close_failed"] += 1
+            s.commit()
+            continue
+        try:
+            client.followup(h.ticket_guid, DECIDE_NOTE.format(_person(s, solver).name)[:NOTES_MAX], close=True)
+        except CsAuthError:
+            h.error = ERR_AUTH
+            s.commit()
+            raise
+        except CsError as exc:
+            h.erp_close, h.error = "failed", exc.message[:300]
+            done["erp_close_failed"] += 1
+            s.commit()
+            continue
+        except CsUnavailable as exc:
+            h.tries += 1
+            h.erp_close, h.error = "pending", ERR_UNAVAILABLE   # tried next run, until CLOSE_WINDOW
+            s.commit()
+            if exc.status is None or exc.status in (408, 429):
+                break                               # network / busy: the rest next run
+            continue
+        h.erp_close, h.error = "done", None         # closed_at stays his own close (the story / numbers)
+        done["erp_closed"] += 1
+        s.commit()
+    return done
+
+
 # ---------- D2: supervisors' calls to the customer (proof of solving) ----------
 
 def digits9(number: str | None) -> str:
@@ -768,7 +883,8 @@ def proof(calls: list[Call], scores: dict[int, int | None], has_ext: bool) -> di
 # Every text we write starts with one of these, so a re-read never takes our own text for a question.
 MSG_PREFIX = {"answer": "رد موظف خدمة العملاء", "note": "تحديث من موظف خدمة العملاء",
               "summary": "ملخص المكالمة (آلي)"}
-OUR_PREFIXES = (*MSG_PREFIX.values(), "لم تُحل خلال 24 ساعة", "حُلّت عند", "نسخة للإدارة", "مشكلة محوّلة من")
+OUR_PREFIXES = (*MSG_PREFIX.values(), "لم تُحل خلال 24 ساعة", "حُلّت عند", "نسخة للإدارة", "مشكلة محوّلة من",
+                "أُغلقت بقرار مشرف")
 ANSWER_MAX = 500
 MSG_WINDOW = timedelta(days=3)       # a message that cannot be written in 3 days (ticket never reopened) -> failed
 MSG_BATCH = 100                      # HTTP writes per run

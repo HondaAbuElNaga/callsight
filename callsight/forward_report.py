@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .config import RIYADH
@@ -76,7 +76,7 @@ def _line(f: CallFollowup, c: Call, hs: list[ForwardHop], people: dict, names: d
     first = people.get(hs[0].person_id) if hs else None
     open_ = [h for h in hs if h.result in ("open", "pending")]
     top = max((h.level for h in open_), default=0)
-    end = done_at(s_hop) if s_hop else None
+    end = (s_hop.decided_at or done_at(s_hop)) if s_hop else None     # our supervisor's close ends the problem
     took = (end - f.forwarded_at).total_seconds() if end and f.forwarded_at else None
     return {
         "call_id": c.id, "customer_number": c.customer_number, "agent_ext": c.agent_ext,
@@ -132,8 +132,9 @@ def insights(rows, hops: dict[int, list[ForwardHop]], people: dict) -> dict:
         if st == "solved":
             h = [x for x in hs if x.result == "solved"][-1]
             tot[f"solved_{h.level}"] += 1
-            if done_at(h) and f.forwarded_at:
-                took.append(max(0.0, (done_at(h) - f.forwarded_at).total_seconds()))
+            end = h.decided_at or done_at(h)
+            if end and f.forwarded_at:
+                took.append(max(0.0, (end - f.forwarded_at).total_seconds()))
         else:
             tot[st] += 1
         if hs and hs[0].person_id in people:
@@ -200,6 +201,11 @@ def story(s: Session, call_id: int) -> dict | None:
         else:
             other.append(e)                  # never credited to someone who may not have written it
     names = dict(s.execute(select(Agent.ext, Agent.name)).all())
+    from .db.models import AppUser
+    from .forward import decidable
+    deciders = {u.id: u.username for u in s.scalars(select(AppUser).where(
+        AppUser.id.in_({h.decided_by for h in hs if h.decided_by})))} if any(h.decided_by for h in hs) else {}
+    chain_solved = any(h.result == "solved" for h in hs)
     d9 = digits9(c.customer_number)
     pairs = [(people[h.person_id].ext, d9, h.sent_at) for h in hs
              if h.level == 2 and h.sent_at and h.person_id in people and people[h.person_id].ext]
@@ -208,7 +214,10 @@ def story(s: Session, call_id: int) -> dict | None:
     for h in hs:
         p = people.get(h.person_id)
         mine_items = by_hop.get(h.id, [])
-        item = {"level": h.level, "name": p.name if p else None, "branch": bkey(p),
+        item = {"hop_id": h.id, "level": h.level, "name": p.name if p else None, "branch": bkey(p),
+                "decided_by": deciders.get(h.decided_by) if h.decided_by else None,
+                "decided_at": _iso(h.decided_at), "erp_close": h.erp_close,
+                "can_decide": not chain_solved and decidable(h),
                 "ticket_number": h.ticket_number, "result": h.result, "sent_at": _iso(h.sent_at),
                 "closed_at": _iso(h.closed_at if closed(h) else None), "ended_at": _iso(h.ended_at),
                 "solution": h.solution, "error": h.error,
@@ -316,8 +325,8 @@ def _questions(s: Session, call_ids: set[int]) -> tuple[dict, dict, dict]:
                                                     ForwardMessage.status.in_(ANSWERED))
                        .order_by(ForwardMessage.created_at, ForwardMessage.id)):
         ans[m.call_id].append(m)
-    for cid, at_ in s.execute(select(ForwardHop.call_id, ForwardHop.ended_at).where(
-            ForwardHop.call_id.in_(call_ids), ForwardHop.result == "solved")):
+    for cid, at_ in s.execute(select(ForwardHop.call_id, func.coalesce(ForwardHop.decided_at, ForwardHop.ended_at))
+                              .where(ForwardHop.call_id.in_(call_ids), ForwardHop.result == "solved")):
         if at_ is not None and (cid not in solved_at or at_ < solved_at[cid]):
             solved_at[cid] = at_
     return qs, ans, solved_at
@@ -364,7 +373,9 @@ def people_kpi(s: Session, start: date, end: date, now: datetime | None = None, 
     solver_end: dict[int, datetime] = {}               # the solving hop's own close, per call
     for h in s.scalars(select(ForwardHop).where(ForwardHop.call_id.in_(set(calls)), ForwardHop.result == "solved")
                        ) if calls else []:
-        if done_at(h):
+        if h.decided_at is not None:               # our supervisor's close: the others' turn ended then
+            solver_end[h.call_id] = h.decided_at
+        elif done_at(h):
             solver_end[h.call_id] = done_at(h)
     late = [(h, late_reason(h, now, waits.get(h.call_id), solver_end.get(h.call_id))) for h in hs]
     # the supervisors' calls only for the late closes that need a reason (review D4: smaller query)

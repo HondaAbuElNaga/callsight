@@ -506,6 +506,9 @@ export const api = {
     return get<ForwardsList>(`/api/forwards?${q.toString()}`);
   },
   forwardStory: (id: number) => get<ForwardStory>(`/api/forwards/${id}`),
+  // a supervisor closes the forwarded problem: this person solved it (KPI point), the ticket closes there
+  forwardDecide: (id: number, hopId: number) =>
+    send<ForwardStory>("POST", `/api/forwards/${id}/decide`, { hop_id: hopId }),
   // D4 (req 20): the people problems were forwarded to + the agents' answers to their questions (staff only)
   forwardKpi: (p: { from: string; to: string; agent?: string }) => {
     const q = new URLSearchParams();
@@ -604,13 +607,16 @@ export interface ForwardsList {
   filters: { branches: string[]; people: { id: number; name: string; branch: string }[] };
 }
 export interface ForwardStoryHop {
-  level: 1 | 2 | 3; name: string | null; branch: string | null; ticket_number: number | null;
+  hop_id: number; level: 1 | 2 | 3; name: string | null; branch: string | null; ticket_number: number | null;
   result: "pending" | "open" | "solved" | "passed_on" | "closed_by_other" | "failed";
   sent_at: string | null; closed_at: string | null; ended_at: string | null; solution: string | null;
   error: string | null;
   items: { kind: string; type: string; note: string | null; at: string | null; actor: string | null }[];
   items_cut: boolean;
   calls: ForwardProof["calls"] | null; proof: ForwardProof | null;
+  // our supervisor's close (2026-11-22): who decided this person solved it; the ticket's close there
+  decided_by: string | null; decided_at: string | null; erp_close: "pending" | "done" | "failed" | null;
+  can_decide: boolean;
 }
 export interface ForwardStory {
   call_id: number; customer_number: string | null; priority: string | null; state: ForwardState;

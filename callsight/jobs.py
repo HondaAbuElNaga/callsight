@@ -224,6 +224,7 @@ def forward_send() -> dict:
     with wiring.session_factory()() as s, CsClient(cfg) as client:
         done = forward.send_pending(s, client)
         done.update(forward.send_messages(s, client))    # D3: answers, notes, the AI summary on the ticket
+        done.update(forward.close_decided(s, client))    # our supervisor closed it: close the tickets there
     if any(done.values()):
         log.info("forward send: %s", done)
     return done

@@ -588,8 +588,11 @@ def tracker(row: "Row", now: datetime, names: dict[str, str] | None = None) -> l
                     if ok else "لم يرد العميل")
         if h.result == "solved":
             solved = True
-            add("step", f"حلّها {holder} ✓", h.closed_at if closed(h) and h.closed_at else h.ended_at, "done",
-                h.solution)
+            if h.decided_at is not None:            # our supervisor's close (2026-11-22)
+                add("step", f"حلّها {holder} ✓ (بقرار المشرف)", h.decided_at, "done", h.solution)
+            else:
+                add("step", f"حلّها {holder} ✓", h.closed_at if closed(h) and h.closed_at else h.ended_at, "done",
+                    h.solution)
         elif h.result == "passed_on":
             why = None
             if h.level == 2 and closed(h) and p is not None and p.ext:

@@ -5,11 +5,16 @@ from datetime import date, datetime, timedelta
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel
 
 from ..config import RIYADH
 
 
-def register(app: FastAPI, *, DB, Manager, audit_analysis) -> None:
+class DecideIn(BaseModel):
+    hop_id: int
+
+
+def register(app: FastAPI, *, DB, Manager, audit_analysis, cfg=None) -> None:
 
     @app.get("/api/forwards")
     def forwards(user: Manager, s: DB,
@@ -55,4 +60,29 @@ def register(app: FastAPI, *, DB, Manager, audit_analysis) -> None:
         if got is None:
             raise HTTPException(404, "no forwarded problem on this call")
         audit_analysis(s, user, call_id)        # notes + satisfaction scores: audited like the analysis view
+        return got
+
+    @app.post("/api/forwards/{call_id}/decide")
+    def forward_decide(call_id: int, body: DecideIn, user: Manager, s: DB) -> dict:
+        """User decision 2026-11-22: a supervisor / admin closes the forwarded problem and picks who in the chain
+        solved it (his KPI point). Our side at once; the worker closes the ticket(s) there."""
+        from datetime import timezone
+        from .. import forward
+        from .. import forward_report as fr
+        from ..db.models import AdminLog
+        now = datetime.now(timezone.utc)
+        try:
+            h = forward.decide(s, call_id, body.hop_id, user.id, now)
+        except forward.DecideError as exc:
+            s.rollback()
+            raise HTTPException(409, str(exc)) from None
+        s.add(AdminLog(user_id=user.id, action="forward_decide", target=f"call:{call_id} hop:{h.id}", at=now))
+        s.commit()
+        if cfg is not None and cfg.forward_send is not None:
+            try:
+                cfg.forward_send()          # close there now; the 5-minute job does it anyway
+            except Exception:  # noqa: BLE001  saved here, the close there is only sooner
+                pass
+        got = fr.story(s, call_id)
+        audit_analysis(s, user, call_id)
         return got
