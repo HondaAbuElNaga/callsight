@@ -6,6 +6,6 @@
 - [x] 3. Keep-days 90; HR OK from 2026-11-22 (user).
 - [ ] 4. Branch `spec/2026-11-17-legal-retention`: privacy page, `docs/legal-decisions.md`.
 - [x] 5. 3-agent review (fixed); "ok push" → live.
-- [ ] 6. Retention on AWS: dry run → user checks → real.
+- [x] 6. Retention on AWS: dry run 2026-11-22 (6 to delete, 50 kept) → user OK → RETENTION_ENABLED=true; first real run 04:30.
 - [ ] 7. Admin sets KPI dates after HR OK.
 - [ ] 8. Roadmap: Phase 0 legal item, overnight step 10.
