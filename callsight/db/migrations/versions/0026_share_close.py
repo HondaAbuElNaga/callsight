@@ -20,9 +20,9 @@ def upgrade() -> None:
     op.add_column("call_share", sa.Column("agent_closed_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column("call_share", sa.Column("staff_closed_at", sa.DateTime(timezone=True), nullable=True))
     op.execute("UPDATE call_share SET first_reply_at = reply_at WHERE reply IS NOT NULL")
-    op.execute("INSERT INTO app_setting (key, value, updated_at) "
-               "VALUES ('share_kpi_since', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"+00:00"'), now()) "
-               "ON CONFLICT (key) DO NOTHING")
+    op.execute("""INSERT INTO app_setting (key, value, updated_at)
+                  VALUES ('share_kpi_since', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') || '+00:00', now())
+                  ON CONFLICT (key) DO NOTHING""")
 
 
 def downgrade() -> None:
