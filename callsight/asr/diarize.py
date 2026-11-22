@@ -21,7 +21,8 @@ INTERRUPT_OVERLAP_S = 1.0                # ... and overlapping it by > 1 s count
 GREETINGS = ("السلام عليكم", "معك", "معاك", "المعهد السعودي", "معهد السعودي", "حياك", "حياكم", "اهلا وسهلا",
              "مرحبا", "صباح الخير", "مساء الخير", "كيف اقدر اساعدك", "كيف اخدمك", "تفضل")
 INSTITUTE = ("المعهد السعودي", "معهد السعودي")
-RULES_VERSION = "g1"                     # change with the greeting list / naming rules
+MIN_TURN_S = 0.3                         # a shorter first turn (click / breath) is not "the first speaker"
+RULES_VERSION = "g2"                     # change with the greeting list / naming rules
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,7 @@ class Line:
 @dataclass(frozen=True)
 class Naming:
     agent: str | None                    # raw label of the agent, None = unsure
-    reason: str                          # first_greets / says_institute / no_greeting / one_speaker
+    reason: str                          # first_greets / inbound_first / says_institute / greets / no_greeting / one_speaker
 
     @property
     def unsure(self) -> bool:
@@ -110,24 +111,29 @@ def _has(text: str, phrases) -> bool:
     return any(f" {normalize(p)} " in t for p in phrases)
 
 
+def first_turn(turns: list[Turn]) -> Turn:
+    """The first real turn: the earliest one of at least MIN_TURN_S (a 0.1 s click before the "ألو" does not count)."""
+    real = [t for t in turns if t.end - t.start >= MIN_TURN_S]
+    return min(real or turns, key=lambda t: t.start)
+
+
 def name_speakers(lines: list[Line], turns: list[Turn], direction: str) -> Naming:
-    """Requirement 2: who is the agent. Inbound: the first speaker, if they greet in the first 10 s (the spec's
-    rule; no guess from the other speaker); outbound / internal: the first speaker to say the institute's name or a
-    greeting.
-    Anything else = unsure (the page then shows "متحدث 1 / 2")."""
+    """Requirement 2: who is the agent (rules g2, from the 30-call first-speaker check of 2026-11-22).
+    Inbound: the first speaker (the agent answered first in 20 of 20 checked calls; a greeting is not required).
+    Outbound / internal: the first to say the institute's name (the customer also greets: "ألو، السلام عليكم"),
+    else the first to greet. Anything else = unsure (the page then shows "متحدث 1 / 2")."""
     speakers = sorted({t.speaker for t in turns})
     if len(speakers) < 2:
         return Naming(None, "one_speaker")
-    first_s = min(turns, key=lambda t: t.start).speaker
-    early = [ln for ln in lines if ln.start < GREETING_S and ln.speaker in speakers]
-    said = {sp: " ".join(ln.text for ln in early if ln.speaker == sp) for sp in speakers}
+    first_s = first_turn(turns).speaker
     if direction == "inbound":
-        if _has(said[first_s], GREETINGS):
-            return Naming(first_s, "first_greets")
-        return Naming(None, "no_greeting")
-    for ln in sorted(lines, key=lambda x: x.start):           # outbound: the first to name the institute / greet
-        if ln.speaker in speakers and (_has(ln.text, INSTITUTE) or _has(ln.text, GREETINGS)):
-            return Naming(ln.speaker, "says_institute")
+        early = " ".join(ln.text for ln in lines if ln.start < GREETING_S and ln.speaker == first_s)
+        return Naming(first_s, "first_greets" if _has(early, GREETINGS) else "inbound_first")
+    ordered = [ln for ln in sorted(lines, key=lambda x: x.start) if ln.speaker in speakers]
+    for phrases, why in ((INSTITUTE, "says_institute"), (GREETINGS, "greets")):
+        for ln in ordered:
+            if _has(ln.text, phrases):
+                return Naming(ln.speaker, why)
     return Naming(None, "no_greeting")
 
 

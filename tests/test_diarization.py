@@ -105,16 +105,24 @@ def test_inbound_first_speaker_who_greets_is_the_agent():
     assert (n.agent, n.reason) == (A, "first_greets")
 
 
-def test_inbound_unsure_when_only_the_second_speaker_greets():
+def test_inbound_first_speaker_is_the_agent_even_without_a_greeting():
+    # rules g2: in the 30-call check the agent spoke first in 20 of 20 inbound calls
     n = dz.name_speakers(_lines((A, 0.0, "الو"), (B, 2.5, "السلام عليكم حياك")), TURNS, "inbound")
-    assert (n.agent, n.reason) == (None, "no_greeting")
+    assert (n.agent, n.reason) == (A, "inbound_first")
+    late = _lines((A, 0.0, "الو"), (B, 12.0, "السلام عليكم"))
+    assert dz.name_speakers(late, [T(A, 0, 2), T(B, 12, 14)], "inbound").agent == A
+
+
+def test_a_tiny_first_turn_is_not_the_first_speaker():
+    turns = [T(B, 0.0, 0.2), T(A, 1.0, 3.0), T(B, 3.5, 6.0)]                  # 0.2 s click, then A answers
+    assert dz.first_turn(turns).speaker == A
+    assert dz.name_speakers(_lines((A, 1.0, "نعم"), (B, 3.5, "تمام")), turns, "inbound").agent == A
+    assert dz.first_turn([T(B, 0.0, 0.1)]).speaker == B                       # only tiny turns: the earliest
 
 
 def test_unsure_without_a_greeting_or_with_one_speaker():
-    assert dz.name_speakers(_lines((A, 0.0, "الو"), (B, 2.5, "نعم")), TURNS, "inbound").unsure
+    assert dz.name_speakers(_lines((A, 0.0, "الو"), (B, 2.5, "نعم")), TURNS, "outbound").unsure
     assert dz.name_speakers(_lines((A, 0.0, "السلام عليكم")), [T(A, 0, 3)], "inbound").reason == "one_speaker"
-    late = _lines((A, 0.0, "الو"), (B, 12.0, "السلام عليكم"))                      # greeting after 10 s
-    assert dz.name_speakers(late, [T(A, 0, 2), T(B, 12, 14)], "inbound").unsure
 
 
 def test_outbound_the_first_to_name_the_institute_is_the_agent():
@@ -123,10 +131,18 @@ def test_outbound_the_first_to_name_the_institute_is_the_agent():
     assert (n.agent, n.reason) == (A, "says_institute")
 
 
+def test_outbound_institute_name_beats_an_earlier_customer_greeting():
+    # the customer answers "ألو، السلام عليكم"; the agent names the institute after: the agent is A, not B
+    lines = _lines((B, 0.0, "الو السلام عليكم"), (A, 2.5, "معك المعهد السعودي"))
+    assert dz.name_speakers(lines, TURNS, "outbound").agent == A
+    n = dz.name_speakers(_lines((B, 0.0, "الو"), (A, 2.5, "السلام عليكم")), TURNS, "outbound")
+    assert (n.agent, n.reason) == (A, "greets")                                # no institute name: first greeting
+
+
 def test_greeting_matches_whole_words_after_normalising():
     lines = _lines((A, 0.0, "أهلاً وسهلاً"), (B, 2.5, "معكوس"))                    # hamza / tanween folded
     assert dz.name_speakers(lines, TURNS, "inbound").agent == A
-    assert dz.name_speakers(_lines((A, 0.0, "معكوس"), (B, 2.5, "تمام")), TURNS, "inbound").unsure
+    assert dz.name_speakers(_lines((A, 0.0, "معكوس"), (B, 2.5, "تمام")), TURNS, "outbound").unsure
 
 
 def test_label_names_lines_and_unsure_stays_unknown():

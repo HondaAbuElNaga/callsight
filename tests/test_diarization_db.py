@@ -94,7 +94,7 @@ def test_unsure_split_shows_speaker_1_and_2_without_metrics(env):
     client, Session = env
     res = Result(segments=[Segment(0, 0, 29.5, "الو نعم", words=[("الو", 0.2, 0.5), ("نعم", 2.6, 2.9)])],
                  text="الو نعم", audio_seconds=29.5)
-    cid, _ = saved(Session, res=res)                             # nobody greets: unsure
+    cid, _ = saved(Session, "outbound", res=res)                 # outbound, nobody greets: unsure
     login(client)
     d = client.get(f"/api/calls/{cid}/transcript").json()
     assert d["speaker_unsure"] is True and "talk" not in d

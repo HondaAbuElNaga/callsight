@@ -189,6 +189,7 @@ def system_first_speaker(session: Session, call_id: int, model: str) -> str:
     agent / customer, or unsure (agent not named: "متحدث 1 / 2", or no named line at all), or not_split.
     Read from the pyannote turns the naming used (the first turn's speaker), mapped to agent / customer through the
     lines that overlap that speaker's turns: a short first "ألو" that Whisper dropped still counts for its speaker."""
+    from .asr.diarize import MIN_TURN_S
     from .db.models import SpeakerTurn, TranscriptTurn
     t = displayed(session, call_id, model)
     if t is None or t.status != "done" or t.speaker_unsure is None:
@@ -201,7 +202,8 @@ def system_first_speaker(session: Session, call_id: int, model: str) -> str:
                                                               TranscriptTurn.speaker.in_(("agent", "customer")))
                                  .order_by(TranscriptTurn.start_seconds, TranscriptTurn.seq)))
     if turns:
-        own = [x for x in turns if x.speaker_raw == turns[0].speaker_raw]
+        real = [x for x in turns if x.end_seconds - x.start_seconds >= MIN_TURN_S] or turns   # same as the naming
+        own = [x for x in turns if x.speaker_raw == real[0].speaker_raw]
         weight = {"agent": 0.0, "customer": 0.0}
         for ln in lines:
             weight[ln.speaker] += sum(max(0.0, min(ln.end_seconds, x.end_seconds) - max(ln.start_seconds, x.start_seconds))
