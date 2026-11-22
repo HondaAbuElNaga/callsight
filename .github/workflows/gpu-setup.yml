@@ -27,6 +27,7 @@ on:
           - gpu-update
           - blind-reset
           - goldset-pick
+          - call-status
       value:
         description: "start-date: YYYY-MM-DD | blind-reset: yes-delete-blind-set | gpu-cmd: one command on the GPU server (never .env / compose config: the log is kept)"
         required: false
@@ -152,7 +153,26 @@ jobs:
                 "select 'finished per hour (UTC)', date_trunc('hour', finished_at), count(*) from transcript
                  where finished_at > now() - interval '12 hours' group by 2 order by 2" ;;
 
-            goldset-pick)         # main server: choose + cut the 30 gold calls (once; refuses if a set exists) from calls
+            call-status)          # main server: why a call has no summary yet. value = HH:MM (today, Riyadh): the calls
+              # that started within 5 minutes of it. Statuses and times only, never call text or numbers.
+              [[ "$VALUE" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || { echo "value must be HH:MM" >&2; exit 1; }
+              cd "$M"
+              MC=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml)
+              "${MC[@]}" exec -T postgres psql -U callsight -d callsight -P pager=off -c \
+                "with c as (select * from call where start_time between
+                   ((now() at time zone 'Asia/Riyadh')::date + time '$VALUE' - interval '5 min') at time zone 'Asia/Riyadh'
+                   and ((now() at time zone 'Asia/Riyadh')::date + time '$VALUE' + interval '5 min') at time zone 'Asia/Riyadh')
+                 select c.id, c.agent_ext, c.direction, to_char(c.start_time at time zone 'Asia/Riyadh','HH24:MI:SS') start_riyadh,
+                        c.talk_seconds talk_s, c.recording_status rec,
+                        t.status tr, t.redo, t.tries tr_tries, to_char(t.finished_at at time zone 'Asia/Riyadh','HH24:MI') tr_done,
+                        a.status an, a.tries an_tries, a.error an_error,
+                        to_char(a.queued_at at time zone 'Asia/Riyadh','HH24:MI') an_queued,
+                        to_char(a.finished_at at time zone 'Asia/Riyadh','HH24:MI') an_done
+                 from c left join transcript t on t.call_id = c.id left join call_analysis a on a.call_id = c.id
+                 order by c.start_time, t.id, a.id"
+              "${MC[@]}" exec -T worker python -m callsight gpu-work ;;
+
+            goldset-pick)       # main server: choose + cut the 30 gold calls (once; refuses if a set exists) from calls
               # that already have the speaker split, so page "من يتكلم أولاً" is ready at once. Prints counts only.
               cd "$M"
               MC=(docker compose -f docker-compose.yml -f deploy/aws/compose.main.yml)
