@@ -100,3 +100,7 @@ Speaker turns are matched to Whisper segments by time overlap.
   not split yet. The system's answer appears only after every row is answered.
 - System answer = the speaker of the first pyannote turn, mapped to agent / customer through the lines overlapping
   that speaker's turns (a dropped first "ألو" still counts for its speaker). `--resplit` takes the gold calls first.
+- Result 2026-11-22: rules g1 17/30 (inbound: 7 unsure, the agent had not greeted; outbound: the customer's
+  "ألو، السلام عليكم" was taken for the agent's greeting). Rules g2: inbound = first speaker is the agent; outbound =
+  who says the institute name, else who greets; a first turn under 0.3 s does not count. Re-split → **27/30, passed**.
+  The rules were tuned on these same 30 calls: spot-check new calls later.

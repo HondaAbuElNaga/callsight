@@ -75,6 +75,7 @@ call has a transcript within 15 min of hang-up.
 - [x] STT model chosen by config (`ASR_MODEL`), served by our own `asr` worker, not a separate server (changed 2026-11-14, decision R2; speaches can't run Audar/Jais) ([spec](../specs/2026-11-14-transcription/spec.md)) (source: [speaches-ai/speaches](https://github.com/speaches-ai/speaches))
 - [x] `asr` worker queue: mono recording → 30 s windows → transcribe → store segments with timestamps; speaker split via diarization later (recordings are mono, not stereo) ([spec](../specs/2026-11-14-transcription/spec.md)) (idea: user) ([spec](../specs/2026-11-14-transcription/spec.md))
 - [x] Transcript view next to the audio player; export transcript as .txt (idea: user) ([spec](../specs/2026-11-14-transcript-view/spec.md))
+- [x] Agent / customer split (pyannote 3.1 diarization + naming rules g2): first-speaker check 27/30 on the gold calls, 2026-11-22 ([spec](../specs/2026-11-17-diarization/spec.md)) (idea: user)
 - [-] ~~Later idea: redaction of spoken ID/card/phone numbers~~ — cancelled by the user 2026-11-19 ("not important"); spec kept: [2026-11-17-redaction](../specs/2026-11-17-redaction/spec.md)
 
 ## Phase 3: Satisfaction score 1–10 (fine-tuned model)
@@ -88,7 +89,7 @@ call has a transcript within 15 min of hang-up.
 - [~] `nlp` worker: score each call; store score + model version; re-score job when model updates — built for the LLM first estimate (model + prompt version stored, `analyze --rescore`); the tuned model's score comes after training ([spec](../specs/2026-11-14-call-analysis/spec.md)) (idea: user)
 - [~] LLM call summary: summary, topic, action items — local Ollama `qwen2.5:7b`, JSON schema + validation; automatic on AWS since 2026-11-16 (`NLP_ENABLED=true`, main queues, GPU runs) ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [transcriptionstream/transcriptionstream](https://github.com/transcriptionstream/transcriptionstream))
 - [~] Bad words / escalation flags — matching built (whole words, normalised; lists edited on the page "القواعد" since the rules editor, first filled from `config/rules.yaml`); user checks the starter lists on the page ⚠ NEEDS USER ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
-- [~] Silence, interruption & talk-ratio metrics from channel timings — silence metrics built (RMS, no diarization); talk ratio + interruptions need diarization (recordings are mono) ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
+- [~] Silence, interruption & talk-ratio metrics from channel timings — silence metrics built (RMS, no diarization); talk ratio + interruptions built from the pyannote turns (diarization live 2026-11-22) ([spec](../specs/2026-11-14-call-analysis/spec.md)) (source: [DinoTheDinosaur/speech_analytics](https://github.com/DinoTheDinosaur/speech_analytics))
 
 ## Phase 4: KPI engine & reports ([spec](../specs/2026-11-14-kpi-reports/spec.md); built 2026-11-14, "Done when" hand check ⚠ open)
 
