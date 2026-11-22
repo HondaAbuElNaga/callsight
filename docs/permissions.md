@@ -64,7 +64,7 @@ R = read, W = write. "own" = only calls of the agent's own extension.
 | GET /api/shares, /api/calls/{id}/shares | notes shared with agents (`box=open\|archive`, `from`/`to`, `agent`: ignored for agents) | R | R | R (shared with them) |
 | POST /api/calls/{id}/shares, DELETE /api/shares/{id} | share a call with an agent / remove | W | W | ❌ |
 | POST /api/shares/{id}/seen, PUT /api/shares/{id}/reply | mark seen / reply | only the person it was shared with | same | W (shared with them) |
-| POST /api/shares/{id}/close | move to my archive (each side has its own) | W (any) | W (any) | W (shared with them, only after replying; the reply is then locked) |
+| POST /api/shares/{id}/close | move to my archive (the agent and each supervisor/admin have their own) | W (any) | W (any) | W (shared with them, only after replying; the reply is then locked) |
 | GET /api/forwards, /api/forwards/{id}, /api/kpi/forwards | forwards page | R | R | ❌ |
 
 ### KPIs, reports, rating, live

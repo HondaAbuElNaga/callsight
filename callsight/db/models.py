@@ -688,11 +688,21 @@ class CallShare(Base):
     seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reply: Mapped[str | None] = mapped_column(String(1000))
     reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # spec 2026-11-22-shares-tab: the agent has 24 h from created_at to reply (KPI); editing keeps first_reply_at,
-    # removing the reply clears it. Each side closes the share into its own archive (agent: only after replying).
+    # spec 2026-11-22-shares-tab: the agent has 24 h from created_at to reply (KPI); an edit within the 24 h keeps
+    # first_reply_at, a later edit moves it (late), removing the reply clears it. The agent closes into their archive
+    # (only after replying); each supervisor/admin into their own (ShareStaffClose).
     first_reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     agent_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    staff_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    staff_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))   # unused since 0027:
+    # each supervisor/admin has their own archive now (ShareStaffClose)
+
+
+class ShareStaffClose(Base):
+    """One supervisor/admin moved a shared call to THEIR archive (migration 0027). Others still see it open."""
+    __tablename__ = "share_staff_close"
+    share_id: Mapped[int] = mapped_column(ForeignKey("call_share.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"), primary_key=True, index=True)
+    closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class AppSetting(Base):

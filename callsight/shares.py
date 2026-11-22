@@ -1,7 +1,8 @@
 """Shared calls (spec 2026-11-22-shares-tab): the 24-hour reply rule and its KPI.
 
 A supervisor shares a call with an agent; the agent must reply within REPLY_HOURS of the share being sent
-(created_at). first_reply_at is the time of the first reply (editing keeps it, removing the reply clears it).
+(created_at). first_reply_at is the time of the first reply: an edit within the 24 h keeps it, an edit after them
+moves it to the edit (late), removing the reply clears it.
 Only shares sent on/after the app_setting `share_kpi_since` (written by migration 0026) count in the KPI.
 """
 from __future__ import annotations

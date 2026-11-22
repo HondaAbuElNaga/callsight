@@ -485,6 +485,8 @@ export function SharePanel({ callId, me, onExpired }: { callId: number; me: Me; 
   );
 }
 
+const REPLY_MIN = 10;     // same as the server (api/work.py REPLY_MIN)
+
 function ReplyBox({ share, onSaved, onFail }: { share: Share; onSaved: () => void; onFail: (e: unknown) => void }) {
   const [text, setText] = useState(share.reply ?? "");
   const [busy, setBusy] = useState(false);
@@ -493,12 +495,17 @@ function ReplyBox({ share, onSaved, onFail }: { share: Share; onSaved: () => voi
     setBusy(true);
     try { await api.shareReply(share.id, text.trim()); onSaved(); } catch (e) { onFail(e); } finally { setBusy(false); }
   };
+  const t = text.trim();
+  const short = t.length > 0 && t.length < REPLY_MIN;       // empty = remove the reply (allowed)
+  const lateEdit = share.reply_state === "on_time" && Date.now() > new Date(share.deadline).getTime();
   return (
     <div className="form">
       {share.reply && <p className="muted small">ردّك ({formatDateTime(share.reply_at!)}): {share.reply}</p>}
       <label>{share.reply ? "تعديل ردّك على المشرف" : "ردّك على المشرف"}
         <textarea value={text} maxLength={1000} rows={2} onChange={(e) => setText(e.target.value)} /></label>
-      <button type="button" disabled={busy || text.trim() === (share.reply ?? "")} onClick={save}>إرسال الرد</button>
+      {short && <p className="muted small">اكتب ردًا واضحًا ({REPLY_MIN} أحرف على الأقل).</p>}
+      {lateEdit && <p className="state warn">انتهت مهلة 24 ساعة: تعديل الرد الآن يُحتسب ردًا متأخرًا.</p>}
+      <button type="button" disabled={busy || short || t === (share.reply ?? "")} onClick={save}>إرسال الرد</button>
     </div>
   );
 }

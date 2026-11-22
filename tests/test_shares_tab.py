@@ -31,13 +31,13 @@ def test_agent_closes_only_after_reply_then_reply_is_locked(env):  # noqa: F811
     assert d["open"] == 1 and d["items"][0]["reply_state"] == "pending" and d["items"][0]["closed"] is False
     assert client.post(f"/api/shares/{sid}/close").status_code == 409          # write the reply first
     client.post(f"/api/shares/{sid}/seen")
-    assert client.put(f"/api/shares/{sid}/reply", json={"text": "تم"}).json()["reply_state"] == "on_time"
+    assert client.put(f"/api/shares/{sid}/reply", json={"text": "تم الاستماع للمكالمة"}).json()["reply_state"] == "on_time"
     r = client.post(f"/api/shares/{sid}/close")
     assert r.status_code == 200 and r.json()["closed"] is True and r.json()["agent_closed_at"]
     assert client.get("/api/shares").json()["items"] == []                    # gone from the open list
     arch = client.get("/api/shares", params={"box": "archive"}).json()["items"]
     assert [a["id"] for a in arch] == [sid]
-    assert client.put(f"/api/shares/{sid}/reply", json={"text": "تعديل"}).status_code == 409   # locked
+    assert client.put(f"/api/shares/{sid}/reply", json={"text": "تعديل الرد بعد الإغلاق"}).status_code == 409   # locked
     assert client.get(f"/api/calls/{ids['other']}").status_code == 200         # the call still opens from the archive
     login(client, "boss")       # the supervisor's list is separate: still open for them
     d = client.get("/api/shares").json()
@@ -63,6 +63,13 @@ def test_staff_close_and_archive_filters(env):  # noqa: F811
                                                "to": (today - timedelta(days=3)).isoformat()}).status_code == 422
     login(client, "ali")        # the agent's list is untouched by the supervisor's close
     assert client.get("/api/shares").json()["open"] == 2
+    login(client, "root")       # ... and so is the admin's: each staff user has their own archive
+    d = client.get("/api/shares").json()
+    assert d["open"] == 2 and all(i["closed"] is False and i["staff_closed_at"] is None for i in d["items"])
+    assert client.post(f"/api/shares/{new}/close").json()["closed"] is True
+    assert client.get("/api/shares").json()["open"] == 1
+    login(client, "boss")
+    assert client.get("/api/shares").json()["open"] == 0
     login(client, "sara")
     assert client.post(f"/api/shares/{new}/close").status_code == 404           # not hers
 
@@ -73,7 +80,7 @@ def test_reply_states_and_kpi(env):  # noqa: F811
     login(client, "ali")
     for sid in (on_time, late):
         client.post(f"/api/shares/{sid}/seen")
-        client.put(f"/api/shares/{sid}/reply", json={"text": "رد"})
+        client.put(f"/api/shares/{sid}/reply", json={"text": "سأتصل بالعميل اليوم"})
     with Session() as s:        # `late`: sent 30 h ago, replied now; `missing`: sent 25 h ago, no reply
         now = datetime.now(timezone.utc)
         s.execute(update(CallShare).where(CallShare.id == late).values(created_at=now - timedelta(hours=30)))
@@ -81,8 +88,9 @@ def test_reply_states_and_kpi(env):  # noqa: F811
         s.commit()
     states = {i["id"]: i["reply_state"] for i in client.get("/api/shares").json()["items"]}
     assert states == {on_time: "on_time", late: "late", missing: "missing", pending: "pending"}
-    client.put(f"/api/shares/{on_time}/reply", json={"text": "رد معدّل"})       # an edit keeps the first time
-    assert {i["id"]: i["reply_state"] for i in client.get("/api/shares").json()["items"]}[on_time] == "on_time"
+    first = {i["id"]: i for i in client.get("/api/shares").json()["items"]}[on_time]["first_reply_at"]
+    r = client.put(f"/api/shares/{on_time}/reply", json={"text": "رد معدّل بعد المراجعة"})   # an edit keeps the first time
+    assert r.json()["reply_state"] == "on_time" and r.json()["first_reply_at"] == first
     login(client, "boss")
     week = {"date_from": (now - timedelta(days=3)).astimezone(RIYADH).date().isoformat(),
             "date_to": now.astimezone(RIYADH).date().isoformat()}
@@ -100,7 +108,7 @@ def test_removing_the_reply_restarts_the_first_reply_time(env):  # noqa: F811
     sid = _share(client, ids)
     login(client, "ali")
     client.post(f"/api/shares/{sid}/seen")
-    client.put(f"/api/shares/{sid}/reply", json={"text": "رد"})
+    client.put(f"/api/shares/{sid}/reply", json={"text": "سأتصل بالعميل اليوم"})
     assert client.put(f"/api/shares/{sid}/reply", json={"text": ""}).json()["first_reply_at"] is None
     assert client.post(f"/api/shares/{sid}/close").status_code == 409
 
@@ -115,3 +123,30 @@ def test_notes_sent_before_the_rule_are_old_not_red(env):  # noqa: F811
         s.commit()
     login(client, "ali")
     assert client.get("/api/shares").json()["items"][0]["reply_state"] == "old"
+
+
+def test_reply_too_short_is_refused(env):  # noqa: F811
+    client, _, ids, *_ = env
+    sid = _share(client, ids)
+    login(client, "ali")
+    client.post(f"/api/shares/{sid}/seen")
+    assert client.put(f"/api/shares/{sid}/reply", json={"text": " تم "}).status_code == 422     # "ok" is no answer
+    assert client.put(f"/api/shares/{sid}/reply", json={"text": "تم التواصل"}).status_code == 200   # 10 letters
+
+
+def test_edit_after_24h_counts_as_late(env):  # noqa: F811
+    client, Session, ids, *_ = env
+    sid = _share(client, ids)
+    login(client, "ali")
+    client.post(f"/api/shares/{sid}/seen")
+    client.put(f"/api/shares/{sid}/reply", json={"text": "سأراجع المكالمة"})
+    with Session() as s:        # sent 30 h ago, the first reply came within the 24 h
+        now = datetime.now(timezone.utc)
+        s.execute(update(CallShare).where(CallShare.id == sid).values(
+            created_at=now - timedelta(hours=30), first_reply_at=now - timedelta(hours=28),
+            reply_at=now - timedelta(hours=28)))
+        s.commit()
+    r = client.put(f"/api/shares/{sid}/reply", json={"text": "سأراجع المكالمة"})     # same text: nothing changes
+    assert r.json()["reply_state"] == "on_time"
+    r = client.put(f"/api/shares/{sid}/reply", json={"text": "راجعت المكالمة وسأتصل بالعميل"})
+    assert r.json()["reply_state"] == "late"           # the real answer came after the 24 h
