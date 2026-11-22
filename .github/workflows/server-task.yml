@@ -25,6 +25,9 @@ on:
           - rating-status
           - link-keys
           - forward-sync
+          - retention-check
+          - retention-on
+          - retention-off
       value:
         description: "rating-fetch / rating-create: days YYYY-MM-DD,YYYY-MM-DD,... (rating-create: then ;N, default 500)"
         type: string
@@ -41,7 +44,7 @@ concurrency:
 jobs:
   task:
     runs-on: [self-hosted, callsight-main]
-    timeout-minutes: ${{ startsWith(inputs.task, 'rating-') && 90 || 10 }}   # rating-create downloads 500 recordings
+    timeout-minutes: ${{ startsWith(inputs.task, 'rating-') && 90 || startsWith(inputs.task, 'retention-') && 120 || 10 }}   # rating-create downloads 500 recordings; retention-check saves KPI numbers
     steps:
       - name: Run the task
         working-directory: /opt/callsight
@@ -68,6 +71,16 @@ jobs:
               sed -i 's/^LIVE_ENABLED=.*/LIVE_ENABLED=false/' .env
               "${C[@]}" --profile live stop live; "${C[@]}" up -d api ;;
             live-log) "${C[@]}" --profile live logs --tail 60 live ;;
+            retention-check)      # PDPL: counts only, deletes nothing (dry run); saves the old periods' KPI numbers
+              # the first one saves many weeks' / months' numbers: can take long. A run cut by the timeout keeps working
+              # inside the container (holds the maintenance lock): wait, then run again.
+              "${C[@]}" exec -T -e RETENTION_ENABLED=true worker python -m callsight retention --dry-run
+              grep -E '^RETENTION_ENABLED=' .env || echo "RETENTION_ENABLED not set (off)" ;;
+            retention-on|retention-off)   # on: after the user checked retention-check; the next night (04:30) deletes
+              V=$([ "$TASK" = retention-on ] && echo true || echo false)
+              grep -q '^RETENTION_ENABLED=' .env && sed -i "s/^RETENTION_ENABLED=.*/RETENTION_ENABLED=$V/" .env || echo "RETENTION_ENABLED=$V" >> .env
+              "${C[@]}" up -d --force-recreate worker      # only the worker reads it (nightly job + CLI)
+              grep -E '^RETENTION_ENABLED=' .env ;;
             sync-agents) "${C[@]}" exec -T worker python -m callsight sync-agents ;;
             rating-fetch|rating-create)
               [[ "$VALUE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(,[0-9]{4}-[0-9]{2}-[0-9]{2}){0,30}(\;[0-9]{1,4})?$ ]] || { echo "value must be YYYY-MM-DD,YYYY-MM-DD[;N] (at most 31 days)"; exit 1; }

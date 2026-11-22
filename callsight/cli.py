@@ -596,12 +596,14 @@ def _retention(a: argparse.Namespace) -> int:
             print("ERROR: another backup/retention run holds the maintenance lock", file=sys.stderr)
             return 1
         r = retention.run(s, cfg, wiring.settings().audio_dir, wiring.backup_config().files_dir,
-                          force_dry_run=a.dry_run)
+                          force_dry_run=a.dry_run, teams=wiring.teams())
     if not r.get("enabled"):
         print(r["reason"])
         return 0
     print(("DRY RUN, nothing deleted: " if r["dry_run"] else "deleted: ") +
-          f"{r['calls']} calls older than {r['days']} days, {r['files']} recording files, {r['audit_rows']} audit rows")
+          f"{r['calls']} calls older than {r['days']} days, {r['files']} recording files, {r['audit_rows']} audit rows"
+          f" | kept: {r['kept_rating']} rating work / check calls, {r['kept_open']} open work"
+          f" | KPI numbers saved for {r['snapshots']} period-scopes")
     return 0
 
 

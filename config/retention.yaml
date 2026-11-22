@@ -1,14 +1,20 @@
-# Retention of personal data (PDPL). OFF until the business/legal decision is made (NEEDS USER).
+# Retention of personal data (PDPL). Decided by the user 2026-11-22 (docs/legal-decisions.md): 90 days.
 # It only runs when BOTH are set:  RETENTION_ENABLED=true in .env  AND  days below (minimum 30).
 # The first run for a new "days" value is always a dry run: it only counts what would be deleted
 # (see the retention_run table / the nightly log). The next night really deletes.
-# Deleted: recording files (+ their copies in the backup folder), transcripts, call analysis (summary, flags,
-# silence numbers) AND the supervisors' satisfaction ratings of calls older than "days".
+# Deleted in CallSight only (never on the PBX): recording files (+ their copies in the backup folder), transcripts,
+# call analysis (summary, flags, silence numbers), follow-up forms / notes, shared-call notes, forward tickets' text
+# and the supervisors' satisfaction ratings of calls older than "days".
 # Call metadata (time, agent, duration) stays for the KPIs. DB dumps keep old data ~8 weeks.
-# NEEDS USER: ratings go with the call. Finish rating the 500 calls (the 100 test-set calls first) AND run the
-# training inside this window, or the test set shrinks below 100 and the Phase 3 check can never pass.
-# NOT deleted: the gold set (benchmark clips + typed reference texts). An exception the user must approve
-# (NEEDS USER), or delete it by hand when the benchmark is finished.
-days: null
+# Before deleting, the KPI numbers of every closed week / month touched are saved (kpi_snapshot): old reports keep
+# their figures.
+days: 90
+# Kept while true: the rating set, the blind test set, every rated call and the 30 first-speaker-check calls.
+# Set to false (with the user's OK) once the satisfaction model is trained: they are then deleted like the rest
+# (the 30 gold clips too: clip file, typed text, draft).
+keep_rating_set: true
+# A call with open work (follow-up not solved / never filled, open forwarded ticket, shared call not closed) is kept
+# until the work is closed, but at most this many days (user 2026-11-22: 6 months).
+open_max_days: 180
 # Audit rows (who played which recording / downloaded which report) are kept 2 years (730 days, minimum).
 audit_days: 730

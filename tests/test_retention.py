@@ -30,7 +30,7 @@ def test_config_is_off_by_default(tmp_path):
 
 def test_shipped_config_is_off():
     from callsight.config import ROOT
-    assert RetentionConfig.load(ROOT / "config" / "retention.yaml", env={}).days is None
+    assert RetentionConfig.load(ROOT / "config" / "retention.yaml", env={}).problem().startswith("retention is off")
 
 
 @pytest.fixture
@@ -80,7 +80,8 @@ def test_first_run_is_dry_then_deletes(env):
     Session, audio, files, tmp_path = env
     with Session() as s:
         r = retention.run(s, ON, audio, files, NOW)
-        assert r == {"enabled": True, "dry_run": True, "days": 90, "calls": 2, "files": 1, "audit_rows": 1}
+        assert r == {"enabled": True, "dry_run": True, "days": 90, "calls": 2, "files": 1, "audit_rows": 1,
+                     "kept_rating": 0, "kept_open": 0, "snapshots": 0}
         assert (audio / "old" / "a.wav").exists() and s.scalar(select(func.count()).select_from(RecordingPlay)) == 2
 
         r = retention.run(s, ON, audio, files, NOW)

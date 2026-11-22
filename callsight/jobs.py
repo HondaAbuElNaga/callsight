@@ -406,7 +406,8 @@ def retention_nightly() -> dict:
         if not got:
             raise RuntimeError("maintenance lock held")
         with wiring.session_factory()() as s:
-            return retention.run(s, cfg, wiring.settings().audio_dir, wiring.backup_config().files_dir)
+            return retention.run(s, cfg, wiring.settings().audio_dir, wiring.backup_config().files_dir,
+                                 teams=wiring.teams())
 
 
 DELETE_BACKUP_TASK = "callsight.jobs.delete_backup_copy"

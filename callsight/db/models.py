@@ -705,6 +705,22 @@ class ShareStaffClose(Base):
     closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class KpiSnapshot(Base):
+    """The KPI numbers of one closed week / month and one scope (all / team:<name> / agent:<ext>), saved by retention
+    just before the first call of that period is erased (spec 2026-11-17-legal-retention, user 2026-11-22). Numbers
+    only (no voice, no text, no phone numbers: only the content-based figures are kept): kept forever, so old
+    reports keep their talk, follow-up and shared-call figures. Never overwritten: the first save holds the full
+    data (later solves of kept open calls, a later teams.yaml or followup_kpi_since change do not update it)."""
+    __tablename__ = "kpi_snapshot"
+    __table_args__ = (UniqueConstraint("kind", "start", "scope", name="uq_kpi_snapshot"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(8))           # week / month
+    start: Mapped[date] = mapped_column(Date)
+    scope: Mapped[str] = mapped_column(String(120))        # team names are not length-checked
+    data: Mapped[dict] = mapped_column(JSONB)
+    saved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class AppSetting(Base):
     """Settings the admin changes on the web page (followup_start, followup_kpi_since: ISO dates or absent)."""
     __tablename__ = "app_setting"

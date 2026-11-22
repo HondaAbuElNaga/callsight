@@ -5,6 +5,7 @@ Internal calls never count. AHT = talk (+ hold when known; the CDR has none) ove
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
@@ -12,7 +13,7 @@ from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.orm import Session
 
 from .config import RIYADH
-from .db.models import Agent, Call, CallLeg, ReconcileRun, Transcript
+from .db.models import Agent, Call, CallLeg, KpiSnapshot, ReconcileRun, Transcript
 from .followups import early_hangup_sql
 from .ingest.classify import TeamConfig
 from .ingest.service import day_bounds
@@ -327,7 +328,7 @@ def report(session: Session, period: Period, teams: TeamConfig, team: str | None
     prev_p = period.previous()
     prev = compute(session, prev_p.start, prev_p.end, teams=teams, team=team, agent=agent)["summary"]
     lo, hi = period.bounds()
-    return {"period": period.as_dict(now), "previous_period": prev_p.as_dict(now),
+    out = {"period": period.as_dict(now), "previous_period": prev_p.as_dict(now),
             "scope": {"team": team, "agent": agent}, "trusted": data_trusted(session),
             **cur, "previous": prev,
             # agent-supervisor spec: forms + callbacks (show-only until the admin sets followup_kpi_since)
@@ -335,6 +336,81 @@ def report(session: Session, period: Period, teams: TeamConfig, team: str | None
                                       callers=sorted(teams.ext_team)),
             # spec 2026-11-22-shares-tab: did the agent reply to the supervisor's shared calls within 24 h
             "shares": shares.kpi(session, lo, hi, _scope(teams, team, agent)[1], now)}
+    _use_snapshots(session, out, period, prev_p, team, agent)
+    return out
+
+
+# ---------- snapshots (retention): numbers of closed periods saved before their calls' content is erased ----------
+# Call rows (times, agent, status) are never erased, so counts / AHT / repeats stay live. What retention erases is
+# the content the other figures come from: talk (speaker split), follow-up forms and shared-call replies. Those are
+# read from the snapshot when one exists. Custom date ranges have no snapshot (computed live).
+
+def scope_key(team: str | None, agent: str | None) -> str:
+    return f"agent:{agent}" if agent else f"team:{team}" if team else "all"
+
+
+def _snapshot(session: Session, period: Period, team: str | None, agent: str | None) -> KpiSnapshot | None:
+    if period.kind not in PERIODS:
+        return None
+    return session.scalar(select(KpiSnapshot).where(KpiSnapshot.kind == period.kind, KpiSnapshot.start == period.start,
+                                                    KpiSnapshot.scope == scope_key(team, agent)))
+
+
+def _use_snapshots(session: Session, out: dict, period: Period, prev_p: Period, team, agent) -> None:
+    snap = _snapshot(session, period, team, agent)
+    if snap is not None:
+        d = snap.data
+        for k in ("followup", "shares"):
+            if k in d:
+                out[k] = d[k]
+        out["summary"]["talk"] = (d.get("summary") or {}).get("talk")
+        talk = {a.get("ext"): a.get("talk") for a in d.get("agents") or []}
+        for a in out["agents"]:
+            if a["ext"] in talk:
+                a["talk"] = talk[a["ext"]]
+        out["saved_numbers_at"] = snap.saved_at.isoformat()
+    prev = _snapshot(session, prev_p, team, agent)
+    if prev is not None:
+        out["previous"]["talk"] = (prev.data.get("summary") or {}).get("talk")
+
+
+def _content_figures(rep: dict) -> dict:
+    """Only what retention erases the source of (no top repeaters / masked numbers: those stay live)."""
+    keep = {"followup": rep.get("followup"), "shares": rep.get("shares"),
+            "summary": {"talk": rep["summary"].get("talk")},
+            "agents": [{"ext": a["ext"], "talk": a.get("talk")} for a in rep["agents"]]}
+    return json.loads(json.dumps(keep, default=str))
+
+
+def scopes(teams: TeamConfig) -> list[tuple[str | None, str | None]]:
+    """Every scope the KPI page / PDF offers: all teams, each team, each agent."""
+    return [(None, None), *[(t, None) for t in team_names(teams)], *[(None, e) for e in sorted(teams.ext_team)]]
+
+
+def save_snapshots(session: Session, teams: TeamConfig, days, now: datetime | None = None, *,
+                   commit: bool = True) -> int:
+    """Save the KPI numbers of every closed week and month containing one of `days` (Riyadh dates), for every scope,
+    unless already saved. Called by retention before it erases calls of those days. Returns how many were saved."""
+    now = now or datetime.now(timezone.utc)
+    periods = sorted({period_for(k, d) for d in set(days) for k in PERIODS}, key=lambda p: (p.start, p.kind))
+    saved = 0
+    for p in periods:
+        if p.is_partial(now):
+            continue
+        have = set(session.scalars(select(KpiSnapshot.scope).where(KpiSnapshot.kind == p.kind,
+                                                                   KpiSnapshot.start == p.start)))
+        for team, agent in scopes(teams):
+            key = scope_key(team, agent)
+            if key in have:
+                continue
+            data = _content_figures(report(session, p, teams, team=team, agent=agent, now=now))
+            session.add(KpiSnapshot(kind=p.kind, start=p.start, scope=key, data=data, saved_at=now))
+            saved += 1
+        if commit:
+            session.commit()
+        else:
+            session.flush()
+    return saved
 
 
 # ---------- plain text (CLI, hand-calculation check) ----------

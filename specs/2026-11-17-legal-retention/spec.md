@@ -34,3 +34,21 @@ builds what the system needs and gives ready English messages; the company decid
 ## Open questions
 1. Keep-days: **recommended 365 days** for recordings and texts (one year of KPI history), KPI numbers kept
    forever (they hold no voice/text). The company decides.
+
+## Decisions (user, 2026-11-22) — see `docs/legal-decisions.md`
+1. Announcement: the line already has one (no supplier work).
+2. Keep-days: **90**. Deleting happens in CallSight only, never on the PBX.
+3. HR approved, from 2026-11-22: the admin sets the follow-up KPI date on the Users page.
+4. Kept longer (asked by the user): the rating work (rating set, blind set, rated calls) and the 30 first-speaker
+   calls, until the satisfaction model is trained (`keep_rating_set`); calls with open work until closed, at most
+   180 days (`open_max_days`).
+5. Old reports keep their numbers: before the first call of a closed week / month is erased, that period's KPI
+   numbers are saved for every scope (`kpi_snapshot`, migration 0028). The report reads talk / follow-up / shares
+   figures from it; counts, AHT and repeats stay live (call rows are never erased). Custom date ranges stay live.
+6. Server tasks: `retention-check` (dry run, counts only) → user OK → `retention-on`; `retention-off` to stop.
+7. Review (3 agents, 2026-11-22) → fixed: share figures saved for the week/month the share was sent; calls chosen
+   again after saving numbers; branch supervisors' proof calls of kept forwarded calls kept too; admin delete saves
+   numbers first; gold clips erased once keep_rating_set is off; first real run needs a dry run of the last 7 days;
+   snapshots hold only content-based figures (no masked phone numbers); scope column 120 chars.
+   Accepted limits: saved numbers are frozen at the first save (later solves of kept calls, teams.yaml or KPI-date
+   changes do not update them); custom date ranges are live.
