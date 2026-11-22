@@ -3,6 +3,8 @@
 > Status: `[x]` done · `[~]` in progress · `[ ]` not started
 
 **Current position (2026-11-18) — START HERE in a new session:**
+
+- **2026-11-22 shared calls tab** (`specs/2026-11-22-shares-tab/spec.md`): agent tab «ملاحظات المشرف» + archive, close after reply, 24 h reply KPI. Built, not yet live.
 - **The plan to the end of the project:** [finish-plan.md](finish-plan.md), steps 0–10, every spec approved
   2026-11-18 ("approve all": each open question = the recommendation). Build one at a time, 3-agent review, push to
   `main` only on the user's "ok push" (push = live deploy).

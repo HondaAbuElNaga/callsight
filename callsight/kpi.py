@@ -322,7 +322,7 @@ def data_trusted(session: Session, need: int = TRUSTED_DAYS, today: date | None 
 def report(session: Session, period: Period, teams: TeamConfig, team: str | None = None, agent: str | None = None,
            now: datetime | None = None) -> dict:
     """KPIs of a period + the previous period's summary (trend) + flags for the page and the PDF."""
-    from . import followups
+    from . import followups, shares
     cur = compute(session, period.start, period.end, teams=teams, team=team, agent=agent)
     prev_p = period.previous()
     prev = compute(session, prev_p.start, prev_p.end, teams=teams, team=team, agent=agent)["summary"]
@@ -332,7 +332,9 @@ def report(session: Session, period: Period, teams: TeamConfig, team: str | None
             **cur, "previous": prev,
             # agent-supervisor spec: forms + callbacks (show-only until the admin sets followup_kpi_since)
             "followup": followups.kpi(session, lo, hi, _scope(teams, team, agent)[1], now,
-                                      callers=sorted(teams.ext_team))}
+                                      callers=sorted(teams.ext_team)),
+            # spec 2026-11-22-shares-tab: did the agent reply to the supervisor's shared calls within 24 h
+            "shares": shares.kpi(session, lo, hi, _scope(teams, team, agent)[1], now)}
 
 
 # ---------- plain text (CLI, hand-calculation check) ----------

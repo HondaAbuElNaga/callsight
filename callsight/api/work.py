@@ -8,11 +8,12 @@ from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import followups as fu
+from .. import shares as shr
 from ..config import RIYADH
 from ..db.models import Agent, AdminLog, AppUser, Call, CallFollowup, CallFollowupNote, CallPrivateNote, CallShare
 from ..ingest.service import day_bounds
@@ -445,11 +446,17 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         """An agent gets the note text only after clicking it (seen_at): until then `note` is None."""
         c = s.get(Call, sh.call_id)
         hidden = not staff(user) and sh.seen_at is None
+        iso = lambda t: t.isoformat() if t else None      # noqa: E731
         return {"id": sh.id, "call_id": sh.call_id, "note": None if hidden else sh.note,
                 "from": users.get(sh.from_user_id, ""),
-                "reply": sh.reply, "reply_at": sh.reply_at.isoformat() if sh.reply_at else None,
+                "reply": sh.reply, "reply_at": iso(sh.reply_at), "first_reply_at": iso(sh.first_reply_at),
                 "to": users.get(sh.to_user_id, ""), "to_user_id": sh.to_user_id,
-                "created_at": sh.created_at.isoformat(), "seen_at": sh.seen_at.isoformat() if sh.seen_at else None,
+                "created_at": sh.created_at.isoformat(), "seen_at": iso(sh.seen_at),
+                # spec 2026-11-22-shares-tab: 24 h to reply; each side closes it into its own archive
+                "deadline": shr.deadline(sh).isoformat(), "reply_state": shr.reply_state(sh, _now()),
+                "agent_closed_at": iso(sh.agent_closed_at),
+                "staff_closed_at": iso(sh.staff_closed_at) if staff(user) else None,
+                "closed": (sh.staff_closed_at if staff(user) else sh.agent_closed_at) is not None,
                 "call_start": c.start_time.isoformat() if c else None, "agent_ext": c.agent_ext if c else None}
 
     def usernames(s: Session) -> dict[int, str]:
@@ -465,15 +472,52 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
 
     @app.get("/api/shares")
     def list_shares(user: User, s: DB,
-                    agent: Annotated[str | None, Query(pattern=r"^\d{1,6}$")] = None) -> dict:
-        stmt = select(CallShare).order_by(CallShare.created_at.desc(), CallShare.id.desc()).limit(LIST_LIMIT)
+                    agent: Annotated[str | None, Query(pattern=r"^\d{1,6}$")] = None,
+                    box: Annotated[str, Query(pattern=r"^(open|archive)$")] = "open",
+                    from_: Annotated[date | None, Query(alias="from")] = None,
+                    to: date | None = None) -> dict:
+        """The shared-calls tab: `open` (not closed by this side) or `archive` (closed; من/إلى = the day the call
+        was shared, Riyadh). Agents: only their own shares; staff: all, or one agent (`agent` = extension)."""
+        own = CallShare.staff_closed_at if staff(user) else CallShare.agent_closed_at
+        base = select(CallShare)
         if not staff(user):
-            stmt = stmt.where(CallShare.to_user_id == user.id)
-        elif agent:     # staff picked one agent on the follow-ups page: only the calls shared with that agent
-            stmt = stmt.where(CallShare.to_user_id.in_(select(AppUser.id).where(AppUser.ext == agent)))
+            base = base.where(CallShare.to_user_id == user.id)
+        elif agent:     # staff picked one agent: only the calls shared with that agent
+            base = base.where(CallShare.to_user_id.in_(select(AppUser.id).where(AppUser.ext == agent)))
+        open_n = s.scalar(select(func.count()).select_from(base.where(own.is_(None)).subquery())) or 0
+        stmt = base.where(own.is_(None) if box == "open" else own.is_not(None))
+        if box == "archive":
+            if from_ and to and to < from_:
+                raise HTTPException(422, "'to' is before 'from'")
+            if from_:
+                stmt = stmt.where(CallShare.created_at >= day_bounds(from_)[0])
+            if to:
+                stmt = stmt.where(CallShare.created_at < day_bounds(to)[1])
+        stmt = stmt.order_by(CallShare.created_at.desc(), CallShare.id.desc()).limit(LIST_LIMIT + 1)
         names = usernames(s)
-        items = [share_dict(s, sh, names, user) for sh in s.scalars(stmt)]
-        return {"items": items, "unseen": sum(1 for i in items if i["seen_at"] is None)}
+        rows = list(s.scalars(stmt))
+        items = [share_dict(s, sh, names, user) for sh in rows[:LIST_LIMIT]]
+        return {"items": items, "truncated": len(rows) > LIST_LIMIT, "open": open_n,
+                "unseen": sum(1 for i in items if i["seen_at"] is None)}
+
+    @app.post("/api/shares/{share_id}/close")
+    def close_share(share_id: int, user: User, s: DB) -> dict:
+        """Move a shared call to this side's archive. Agent: only their own, and only after replying (the reply is
+        then locked). Staff: any share, at any time (the agent's 24 h KPI is not changed by it)."""
+        sh = s.get(CallShare, share_id, with_for_update=True)
+        if sh is None or (not staff(user) and sh.to_user_id != user.id):
+            raise HTTPException(404, "no such share")
+        if staff(user):
+            if sh.staff_closed_at is None:
+                sh.staff_closed_at = _now()
+        else:
+            if sh.reply is None:
+                raise HTTPException(409, "اكتب ردّك على المشرف أولاً")
+            if sh.agent_closed_at is None:
+                sh.agent_closed_at = _now()
+        s.add(AdminLog(user_id=user.id, action="share_close", target=f"call:{sh.call_id} share:{sh.id}", at=_now()))
+        s.commit()
+        return share_dict(s, sh, usernames(s), user)
 
     @app.get("/api/calls/{call_id}/shares")
     def call_shares(call_id: int, user: User, s: DB) -> dict:
@@ -518,16 +562,22 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
     def share_reply(share_id: int, body: ReplyIn, user: User, s: DB) -> dict:
         """The agent answers the supervisor (one reply, may be changed; empty text removes it). Only after the note
         was opened, and never on a call whose content was deleted."""
-        sh = s.get(CallShare, share_id)
+        sh = s.get(CallShare, share_id, with_for_update=True)
         if sh is None or sh.to_user_id != user.id:
             raise HTTPException(404, "no such share")
         if sh.seen_at is None:
             raise HTTPException(409, "open the note first")
+        if sh.agent_closed_at is not None:
+            raise HTTPException(409, "هذه الملاحظة في الأرشيف: لا يمكن تعديل الرد")
         c = s.get(Call, sh.call_id)
         if c is None or c.content_deleted_at is not None:
             raise HTTPException(409, "this call's content was deleted")
         text_ = body.text.strip()
         sh.reply, sh.reply_at = (text_, _now()) if text_ else (None, None)
+        if not text_:
+            sh.first_reply_at = None          # removed: the 24 h clock counts the next reply
+        elif sh.first_reply_at is None:
+            sh.first_reply_at = sh.reply_at   # an edit keeps the first time (KPI)
         s.add(AdminLog(user_id=user.id, action="share_reply" if text_ else "share_reply_removed",
                        target=f"call:{sh.call_id} share:{sh.id}", at=_now()))      # never the text itself
         s.commit()

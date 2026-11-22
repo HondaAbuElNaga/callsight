@@ -178,6 +178,6 @@ export function UsersPage({ me, onBack, onLogout, onExpired }: Props) {
 
 const ACTION_LABEL: Record<string, string> = {
   create_user: "إنشاء مستخدم", change_user: "تعديل مستخدم", reset_password: "كلمة مرور جديدة", setting: "إعداد",
-  delete_call_content: "حذف محتوى مكالمة", share_call: "مشاركة مكالمة", unshare_call: "سحب مشاركة", share_reply: "رد الموظف على المشرف", share_reply_removed: "حذف رد الموظف",
+  delete_call_content: "حذف محتوى مكالمة", share_call: "مشاركة مكالمة", unshare_call: "سحب مشاركة", share_reply: "رد الموظف على المشرف", share_reply_removed: "حذف رد الموظف", share_close: "نقل ملاحظة مشاركة للأرشيف",
   create_api_key: "إنشاء مفتاح API", disable_api_key: "إيقاف مفتاح API",
 };

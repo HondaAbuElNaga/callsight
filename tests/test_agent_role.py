@@ -33,6 +33,7 @@ AGENT_ALLOWED = {
     ("GET", "/api/calls/{call_id}/student"),    # training look-up: the call's agent (own form only)
     ("GET", "/api/shares"), ("GET", "/api/calls/{call_id}/shares"), ("POST", "/api/shares/{share_id}/seen"),
     ("PUT", "/api/shares/{share_id}/reply"),
+    ("POST", "/api/shares/{share_id}/close"),      # spec 2026-11-22-shares-tab: own share, after replying
     ("GET", "/api/calls/{call_id}/summary"),
 }
 STAFF_ONLY = {

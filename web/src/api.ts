@@ -152,6 +152,7 @@ export interface KpiReport {
   top_repeaters: { number: string; repeats: number }[];
   days: { day: string; calls: number; answered: number; unanswered: number }[];
   followup?: FollowupKpi;
+  shares?: ShareKpi;
 }
 
 export interface KpiFilters { from: string; to: string; team: string; agent: string }   // from/to: YYYY-MM-DD, both days included
@@ -359,7 +360,15 @@ export interface Share {
   note: string | null;          // agents: null until they click the note (that click = seen_at, shown to the supervisor)
   seen_at: string | null; call_start: string | null; agent_ext: string | null;
   reply: string | null; reply_at: string | null;      // the agent's answer to the supervisor
+  // spec 2026-11-22-shares-tab: 24 h from created_at to reply; each side closes it into its own archive
+  first_reply_at: string | null; deadline: string; reply_state: ShareReplyState;
+  agent_closed_at: string | null; staff_closed_at: string | null; closed: boolean;   // closed = by my side
 }
+export type ShareReplyState = "pending" | "on_time" | "late" | "missing";
+export interface ShareList { items: Share[]; truncated: boolean; open: number; unseen: number }
+export interface ShareFilters { box: "open" | "archive"; agent?: string; from?: string; to?: string }
+export interface ShareKpiBucket { due: number; on_time: number; late: number; missing: number; rate: number | null }
+export interface ShareKpi { since: string | null; hours: number; summary: ShareKpiBucket; agents: Record<string, ShareKpiBucket> }
 export interface CallShares { items: Share[]; targets: { id: number; username: string; ext: string | null }[] }
 export interface AgentSummary {
   call_id: number;
@@ -519,7 +528,14 @@ export const api = {
     return get<FollowupList>(`/api/followups?${q.toString()}`);
   },
   agentSummary: (id: number) => get<AgentSummary>(`/api/calls/${id}/summary`),
-  shares: (agent = "") => get<{ items: Share[]; unseen: number }>(`/api/shares${agent ? `?agent=${encodeURIComponent(agent)}` : ""}`),
+  shares: (f: ShareFilters) => {
+    const q = new URLSearchParams({ box: f.box });
+    if (f.agent) q.set("agent", f.agent);
+    if (f.box === "archive" && f.from) q.set("from", f.from);
+    if (f.box === "archive" && f.to) q.set("to", f.to);
+    return get<ShareList>(`/api/shares?${q}`);
+  },
+  closeShare: (id: number) => send<Share>("POST", `/api/shares/${id}/close`),
   callShares: (id: number) => get<CallShares>(`/api/calls/${id}/shares`),
   share: (id: number, to_user_id: number, note: string) =>
     send<Share>("POST", `/api/calls/${id}/shares`, { to_user_id, note }),

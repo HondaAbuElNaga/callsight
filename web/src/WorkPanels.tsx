@@ -456,7 +456,14 @@ export function SharePanel({ callId, me, onExpired }: { callId: number; me: Me; 
             {staff && <button className="link" onClick={() => api.unshare(s.id).then(reload).catch(fail)}>سحب</button>}
           </p>
           {staff && s.reply && <p className="reply"><b>ردّ {s.to}:</b> {s.reply} <span className="muted small">· {formatDateTime(s.reply_at!)}</span></p>}
-          {!staff && s.seen_at && <ReplyBox share={s} onSaved={reload} onFail={fail} />}
+          {!staff && s.seen_at && !s.closed && <ReplyBox share={s} onSaved={reload} onFail={fail} />}
+          {!staff && s.closed && s.reply && <p className="muted small">ردّك ({formatDateTime(s.reply_at!)}): {s.reply} · في الأرشيف</p>}
+          {!staff && s.seen_at && !s.closed && s.reply && (   /* spec 2026-11-22-shares-tab: close -> the agent's archive */
+            <button type="button" className="small" onClick={() => api.closeShare(s.id).then(reload).catch(fail)}>
+              إغلاق ونقل للأرشيف</button>
+          )}
+          {!s.reply && s.reply_state === "missing" && <p className="state bad">لم يتم الرد خلال 24 ساعة</p>}
+          {s.reply_state === "late" && <p className="state bad">تم الرد بعد مهلة 24 ساعة</p>}
         </div>
       ))}
       {staff && (

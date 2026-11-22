@@ -320,6 +320,34 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
             </section>
           )}
 
+          {data.shares && (
+            <section className="panel">   {/* spec 2026-11-22-shares-tab */}
+              <h2>الرد على ملاحظات المشرف (خلال {data.shares.hours} ساعة)</h2>
+              {data.shares.summary.due === 0 ? <p className="muted">لا توجد ملاحظات مستحقة في هذه الفترة.</p> : (
+              <div className="table-wrap">
+                <table>
+                  <thead><tr>
+                    <th>الموظف</th><th>ملاحظات مستحقة</th><th>تم الرد في الوقت</th><th>تم الرد متأخراً</th><th>لم يتم الرد</th><th>نسبة الرد في الوقت</th>
+                  </tr></thead>
+                  <tbody>
+                    {[...Object.entries(data.shares.agents).filter(([, v]) => v.due > 0)
+                        .map(([ext, v]) => ({ key: ext, label: `${ext} ${data.agents.find((a) => a.ext === ext)?.name ?? ""}`, v })),
+                      ...(isAgent ? [] : [{ key: "all", label: "الإجمالي", v: data.shares.summary }])].map(({ key, label, v }) => (
+                      <tr key={key}>
+                        <td>{label}</td><td className="num">{v.due}</td><td className="num">{v.on_time}</td>
+                        <td className="num">{v.late}</td><td className="num">{v.missing}</td><td className="num">{pct(v.rate)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              )}
+              <p className="muted small">
+                حسب يوم إرسال الملاحظة{data.shares.since ? `، من ${data.shares.since}` : ""}. للموظف {data.shares.hours} ساعة من وقت الإرسال ليرد؛ تُحتسب الملاحظة بعد انتهاء المهلة أو بعد الرد. التعديل لا يغيّر وقت الرد الأول. تُحتسب فقط لموظفي الفرق (تحويلة مسجلة في الفرق).
+              </p>
+            </section>
+          )}
+
           {data.followup?.enabled && (
             <section className="panel">
               <h2>المتابعة ومعاودة الاتصال {!data.followup.active && <span className="tag">للعرض فقط — لا تدخل في التقارير بعد</span>}</h2>

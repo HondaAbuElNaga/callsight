@@ -677,7 +677,7 @@ class CallPrivateNote(Base):
 
 class CallShare(Base):
     """A supervisor sends one call with a note to one agent. The agent sees the note only after clicking it (that
-    click is `seen_at`, shown to the supervisor) and may answer with one reply (changeable)."""
+    click is `seen_at`, shown to the supervisor) and answers with one reply (changeable until the agent closes it)."""
     __tablename__ = "call_share"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
@@ -688,6 +688,11 @@ class CallShare(Base):
     seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reply: Mapped[str | None] = mapped_column(String(1000))
     reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # spec 2026-11-22-shares-tab: the agent has 24 h from created_at to reply (KPI); editing keeps first_reply_at,
+    # removing the reply clears it. Each side closes the share into its own archive (agent: only after replying).
+    first_reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    agent_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    staff_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AppSetting(Base):

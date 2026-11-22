@@ -81,6 +81,7 @@ input[aria-invalid="true"] { border-color: var(--bad); }
 .st-abandoned_queue, .st-abandoned_ivr { --c: var(--bad); --cb: var(--bad-bg); }
 .st-no_answer, .st-busy { --c: var(--warn); --cb: var(--warn-bg); }
 .st-voicemail { --c: var(--neutral); --cb: var(--neutral-bg); }
+.st-warn { --c: var(--warn); --cb: var(--warn-bg); }   /* shares tab: open shared calls */
 .badge[class*="st-"] { color: var(--c); background: var(--cb); }
 .chip[class*="st-"] b { color: var(--c); }
 .tag { font-size: 12px; color: var(--warn); background: var(--warn-bg); border-radius: 4px; padding: 0 6px; margin-inline-start: 6px; }

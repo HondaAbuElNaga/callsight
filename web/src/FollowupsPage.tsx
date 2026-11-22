@@ -1,13 +1,14 @@
 // "المتابعات": agents see their own work (forms, callbacks, notes after a callback) and supervisor notes; staff see
 // everyone's (agent-supervisor spec; steps, counters, "needs action" view: follow-up stages spec).
 import { useCallback, useEffect, useState } from "react";
-import { api, Unauthorized, type Agent, type FollowupItem, type FollowupList, type Me, type Share } from "./api";
+import { api, Unauthorized, type Agent, type FollowupItem, type FollowupList, type Me } from "./api";
 import {
   CALLBACK_LABEL, PRIORITIES, PRIORITY_LABEL, STEP_CLASS, STEP_LABEL, earlyText, formatDateTime, forwardWhere,
   riyadhToday, ringText,
 } from "./format";
 import { CB_CLASS, PriorityTag, RESP_LABEL } from "./WorkPanels";
 import { CallsPage } from "./CallsPage";
+import { SharesTab } from "./SharesTab";
 
 interface Props { me: Me; onCalls?: () => void;   // agents: no calls page (follow-ups is their only page)
   onLogout: () => void; onExpired: () => void }
@@ -165,7 +166,8 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
   const [state, setState] = useState("action");
   const [priority, setPriority] = useState("");   // spec 2026-11-16: filters the list, the counters count all
   const [data, setData] = useState<FollowupList | null>(null);
-  const [shares, setShares] = useState<Share[]>([]);
+  const [tab, setTab] = useState<"work" | "shares">("work");   // spec 2026-11-22-shares-tab
+  const [sharesOpen, setSharesOpen] = useState(0);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [error, setError] = useState("");
   const [tick, setTick] = useState(0);
@@ -191,10 +193,10 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
       .then((d) => { if (alive) { setData(d); setError(""); } }).catch((e) => alive && fail(e));
     return () => { alive = false; };
   }, [from, to, agent, state, priority, fail, tick]);
-  // staff: with an agent picked, only the calls shared with that agent
-  const loadShares = useCallback(() => api.shares(staff ? agent : "").then((d) => setShares(d.items)).catch(fail),
-    [fail, staff, agent]);
-  useEffect(() => { loadShares(); }, [loadShares, tick]);
+  useEffect(() => {   // the tab label shows how many shared calls are still open (also while on the other tab)
+    if (tab === "shares") return;      // the tab itself reports the count
+    api.shares({ box: "open" }).then((d) => setSharesOpen(d.open)).catch(fail);
+  }, [tab, tick, fail]);
 
   const now = Date.now();
   const c = data?.counts;
@@ -210,6 +212,18 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
       </header>
       {error && <div className="error">{error}</div>}
 
+      <div className="chips" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === "work"} className={`chip${tab === "work" ? " on" : ""}`}
+          onClick={() => setTab("work")}>المتابعات</button>
+        <button type="button" role="tab" aria-selected={tab === "shares"}
+          className={`chip${tab === "shares" ? " on" : ""}${sharesOpen ? " st-warn" : ""}`} onClick={() => setTab("shares")}>
+          {staff ? "المكالمات المشاركة مع الموظفين" : "ملاحظات المشرف"} {sharesOpen > 0 && <b>{sharesOpen}</b>}</button>
+      </div>
+
+      {tab === "shares" ? (
+        <SharesTab staff={staff} agents={agents} tick={tick} onOpenCall={(id) => onOpenCall(id, true)}
+          onExpired={onExpired} onCount={setSharesOpen} />
+      ) : <>
       {data && !data.linked && (
         <p className="error">حسابك غير مرتبط بتحويلة في فريق خدمة العملاء أو ما بعد البيع، لذلك لا تظهر لك متابعات. اطلب من مدير النظام ربط تحويلتك.</p>
       )}
@@ -233,31 +247,6 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
         <p className="older">يوجد {data.older_action} عمل مطلوب في أيام قبل {from}.{" "}
           <button type="button" className="link" onClick={() => { setFrom(daysAgo(LOOKBACK_DAYS)); setState("action"); }}>
             عرضها</button></p>
-      )}
-
-      {(staff || shares.length > 0) && (   /* fix K: agents see this box only when there is a note */
-        <section className="panel">
-          <h2>{staff ? "المكالمات المشاركة مع الموظفين" : "مكالمات أرسلها لك المشرف"}</h2>
-          {shares.length === 0 ? <p className="muted">لا توجد.</p> : (
-            <div className="table-wrap"><table>
-              <thead><tr><th>المكالمة</th><th>الملاحظة</th><th>من ← إلى</th><th>{staff ? "فتحها الموظف" : "فتحتها"}</th><th>الرد</th></tr></thead>
-              <tbody>
-                {shares.map((s) => (
-                  <tr key={s.id} onClick={() => {   // agent: one click opens the call AND shows the note
-                    if (!staff && !s.seen_at) api.shareSeen(s.id).then(loadShares).catch(fail).finally(() => onOpenCall(s.call_id, true));
-                    else onOpenCall(s.call_id, true);
-                  }}>
-                    <td className="nowrap">{s.call_start ? formatDateTime(s.call_start) : "–"}</td>
-                    <td>{s.note ?? <span className="state warn">ملاحظة جديدة: اضغط لعرضها</span>}</td>
-                    <td>{s.from} ← {s.to}</td>
-                    <td>{s.seen_at ? formatDateTime(s.seen_at) : <span className="state off">{staff ? "لم يفتحها" : "لم تفتحها"}</span>}</td>
-                    <td>{s.reply ? <>{s.reply} <span className="muted small">· {formatDateTime(s.reply_at!)}</span></> : "–"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table></div>
-          )}
-        </section>
       )}
 
       <form className="filters" onSubmit={(e) => e.preventDefault()}>
@@ -338,6 +327,7 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
         {data && <Unsolved items={data.unsolved} truncated={data.unsolved_truncated} staff={staff} onOpen={(id) => onOpenCall(id)} />}
         </div>
       )}
+      </>}
       {open !== null && (   /* the call opens in the side panel over this list; ✕ closes it and refreshes the list */
         <CallsPage key={`${open}-${fromShare}`} me={me} onLogout={onLogout} onExpired={onExpired} detailOnly embedded openCallId={open} fromShare={fromShare}
           onFollowups={() => { setOpen(null); setTick((n) => n + 1); }} />
