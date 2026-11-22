@@ -22,14 +22,17 @@ def deadline(sh: CallShare) -> datetime:
     return sh.created_at + timedelta(hours=REPLY_HOURS)
 
 
-def reply_state(sh: CallShare, now: datetime) -> str:
-    """on_time / late (replied after 24 h) / missing (no reply and 24 h passed) / pending (still has time)."""
+def reply_state(sh: CallShare, now: datetime, since: datetime | None = None) -> str:
+    """on_time / late (replied after 24 h) / missing (no reply and 24 h passed) / pending (still has time) /
+    old (sent before the 24 h rule existed: `since`, never counted)."""
+    if since is not None and sh.created_at < since:
+        return "old"
     if sh.first_reply_at is not None:
         return "on_time" if sh.first_reply_at <= deadline(sh) else "late"
     return "missing" if now > deadline(sh) else "pending"
 
 
-def _since(s: Session) -> datetime | None:
+def rule_start(s: Session) -> datetime | None:
     row = s.get(AppSetting, SETTING_SINCE)
     if row is None or not row.value:
         return None
@@ -50,7 +53,7 @@ def kpi(s: Session, lo: datetime, hi: datetime, exts: list[str], now: datetime |
     out = {"since": None, "hours": REPLY_HOURS, "summary": _empty(), "agents": {e: _empty() for e in exts}}
     if not exts:
         return out
-    since = _since(s)
+    since = rule_start(s)
     out["since"] = since.astimezone(RIYADH).date().isoformat() if since else None
     lo = max(lo, since) if since else lo
     stmt = (select(CallShare, AppUser.ext).join(AppUser, AppUser.id == CallShare.to_user_id)

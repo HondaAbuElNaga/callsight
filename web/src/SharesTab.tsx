@@ -8,6 +8,7 @@ import { formatDateTime, riyadhToday } from "./format";
 const STATE: Record<ShareReplyState, [string, string]> = {
   pending: ["لم يتم الرد بعد", "warn"], on_time: ["تم الرد في الوقت", "ok"], late: ["تم الرد متأخراً", "bad"],
   missing: ["لم يتم الرد خلال 24 ساعة", "bad"],
+  old: ["قبل تطبيق مهلة 24 ساعة", "off"],      // sent before the rule: never counted, never red
 };
 
 function monthAgo(): string {
@@ -94,7 +95,7 @@ export function SharesTab({ staff, agents, tick, onOpenCall, onExpired, onCount 
       </p>
       <div className="table-wrap"><table>
         <thead><tr>
-          <th>المكالمة</th><th>الملاحظة</th><th>من ← إلى</th><th>أُرسلت</th>
+          <th>المكالمة</th><th>الملاحظة</th><th>{staff ? "من / إلى" : "من"}</th><th>أُرسلت</th>
           <th>{staff ? "فتحها الموظف" : "فتحتها"}</th><th>الرد</th><th>المهلة</th>{box === "open" && <th></th>}
         </tr></thead>
         <tbody>
@@ -105,7 +106,7 @@ export function SharesTab({ staff, agents, tick, onOpenCall, onExpired, onCount 
               <tr key={s.id} className={s.reply_state === "missing" ? "row-bad" : ""} onClick={() => open(s)}>
                 <td className="nowrap">{s.call_start ? formatDateTime(s.call_start) : "–"}</td>
                 <td>{s.note ?? <span className="state warn">ملاحظة جديدة: اضغط لعرضها</span>}</td>
-                <td>{s.from} ← {s.to}</td>
+                <td>{staff ? <>من {s.from}<br />إلى {s.to}</> : s.from}</td>
                 <td className="nowrap">{formatDateTime(s.created_at)}</td>
                 <td>{s.seen_at ? formatDateTime(s.seen_at) : <span className="state off">{staff ? "لم يفتحها" : "لم تفتحها"}</span>}</td>
                 <td>{s.reply ? <>{s.reply} <span className="muted small">· {formatDateTime(s.reply_at!)}</span></> : "–"}</td>

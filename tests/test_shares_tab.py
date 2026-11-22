@@ -103,3 +103,15 @@ def test_removing_the_reply_restarts_the_first_reply_time(env):  # noqa: F811
     client.put(f"/api/shares/{sid}/reply", json={"text": "رد"})
     assert client.put(f"/api/shares/{sid}/reply", json={"text": ""}).json()["first_reply_at"] is None
     assert client.post(f"/api/shares/{sid}/close").status_code == 409
+
+
+def test_notes_sent_before_the_rule_are_old_not_red(env):  # noqa: F811
+    client, Session, ids, *_ = env
+    sid = _share(client, ids)
+    _age(Session, sid, 48)
+    with Session() as s:        # the rule started an hour ago: this note (2 days old) is "old", never "missing"
+        s.add(AppSetting(key="share_kpi_since",
+                         value=(datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="seconds")))
+        s.commit()
+    login(client, "ali")
+    assert client.get("/api/shares").json()["items"][0]["reply_state"] == "old"

@@ -453,7 +453,7 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
                 "to": users.get(sh.to_user_id, ""), "to_user_id": sh.to_user_id,
                 "created_at": sh.created_at.isoformat(), "seen_at": iso(sh.seen_at),
                 # spec 2026-11-22-shares-tab: 24 h to reply; each side closes it into its own archive
-                "deadline": shr.deadline(sh).isoformat(), "reply_state": shr.reply_state(sh, _now()),
+                "deadline": shr.deadline(sh).isoformat(), "reply_state": shr.reply_state(sh, _now(), shr.rule_start(s)),
                 "agent_closed_at": iso(sh.agent_closed_at),
                 "staff_closed_at": iso(sh.staff_closed_at) if staff(user) else None,
                 "closed": (sh.staff_closed_at if staff(user) else sh.agent_closed_at) is not None,

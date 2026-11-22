@@ -452,7 +452,7 @@ export function SharePanel({ callId, me, onExpired }: { callId: number; me: Me; 
               ملاحظة جديدة من {s.from}: اضغط لعرضها</button>
           ) : <p>{s.note}</p>}
           <p className="muted small">
-            {s.from} ← {s.to} · {formatDateTime(s.created_at)} · {s.seen_at ? `فتحها الموظف ${formatDateTime(s.seen_at)}` : "لم يفتحها الموظف بعد"}
+            من {s.from} إلى {s.to} · {formatDateTime(s.created_at)} · {s.seen_at ? `فتحها الموظف ${formatDateTime(s.seen_at)}` : "لم يفتحها الموظف بعد"}
             {staff && <button className="link" onClick={() => api.unshare(s.id).then(reload).catch(fail)}>سحب</button>}
           </p>
           {staff && s.reply && <p className="reply"><b>ردّ {s.to}:</b> {s.reply} <span className="muted small">· {formatDateTime(s.reply_at!)}</span></p>}

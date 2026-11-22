@@ -364,7 +364,7 @@ export interface Share {
   first_reply_at: string | null; deadline: string; reply_state: ShareReplyState;
   agent_closed_at: string | null; staff_closed_at: string | null; closed: boolean;   // closed = by my side
 }
-export type ShareReplyState = "pending" | "on_time" | "late" | "missing";
+export type ShareReplyState = "pending" | "on_time" | "late" | "missing" | "old";   // old = sent before the 24 h rule
 export interface ShareList { items: Share[]; truncated: boolean; open: number; unseen: number }
 export interface ShareFilters { box: "open" | "archive"; agent?: string; from?: string; to?: string }
 export interface ShareKpiBucket { due: number; on_time: number; late: number; missing: number; rate: number | null }
