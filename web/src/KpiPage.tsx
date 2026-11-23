@@ -229,6 +229,42 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
             </div>
           </div>
 
+          {data.agent_score && Object.keys(data.agent_score.agents).length > 0 && (
+            <section className="panel">   {/* spec 2026-11-23-agent-kpi */}
+              <h2>نسبة KPI لموظف خدمة العملاء</h2>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr>
+                    <th>الموظف</th><th>ردّ</th><th>فائتة</th><th>عاود الاتصال</th><th>درجة الرد</th>
+                    <th>نماذج مطلوبة</th><th>في وقتها</th><th>درجة النماذج</th>
+                    <th>AHT</th><th>درجة AHT</th><th>KPI النهائي</th>
+                  </tr></thead>
+                  <tbody>
+                    {Object.entries(data.agent_score.agents).map(([ext, v]) => (
+                      <tr key={ext}>
+                        <td>{ext} {data.agents.find((a) => a.ext === ext)?.name ?? ""}</td>
+                        <td className="num">{v.answered}</td><td className="num">{v.missed}</td>
+                        <td className="num">{v.recalled}</td><td className="num">{score(v.answer_score)}</td>
+                        <td className="num">{v.forms_due}</td><td className="num">{v.forms_on_time}</td>
+                        <td className="num">{score(v.forms_score)}</td>
+                        <td className="num">{secs(v.aht)}</td><td className="num">{score(v.aht_score)}</td>
+                        <td className="num"><b>{score(v.kpi)}</b></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="muted small">
+                يوم العمل ينتهي 21:30: المكالمة بعد 21:30 تُحتسب في اليوم التالي.
+                درجة الرد = (ردّ + فائتة عاود أحد الفريق الاتصال بها في نفس يوم العمل) ÷ (ردّ + فائتة)، مقرّبة لأعلى لأقرب 10
+                (مثال: 85% ← 90). «فائتة» = رنّت عنده ولم يرد عليها أحد؛ إن ردّ عليها زميل فلا تُحتسب عليه، والمكالمة بلا رقم لا تُحتسب.
+                درجة النماذج = النماذج المعبّأة في وقتها ÷ المطلوبة، مقرّبة لأعلى لأقرب 10؛ النموذج المتأخر لا يُحتسب.
+                درجة AHT: حتى 7 دقائق = 100، و7–10 = 90، و10–13 = 80، وهكذا (−10 لكل 3 دقائق).
+                KPI النهائي = متوسط الدرجات الموجودة («–» = لا توجد بيانات لهذا الجزء). لموظفي خدمة العملاء فقط.
+              </p>
+            </section>
+          )}
+
           {!outboundOnly && <div className="panels">
             <section className="panel wide">
               <h2>المكالمات الواردة يومياً</h2>
@@ -321,42 +357,6 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                     ))}
                 </tbody>
               </table></div>
-            </section>
-          )}
-
-          {data.agent_score && Object.keys(data.agent_score.agents).length > 0 && (
-            <section className="panel">   {/* spec 2026-11-23-agent-kpi */}
-              <h2>نسبة KPI لموظف خدمة العملاء</h2>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr>
-                    <th>الموظف</th><th>ردّ</th><th>فائتة</th><th>عاود الاتصال</th><th>درجة الرد</th>
-                    <th>نماذج مطلوبة</th><th>في وقتها</th><th>درجة النماذج</th>
-                    <th>AHT</th><th>درجة AHT</th><th>KPI النهائي</th>
-                  </tr></thead>
-                  <tbody>
-                    {Object.entries(data.agent_score.agents).map(([ext, v]) => (
-                      <tr key={ext}>
-                        <td>{ext} {data.agents.find((a) => a.ext === ext)?.name ?? ""}</td>
-                        <td className="num">{v.answered}</td><td className="num">{v.missed}</td>
-                        <td className="num">{v.recalled}</td><td className="num">{score(v.answer_score)}</td>
-                        <td className="num">{v.forms_due}</td><td className="num">{v.forms_on_time}</td>
-                        <td className="num">{score(v.forms_score)}</td>
-                        <td className="num">{secs(v.aht)}</td><td className="num">{score(v.aht_score)}</td>
-                        <td className="num"><b>{score(v.kpi)}</b></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="muted small">
-                يوم العمل ينتهي 21:30: المكالمة بعد 21:30 تُحتسب في اليوم التالي.
-                درجة الرد = (ردّ + فائتة عاود أحد الفريق الاتصال بها في نفس يوم العمل) ÷ (ردّ + فائتة)، مقرّبة لأعلى لأقرب 10
-                (مثال: 85% ← 90). «فائتة» = رنّت عنده ولم يرد عليها أحد؛ إن ردّ عليها زميل فلا تُحتسب عليه، والمكالمة بلا رقم لا تُحتسب.
-                درجة النماذج = النماذج المعبّأة في وقتها ÷ المطلوبة، مقرّبة لأعلى لأقرب 10؛ النموذج المتأخر لا يُحتسب.
-                درجة AHT: حتى 7 دقائق = 100، و7–10 = 90، و10–13 = 80، وهكذا (−10 لكل 3 دقائق).
-                KPI النهائي = متوسط الدرجات الموجودة («–» = لا توجد بيانات لهذا الجزء). لموظفي خدمة العملاء فقط.
-              </p>
             </section>
           )}
 
