@@ -12,10 +12,11 @@ import { HealthPage } from "./HealthPage";
 import { RatingPage } from "./RatingPage";
 import { LivePage } from "./LivePage";
 import { RulesPage } from "./RulesPage";
+import { PrivacyPage } from "./PrivacyPage";
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = still checking
-  const [view, setView] = useState<"calls" | "goldset" | "firstspeaker" | "kpi" | "health" | "live" | "rating" | "followups" | "users" | "forwards" | "rules">("calls");
+  const [view, setView] = useState<"calls" | "goldset" | "firstspeaker" | "kpi" | "health" | "live" | "rating" | "followups" | "users" | "forwards" | "rules" | "privacy">("calls");
   const [openCall, setOpenCall] = useState<number | null>(null);   // follow-ups page -> open that call's panel
   const [problems, setProblems] = useState(0);
   const isAdmin = me?.role === "admin";
@@ -47,7 +48,9 @@ export function App() {
     </button>
   ) : null;
   let page;
-  if (view === "health" && isAdmin)
+  if (view === "privacy")   // every role (PDPL notice, spec 2026-11-17-legal-retention task 4)
+    page = <PrivacyPage me={me} onBack={() => setView("calls")} onLogout={logout} />;
+  else if (view === "health" && isAdmin)
     page = <HealthPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
   else if (view === "goldset" && isAdmin)
     page = <GoldsetPage me={me} onBack={() => setView("calls")} onLogout={logout} onExpired={() => setMe(null)} />;
@@ -89,5 +92,11 @@ export function App() {
         onOpened={() => setOpenCall(null)}
       />
     );
-  return <>{banner}{page}</>;
+  const privacyLink = view === "privacy" ? null : (   // on every page, every role
+    <button className="link muted" onClick={() => setView("privacy")}
+      style={{ position: "fixed", bottom: 8, insetInlineStart: 8, fontSize: 12, zIndex: 5 }}>
+      الخصوصية
+    </button>
+  );
+  return <>{banner}{page}{privacyLink}</>;
 }
