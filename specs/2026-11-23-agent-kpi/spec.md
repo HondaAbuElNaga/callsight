@@ -1,6 +1,6 @@
 # Customer-service employee KPI % (2026-11-23)
 
-Status: approved (2026-11-23, every open question = the recommendation)
+Status: done (2026-11-23, pushed to main)
 
 User's request (2026-11-23): one KPI % for each customer-service employee, on the KPI page («المؤشرات»), made of 3
 parts, each scored in bands of 10, and the final KPI = the average of the 3. The work day ends at **21:30**.

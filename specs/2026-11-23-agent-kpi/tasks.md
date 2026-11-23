@@ -11,4 +11,4 @@
 - [x] 9. Docs: `docs/followup-form-and-forward.md` deadline, roadmap line (roadmap added after review)
 - [x] 10. Verify: full pytest, tsc + build, every acceptance criterion → 998 passed, 9 skipped, 1 failed: test_llm_config_from_env fails on main too (.env-dependent)
 - [x] 11. Review: 3 subagents (bugs, security, accuracy), fix confirmed → 4 low findings, all confirmed; 3 fixed, 1 = push checklist (cut-over date)
-- [ ] 12. Status done, roadmap, push only on the user's "ok push" — before pushing: `DEADLINE_2130_FROM` = go-live day
+- [x] 12. Status done, roadmap, push only on the user's "ok push" — before pushing: `DEADLINE_2130_FROM` = go-live day → pushed 2026-11-23, cut-over 24/11 kept (push before it)
