@@ -369,10 +369,17 @@ class LiveService:
             return
         if isinstance(event, CallState):   # call id, member kinds, extension numbers, states: no caller numbers
             log.info("live: call %s members %s", event.call_id,
-                     [f"{m.kind}:{m.ext or '-'}:{m.status or '-'}" for m in event.members])
+                     [f"{m.kind}:{m.ext or '-'}:{m.status or '-'}:{m.channel_id if m.kind == 'extension' else '-'}"
+                      for m in event.members])
         deltas = self.state.apply(event, self._wall())
         if isinstance(event, CallState) and not deltas:
             log.info("live: call %s not shown (not the team's, or nothing changed)", event.call_id)
+        call = self.state.calls.get(getattr(event, "call_id", ""))
+        if call is not None and call.team:   # debug: what the board holds for this call after the event
+            log.info("live: call %s on board: %s agents %s, board has %s calls", call.call_id, call.state,
+                     sorted(m.ext for m in call.members.values() if m.ext), len(self.state.snapshot()))
+        elif call is None and isinstance(event, CallState):
+            log.info("live: call %s gone from the board after this event", event.call_id)
         self._publish(deltas, "connected" if self.status == "syncing" else None)
 
     async def shutdown(self) -> None:
