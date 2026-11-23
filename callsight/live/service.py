@@ -30,7 +30,7 @@ from typing import Any, Awaitable, Callable
 from ..pbx.authblock import AuthGuard
 from ..pbx.base import AuthError, PbxError, PbxUnavailable, TokenLimit
 from .bus import Publisher
-from .events import TOPICS, parse
+from .events import TOPICS, CallState, parse
 from .state import LiveState
 
 log = logging.getLogger(__name__)
@@ -361,8 +361,18 @@ class LiveService:
             return
         event = parse(msg)              # masks caller numbers; the raw message is never logged or stored
         if event is None:
+            try:                        # only the event type, never the content
+                d = json.loads(msg) if isinstance(msg, (str, bytes)) else msg
+                log.info("live: event not used (type %s)", d.get("type") if isinstance(d, dict) else type(d).__name__)
+            except Exception:  # noqa: BLE001
+                log.info("live: event not used (not JSON)")
             return
+        if isinstance(event, CallState):   # call id, member kinds, extension numbers, states: no caller numbers
+            log.info("live: call %s members %s", event.call_id,
+                     [f"{m.kind}:{m.ext or '-'}:{m.status or '-'}" for m in event.members])
         deltas = self.state.apply(event, self._wall())
+        if isinstance(event, CallState) and not deltas:
+            log.info("live: call %s not shown (not the team's, or nothing changed)", event.call_id)
         self._publish(deltas, "connected" if self.status == "syncing" else None)
 
     async def shutdown(self) -> None:
