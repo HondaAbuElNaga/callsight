@@ -25,6 +25,7 @@ from ..db.models import (Agent, AppUser, Call, GoldClip, ListenAudit, RecordingP
                          TranscriptAccess)
 from ..ingest.classify import TeamConfig
 from ..pbx.base import PbxError
+from ..pbx.yeastar import ListenUnknown
 from . import auth
 from . import live as live_ws
 from .live import LiveConfig, NoLiveSource
@@ -52,7 +53,7 @@ class ApiConfig:
     # Listen (spec live-board, decision 4): OFF. Gate 1 = this flag, read on EVERY request (LISTEN_ENABLED);
     # gate 2 = the PBX adapter's listen() refuses too. Every attempt is written to listen_audit.
     listen_enabled: Callable[[], bool] = lambda: False
-    listen_client: Callable[[], object] | None = None   # -> object with listen(monitor_ext, call_id)
+    listen_client: Callable[[], object] | None = None   # -> object with listen(monitor_ext, channel_id)
     live_lookup: Callable[[str], dict | None] | None = None   # live call by PBX call id (from the snapshot)
     # agent-supervisor spec: admin delete -> worker task removes the backup copy (BACKUP_DIR is read-only here)
     delete_backup_copy: Callable[[int, str], None] | None = None
@@ -287,7 +288,9 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
 
     @app.get("/api/me")
     def me(user: User) -> dict:
-        return {"username": user.username, "role": user.role, "ext": user.ext}
+        # listen: the live page shows the «استماع» button (staff only, and only while LISTEN_ENABLED=true)
+        return {"username": user.username, "role": user.role, "ext": user.ext,
+                "listen": user.role in auth.STAFF_ROLES and cfg.listen_enabled()}
 
     # ---------- calls ----------
 
@@ -588,9 +591,11 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
                s: DB) -> dict:
         # client_ip: behind Docker's port mapping this is the bridge gateway, not the user's PC (user_id is the key)
         ip = request.client.host if request.client else None
-        # The Origin rule stops other web pages from using a supervisor's cookie; a key request has no cookie.
-        if (not getattr(request.state, "api_key", False)
-                and (request.headers.get("origin") or "").rstrip("/") not in listen_origins):
+        # Only a person on the CallSight page: never an ERP key (it could act as any supervisor and ring their
+        # phone), and the Origin rule stops other web pages from using a supervisor's cookie.
+        if getattr(request.state, "api_key", False):
+            deny(s, user, ip, call_id, "denied_key", 403, "listen is for a person on the CallSight page only")
+        if (request.headers.get("origin") or "").rstrip("/") not in listen_origins:
             deny(s, user, ip, call_id, "denied_origin", 403, "request not from the CallSight page")
         if user.role not in auth.STAFF_ROLES:
             deny(s, user, ip, call_id, "denied_role", 403, "admin or supervisor only")
@@ -603,21 +608,29 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
         except Exception:  # noqa: BLE001 - Redis down / bad snapshot: still audited
             listen_audit(s, user, ip, call_id, "error")
             raise HTTPException(503, "live data not available") from None
-        agent = ((live or {}).get("agents") or [None])[0]
-        if live is None or agent is None:
+        # the first talking team agent with a known channel (private key live:channels, never in the board);
+        # never the supervisor's own phone, and only while the call is talking (not on hold / ringing)
+        channels = (live or {}).get("channels") or {}
+        agent = next((a for a in (live or {}).get("agents") or [] if a in channels and a != user.ext), None)
+        channel = channels.get(agent) if agent else None
+        if live is None or live.get("state") != "talking" or agent is None or not channel:
             listen_audit(s, user, ip, call_id, "not_found", agent)
             raise HTTPException(404, "no such call talking now")
         attempt = listen_audit(s, user, ip, call_id, "pending", agent)
         try:
             if cfg.listen_client is None:
                 raise RuntimeError("no PBX client")
-            cfg.listen_client().listen(user.ext, call_id)       # the adapter refuses too (2nd gate)
+            cfg.listen_client().listen(user.ext, channel)       # the adapter refuses too (2nd gate)
             result = "ok"
+        except ListenUnknown:                  # sent, no answer: the phone may ring; the page says wait
+            result = "unknown"
         except PbxError:
             result = "refused"
         except Exception:  # noqa: BLE001 - audited; details stay out of the answer
             result = "error"
         listen_audit(s, user, ip, call_id, result, agent, kind="result", attempt_id=attempt.id)
+        if result == "unknown":
+            raise HTTPException(504, "no answer from the PBX: your phone may ring")
         if result != "ok":
             raise HTTPException(503, "the PBX did not start listening")
         return {"ok": True}
@@ -705,19 +718,53 @@ def _live_lookup_from_env() -> Callable[[str], dict | None]:
     import json
 
     from ..app import redis_client
-    from ..live.bus import SNAPSHOT_KEY
+    from ..live.bus import CHANNELS_KEY, SNAPSHOT_KEY
 
     def lookup(call_id: str) -> dict | None:
-        raw = redis_client().get(SNAPSHOT_KEY)
+        raw, raw_ch = redis_client().mget(SNAPSHOT_KEY, CHANNELS_KEY)
         calls = (json.loads(raw) or {}).get("calls") or [] if raw else []
-        return next((c for c in calls if c.get("call_id") == call_id), None)
+        call = next((c for c in calls if c.get("call_id") == call_id), None)
+        if call is None:
+            return None
+        channels = (json.loads(raw_ch) or {}).get(call_id) or {} if raw_ch else {}
+        return {**call, "channels": channels}
     return lookup
 
 
+_LISTEN_ADAPTER: list = []
+_LISTEN_ADAPTER_LOCK = __import__("threading").Lock()
+
+
 def _listen_adapter():
-    """Only reached when LISTEN_ENABLED=true; its listen() still refuses (listen_enabled=False, 2nd gate)."""
-    from ..app import pbx_adapter
-    return pbx_adapter("api", fail_closed=True)
+    """Only reached while LISTEN_ENABLED=true (gate 1, read on every request). One adapter per API process: its
+    token is reused (the PBX allows max 8 open logins: worker + CLI + live + this one)."""
+    with _LISTEN_ADAPTER_LOCK:
+        if not _LISTEN_ADAPTER:
+            import atexit
+
+            from ..app import pbx_adapter
+            ad = pbx_adapter("api", fail_closed=True)
+            ad.guard = _ListenGuard(ad.guard)     # reads pbx:auth_blocked, never sets it (see below)
+            ad.max_login_failures = 1             # a refused login: this process stops trying (restart to retry)
+            ad.listen_enabled = True              # gate 2 opens only here, only after gate 1 said yes
+            atexit.register(ad.close)             # give the token back on a clean stop (max 8 open tokens)
+            _LISTEN_ADAPTER.append(ad)
+        return _LISTEN_ADAPTER[0]
+
+
+class _ListenGuard:
+    """The API obeys the shared pbx:auth_blocked switch but never sets it: a Listen click that hits the token limit
+    (e.g. after quick redeploys) must not stop call sync and the live board for everyone until pbx-unblock."""
+
+    def __init__(self, guard):
+        self._g = guard
+
+    def blocked(self) -> bool:
+        return self._g.blocked()
+
+    def block(self, reason: str) -> None:
+        import logging
+        logging.getLogger(__name__).error("Listen: PBX login refused (%s); not blocking the other services", reason)
 
 
 def _health_from_env(cache_seconds: float = 15.0) -> Callable[[Session], dict]:

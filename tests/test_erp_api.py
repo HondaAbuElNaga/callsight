@@ -39,7 +39,7 @@ def test_key_is_shown_once_and_only_its_hash_is_kept(env):
 def test_acts_with_the_named_users_rights(env):
     client, _, ids, *_ = env
     key = make_key(client)
-    assert client.get("/api/me", headers=h(key, "ali")).json() == {"username": "ali", "role": "agent", "ext": "119"}
+    assert client.get("/api/me", headers=h(key, "ali")).json() == {"username": "ali", "role": "agent", "ext": "119", "listen": False}
     # an agent: no call list (same rule as the web page, cleanup 2026-11-18), but opens own calls one by one
     assert client.get("/api/calls", headers=h(key, "ali")).status_code == 403
     assert client.get(f"/api/calls/{ids['own']}", headers=h(key, "ali")).status_code == 200

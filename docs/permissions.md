@@ -77,7 +77,7 @@ R = read, W = write. "own" = only calls of the agent's own extension.
 | GET /api/reports, /api/reports/pdf, /api/reports/{id}/pdf | PDF reports (audited) | R | R | ❌ |
 | GET /api/rating/queue, GET/PUT /api/rating/calls/{id} | rating page | R/W | R/W | ❌ |
 | WS /api/live, GET /api/live/snapshot | live board | R | R | ❌ |
-| POST /api/live/{id}/listen | Listen button (OFF: `LISTEN_ENABLED`) | W* | W* | ❌ |
+| POST /api/live/{id}/listen | Listen button (OFF: `LISTEN_ENABLED`); the PBX rings the user's own extension. Never with an ERP key | W* | W* | ❌ |
 
 \* refused while the feature is off (it is off now).
 

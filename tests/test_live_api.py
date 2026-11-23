@@ -12,7 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 from callsight.api import auth
 from callsight.api.live import CLOSE_FORBIDDEN, CLOSE_LOGIN, CLOSE_POLICY, CLOSE_TRY_AGAIN, LiveConfig
 from callsight.api.main import ApiConfig, create_app, live_origins
-from callsight.db.models import ListenAudit
+from callsight.db.models import ApiClient, ListenAudit
 from callsight.pbx.base import PbxError
 from live_fakes import FakeSource
 from test_api import PASSWORD, SECRET, TEAM, engine  # noqa: F401  (engine is a fixture)
@@ -21,15 +21,19 @@ ORIGIN = "http://127.0.0.1:8080"
 H = {"origin": ORIGIN}           # the Listen POST must come from the CallSight page
 CALL = {"call_id": "1731574800.101", "state": "talking", "direction": "inbound", "agents": ["119"], "ringing": [],
         "caller": "••••4567", "queue": "6401", "started_at": 1000.0, "answered_at": 1005.0}
+CHAN = "PJSIP/119-00000114"     # the agent's channel (private key live:channels, never in the board)
 SNAP = {"seq": 41, "status": "connected", "calls": [CALL], "published_at": 1010.0}
 
 
 class FakeListenPbx:
     def __init__(self, ok=False):
-        self.ok, self.calls = ok, []
+        self.ok, self.calls, self.unknown = ok, [], False
 
-    def listen(self, monitor_ext, call_id):
-        self.calls.append((monitor_ext, call_id))
+    def listen(self, monitor_ext, channel_id):
+        self.calls.append((monitor_ext, channel_id))
+        if self.unknown:
+            from callsight.pbx.yeastar import ListenUnknown
+            raise ListenUnknown("no answer")
         if not self.ok:
             raise PbxError("listen is switched off in the PBX adapter")
         return {"errcode": 0}
@@ -43,14 +47,16 @@ def env(engine):  # noqa: F811
         auth.create_user(s, "boss", PASSWORD, "supervisor", "114")
         auth.create_user(s, "admin1", PASSWORD, "admin")                      # no extension
         auth.create_user(s, "ali", PASSWORD, "agent", "119", TEAM.ext_team)
-    state = {"listen": False, "pbx": FakeListenPbx(), "source": FakeSource(SNAP, last_seen=1010.0)}
+    state = {"listen": False, "pbx": FakeListenPbx(), "source": FakeSource(SNAP, last_seen=1010.0),
+             "channels": {CALL["call_id"]: {"119": CHAN}}}
 
     def build(**live_kw):
         live = LiveConfig(origins=frozenset({ORIGIN}), source=state["source"], recheck_seconds=0.1, **live_kw)
         app = create_app(Session, ApiConfig(
             secret=SECRET, audio_dir=__import__("pathlib").Path("."), teams=lambda: TEAM, live=live,
             listen_enabled=lambda: state["listen"], listen_client=lambda: state["pbx"],
-            live_lookup=lambda cid: next((c for c in state["source"].snap["calls"] if c["call_id"] == cid), None)
+            live_lookup=lambda cid: next(({**c, "channels": state["channels"].get(cid, {})}
+                                          for c in state["source"].snap["calls"] if c["call_id"] == cid), None)
             if state["source"].snap else None))
         return TestClient(app)
     yield build, Session, state
@@ -234,7 +240,7 @@ def test_listen_on_writes_pending_then_result(env):
     login(c)
     r = c.post(f"/api/live/{CALL['call_id']}/listen", headers=H)
     assert r.status_code == 503                                       # PBX adapter's own gate refuses
-    assert state["pbx"].calls == [("114", CALL["call_id"])]
+    assert state["pbx"].calls == [("114", CHAN)]                     # rings 114, listens on 119's channel
     rows = audit_rows(Session)
     assert rows[0] == ("attempt", "pending", CALL["call_id"], "119", "114", None)
     assert rows[1][:2] == ("result", "refused") and rows[1][5] is not None
@@ -279,13 +285,81 @@ def test_listen_audit_is_append_only(env):
     assert len(audit_rows(Session)) == 1
 
 
-def test_no_listen_button_markup_ships():
+def test_listen_button_only_on_the_live_page_and_only_when_switched_on():
     from pathlib import Path
     src = Path(__file__).resolve().parent.parent / "web" / "src"
-    for f in src.glob("*.tsx"):
+    for f in [*src.glob("*.tsx"), *src.glob("*.ts")]:
         body = f.read_text(encoding="utf-8")
-        allowed = body.replace("الاستماع المباشر متوقف", "").replace("تحتاج استماع", "")   # S5: listen to the RECORDING
-        assert "/listen" not in body and "استماع" not in allowed, f.name
+        if f.name != "api.ts":
+            assert "/listen" not in body, f.name                   # one place calls the route: api.liveListen
+        if f.name not in ("LivePage.tsx",):
+            allowed = body.replace("تحتاج استماع", "")              # S5 flag: listen to the RECORDING
+            assert "liveListen" not in body or f.name == "api.ts", f.name
+            assert "استماع" not in allowed or f.name in ("PrivacyPage.tsx", "api.ts"), f.name
+    live = (src / "LivePage.tsx").read_text(encoding="utf-8")
+    assert "const canListen = !!me.listen && !!me.ext" in live and "{canListen && " in live
+
+
+def test_me_says_whether_the_listen_button_shows(env):
+    build, _, state = env
+    c = build()
+    login(c)
+    assert c.get("/api/me").json()["listen"] is False
+    state["listen"] = True
+    assert c.get("/api/me").json()["listen"] is True
+    c2 = build()
+    login(c2, "ali")
+    assert c2.get("/api/me").json()["listen"] is False             # agents never
+
+
+def test_listen_refuses_an_erp_key_even_acting_as_a_supervisor(env):
+    build, Session, state = env
+    state["listen"] = True
+    key, prefix, digest = auth.new_api_key()
+    with Session() as s:
+        s.add(ApiClient(name="ERP", key_prefix=prefix, key_hash=digest))
+        s.commit()
+    c = build()
+    r = c.post(f"/api/live/{CALL['call_id']}/listen",
+               headers={**H, auth.API_KEY_HEADER: key, auth.ACT_AS_HEADER: "boss"})
+    assert r.status_code == 403 and state["pbx"].calls == []
+    assert [r[1] for r in audit_rows(Session)] == ["denied_key"]
+
+
+def test_listen_only_while_talking_and_never_on_the_own_phone(env):
+    build, Session, state = env
+    state["listen"] = True
+    c = build()
+    login(c)
+    state["source"].snap["calls"][0] = {**CALL, "state": "holding"}
+    assert c.post(f"/api/live/{CALL['call_id']}/listen", headers=H).status_code == 404
+    state["source"].snap["calls"][0] = {**CALL, "agents": ["114", "119"]}       # the supervisor is on this call
+    state["channels"] = {CALL["call_id"]: {"114": "PJSIP/114-1", "119": CHAN}}
+    state["pbx"].ok = True
+    assert c.post(f"/api/live/{CALL['call_id']}/listen", headers=H).status_code == 200
+    assert state["pbx"].calls == [("114", CHAN)]                        # listens to 119, not to the own phone
+    state["source"].snap["calls"][0] = CALL
+
+
+def test_listen_no_answer_is_kept_apart_from_refused(env):
+    build, Session, state = env
+    state["listen"] = True
+    state["pbx"].unknown = True
+    c = build()
+    login(c)
+    r = c.post(f"/api/live/{CALL['call_id']}/listen", headers=H)
+    assert r.status_code == 504 and r.json()["detail"].startswith("no answer from the PBX")
+    assert audit_rows(Session)[-1][:2] == ("result", "unknown")
+
+
+def test_listen_without_the_agents_channel_is_not_found_and_rings_nobody(env):
+    build, Session, state = env
+    state["listen"] = True
+    state["channels"] = {}                                         # live service older than the channels key
+    c = build()
+    login(c)
+    assert c.post(f"/api/live/{CALL['call_id']}/listen", headers=H).status_code == 404
+    assert state["pbx"].calls == [] and [r[1] for r in audit_rows(Session)] == ["not_found"]
 
 
 def test_ws_login_code_reaches_the_client_after_accept(env):

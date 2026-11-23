@@ -5,6 +5,8 @@
 - live:last_seen  epoch seconds of the last publish (no expiry): "last live data at ..." on the page.
 - live:events     pub/sub channel: JSON {seq, status, deltas, published_at}. seq + 1 per message; a client that
                   sees a gap asks for the snapshot again.
+- live:channels   JSON {call_id: {ext: channel_id}} of talking team agents, same expiry. PRIVATE: read only by the
+                  API's Listen route, never sent to a browser (spec 2026-11-17-listen).
 Everything here is already masked (caller numbers: last 4 digits only).
 """
 from __future__ import annotations
@@ -13,6 +15,7 @@ import json
 import time
 
 SNAPSHOT_KEY = "live:snapshot"
+CHANNELS_KEY = "live:channels"
 LAST_SEEN_KEY = "live:last_seen"
 CHANNEL = "live:events"
 SNAPSHOT_TTL = 90
@@ -27,13 +30,16 @@ class Publisher:
         self.redis, self._clock = redis, clock
         self.seq = int(clock() * 1000)       # keeps growing across restarts, so old and new numbers never match
 
-    def publish(self, calls: list[dict], deltas: list[dict], status: str) -> int:
+    def publish(self, calls: list[dict], deltas: list[dict], status: str,
+                channels: dict[str, dict[str, str]] | None = None) -> int:
         """Snapshot first, then the delta: a client that gets delta n and asks for the snapshot sees >= n."""
         self.seq += 1
         now = round(self._clock(), 3)
         snap = {"seq": self.seq, "status": status, "calls": calls, "published_at": now}
         pipe = self.redis.pipeline()
         pipe.set(SNAPSHOT_KEY, json.dumps(snap, ensure_ascii=False), ex=SNAPSHOT_TTL)
+        if channels is not None:
+            pipe.set(CHANNELS_KEY, json.dumps(channels), ex=SNAPSHOT_TTL)
         pipe.set(LAST_SEEN_KEY, str(now))
         pipe.publish(CHANNEL, json.dumps({"seq": self.seq, "status": status, "deltas": deltas, "published_at": now},
                                          ensure_ascii=False))
@@ -45,6 +51,7 @@ class Publisher:
         self.seq += 1
         pipe = self.redis.pipeline()
         pipe.delete(SNAPSHOT_KEY)
+        pipe.delete(CHANNELS_KEY)
         pipe.publish(CHANNEL, json.dumps({"seq": self.seq, "status": "stopped", "deltas": [{"op": "reset"}],
                                           "published_at": round(self._clock(), 3)}))
         pipe.execute()

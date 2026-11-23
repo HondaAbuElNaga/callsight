@@ -258,6 +258,8 @@ table.health td { vertical-align: top; }
 .badge.live-ringing { background: #e6eefa; color: var(--accent); }
 .badge.live-holding { background: var(--warn-bg); color: var(--warn); }
 .live-queue { margin: 0; padding-inline-start: 18px; display: grid; gap: 4px; }
+.live-listen { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.live-listen-btn { justify-self: start; padding-inline: 0; }
 .live-legal { border-top: 1px solid var(--line); padding-top: 10px; }
 
 /* agent-supervisor spec: call-panel boxes, users page */

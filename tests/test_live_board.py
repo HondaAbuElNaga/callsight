@@ -10,7 +10,7 @@ import yaml
 
 from callsight import cli
 from callsight.live import events, service as live_service
-from callsight.live.bus import CHANNEL, LAST_SEEN_KEY, SNAPSHOT_KEY, Publisher
+from callsight.live.bus import CHANNEL, CHANNELS_KEY, LAST_SEEN_KEY, SNAPSHOT_KEY, Publisher
 from callsight.live.events import CallEnd, CallState, mask_number, parse
 from callsight.live.service import (Backoff, LiveService, LoginGate, LoginRateLimited, Timing, TokenStore, main,
                                     ws_url)
@@ -358,8 +358,130 @@ def test_pbx_unblock_cli(capsys):
 
 
 def test_adapter_listen_refuses_second_gate():
+    http = FakePbxHttp()
     with pytest.raises(PbxError, match="switched off"):
-        adapter(FakePbxHttp(), FakeRedis()).listen("114", "1731574800.101")
+        adapter(http, FakeRedis()).listen("114", "PJSIP/119-00000114")
+    assert http.calls == []                                       # not even a login
+
+
+class ListenHttp(FakePbxHttp):
+    """Answers call/listen with the given errcodes in turn and keeps the request bodies."""
+
+    def __init__(self, listen_codes, **kw):
+        super().__init__(**kw)
+        self.listen_codes, self.bodies = list(listen_codes), []
+
+    def handler(self, request):
+        import httpx
+        if request.url.path.endswith("/call/listen"):
+            self.calls.append("call/listen")
+            self.bodies.append((json.loads(request.content), request.url.params.get("access_token")))
+            code = self.listen_codes.pop(0)
+            return httpx.Response(200, json={"errcode": code, "errmsg": "SUCCESS" if code == 0 else
+                                              ("TOKEN EXPIRED" if code == 10004 else "FAILURE"), "call_id": "1.2"})
+        return super().handler(request)
+
+
+def test_adapter_listen_sends_listen_only_once():
+    http = ListenHttp([0])
+    ad = adapter(http, FakeRedis(), listen_enabled=True)
+    assert ad.listen("114", "PJSIP/119-00000114")["errcode"] == 0
+    assert http.bodies == [({"monitor": "114", "channel_id": "PJSIP/119-00000114", "type": "listen"}, "tok1")]
+    assert http.calls == ["get_token", "call/listen"]
+
+
+def test_adapter_listen_refused_is_not_repeated_but_an_expired_token_is_renewed_once():
+    http = ListenHttp([70130])
+    with pytest.raises(PbxError, match="errcode=70130"):
+        adapter(http, FakeRedis(), listen_enabled=True).listen("114", "PJSIP/119-00000114")
+    assert http.calls.count("call/listen") == 1                   # a repeat would ring the phone twice
+    http = ListenHttp([10004, 0])
+    adapter(http, FakeRedis(), listen_enabled=True).listen("114", "PJSIP/119-00000114")
+    assert http.calls == ["get_token", "call/listen", "get_token", "call/listen"]
+
+
+@pytest.mark.parametrize("ext,ch", [("11a", "PJSIP/119-1"), ("", "PJSIP/119-1"), ("114", ""),
+                                    ("114", "PJSIP/119 1"), ("114", "x" * 101), ("114", None)])
+def test_adapter_listen_rejects_odd_input_before_the_pbx(ext, ch):
+    http = ListenHttp([0])
+    with pytest.raises(PbxError, match="bad"):
+        adapter(http, FakeRedis(), listen_enabled=True).listen(ext, ch)
+    assert http.calls == []
+
+
+def test_channels_are_private_team_only_and_talking_only():
+    st = LiveState(team=TEAM_ONLY)
+    st.apply(ev("ring"), now=1000.0)
+    assert st.channels() == {}                                    # ringing: nothing to listen to yet
+    st.apply(ev("answer"), now=1005.0)
+    ch = st.channels()
+    assert list(ch) == ["1731574800.101"] and list(ch["1731574800.101"]) == ["119"]
+    chan = ch["1731574800.101"]["119"]
+    assert chan and chan not in json.dumps(st.snapshot())          # the board (browsers) never gets channel ids
+    other = CallState("o1", (events.Member("extension", "a", "ANSWERED", ext="302"),
+                             events.Member("outbound", "b", "ANSWERED", party="••••9999")))
+    st.apply(other, now=1006.0)
+    assert "o1" not in st.channels()                              # other departments: never listenable
+    st.apply(ev("end"), now=1020.0)
+    assert st.channels() == {}
+
+
+def test_channels_prefer_the_talking_leg_and_skip_other_departments():
+    st = LiveState(team=TEAM_ONLY)
+    st.apply(CallState("t1", (events.Member("extension", "old", "HOLD", ext="119"),
+                              events.Member("extension", "new", "ANSWERED", ext="119"),
+                              events.Member("extension", "x", "ANSWERED", ext="302"))), now=1.0)
+    assert st.channels() == {"t1": {"119": "new"}}
+    st2 = LiveState(team=TEAM_ONLY)
+    st2.apply(CallState("t2", (events.Member("extension", "new", "ANSWERED", ext="119"),
+                               events.Member("extension", "old", "HOLD", ext="119"))), now=1.0)
+    assert st2.channels() == {"t2": {"119": "new"}}               # order of the members does not matter
+
+
+def test_adapter_listen_timeout_is_unknown_but_connect_error_is_not_sent():
+    import httpx
+
+    from callsight.pbx.base import PbxUnavailable
+    from callsight.pbx.yeastar import ListenUnknown
+
+    class Broken(FakePbxHttp):
+        def __init__(self, exc):
+            super().__init__()
+            self.exc = exc
+
+        def handler(self, request):
+            if request.url.path.endswith("/call/listen"):
+                self.calls.append("call/listen")
+                raise self.exc
+            return super().handler(request)
+    for exc, kind in ((httpx.ReadTimeout("slow"), ListenUnknown), (httpx.ConnectError("down"), PbxUnavailable)):
+        http = Broken(exc)
+        with pytest.raises(kind):
+            adapter(http, FakeRedis(), listen_enabled=True).listen("114", "PJSIP/119-1")
+        assert http.calls.count("call/listen") == 1               # never sent twice
+    assert not issubclass(ListenUnknown, PbxUnavailable)
+
+
+def test_adapter_listen_waits_at_most_a_few_seconds_for_another_click(monkeypatch):
+    from callsight.pbx import yeastar
+    from callsight.pbx.base import PbxUnavailable
+    monkeypatch.setattr(yeastar, "LISTEN_LOCK_WAIT", 0.01)
+    http = ListenHttp([0])
+    ad = adapter(http, FakeRedis(), listen_enabled=True)
+    ad._listen_lock.acquire()
+    with pytest.raises(PbxUnavailable, match="still waiting"):
+        ad.listen("114", "PJSIP/119-1")
+    assert http.calls == []
+
+
+def test_publisher_writes_and_clears_the_private_channels_key():
+    r = FakeRedis()
+    pub = Publisher(r, clock=lambda: 1000.0)
+    pub.publish([], [], "connected", {"c1": {"119": "PJSIP/119-1"}})
+    assert json.loads(r.data[CHANNELS_KEY]) == {"c1": {"119": "PJSIP/119-1"}} and r.ttls[CHANNELS_KEY] == 90
+    assert "PJSIP" not in json.dumps(r.messages())                # not in the pub/sub messages browsers get
+    pub.clear()
+    assert CHANNELS_KEY not in r.data
 
 
 # ---------- live service with a fake PBX ----------
