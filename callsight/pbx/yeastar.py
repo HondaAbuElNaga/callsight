@@ -26,6 +26,14 @@ API_PATH = "/openapi/v1.0"
 TOKEN_MAX_AGE = 25 * 60          # refresh before the 30 min expiry
 TOKEN_LIMIT_ERRCODE = 60002      # "MAX LIMITATION EXCEEDED": more than 8 valid tokens for this API app
 PAGE_SIZE = 100
+LISTEN_TIMEOUT = 10.0           # call/listen answers at once; never hold a supervisor's click for a minute
+LISTEN_LOCK_WAIT = 5.0
+
+
+class ListenUnknown(PbxError):
+    """call/listen was sent but no answer came back: the supervisor's phone may be ringing (do not send again)."""
+
+
 CHANNEL_RE = re.compile(r"[A-Za-z0-9/_.:@\-]{1,100}")   # e.g. PJSIP/2000-00000114 (from event 30011)
 
 
@@ -174,14 +182,18 @@ class YeastarAdapter(PbxAdapter):
         if not (isinstance(channel_id, str) and CHANNEL_RE.fullmatch(channel_id)):
             raise PbxError("listen: bad channel id")
         body = {"monitor": monitor_ext, "channel_id": channel_id, "type": "listen"}
-        with self._listen_lock:
+        if not self._listen_lock.acquire(timeout=LISTEN_LOCK_WAIT):
+            raise PbxUnavailable("call/listen: another Listen request is still waiting for the PBX")
+        try:
             for attempt in (1, 2):
                 self._ensure_token()
                 try:
-                    resp = self.http.request("POST", self._url("call/listen"),
+                    resp = self.http.request("POST", self._url("call/listen"), timeout=LISTEN_TIMEOUT,
                                              params={"access_token": self.access_token}, json=body)
-                except httpx.TransportError as exc:
+                except (httpx.ConnectError, httpx.ConnectTimeout) as exc:     # never reached the PBX
                     raise PbxUnavailable(f"call/listen: PBX unreachable ({type(exc).__name__})") from None
+                except httpx.TransportError as exc:                          # sent; the answer got lost
+                    raise ListenUnknown(f"call/listen: no answer ({type(exc).__name__})") from None
                 data = self._json(resp, "call/listen")
                 if data.get("errcode") == 0:
                     return data
@@ -189,6 +201,8 @@ class YeastarAdapter(PbxAdapter):
                     self.access_token = None      # expired token: log in again once (nothing was rung)
                     continue
                 raise PbxError(f"call/listen refused: errcode={data.get('errcode')} errmsg={data.get('errmsg')}")
+        finally:
+            self._listen_lock.release()
         raise PbxError("call/listen failed")  # pragma: no cover
 
     def get(self, endpoint: str, **params: Any) -> dict:

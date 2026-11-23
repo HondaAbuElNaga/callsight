@@ -131,6 +131,7 @@ function listenError(e: unknown): string {
   if (m === "feature off") return "الاستماع المباشر متوقف حاليًا.";
   if (m === "your account has no extension to ring") return "حسابك بدون تحويلة هاتف، اطلب من المدير إضافتها.";
   if (m.startsWith("too many")) return "محاولات كثيرة، حاول بعد دقيقة.";
+  if (m.startsWith("no answer from the PBX")) return "لم يرد السنترال في الوقت: قد يرن هاتفك الآن. انتظر دقيقة قبل المحاولة مرة أخرى.";
   return "لم يبدأ الاستماع: رفض السنترال الطلب أو هاتفك مشغول. حاول مرة أخرى.";
 }
 
@@ -141,15 +142,15 @@ export function LivePage({ me, onCalls, onLogout, onExpired }: Props) {
   const canListen = !!me.listen && !!me.ext;
   const [ask, setAsk] = useState<string | null>(null);           // call id waiting for "yes, ring my phone"
   const [busy, setBusy] = useState(false);
-  const [listenMsg, setListenMsg] = useState<{ id: string; ok: boolean; text: string } | null>(null);
+  const [listenMsg, setListenMsg] = useState<{ ok: boolean; text: string } | null>(null);   // page-level: the card may be gone
   const listen = async (id: string) => {
     setBusy(true);
     try {
       await api.liveListen(id);
-      setListenMsg({ id, ok: true, text: `يرن هاتفك (تحويلة ${me.ext}) الآن: ارفع السماعة للاستماع. لا يسمعك أحد.` });
+      setListenMsg({ ok: true, text: `يرن هاتفك (تحويلة ${me.ext}) الآن: ارفع السماعة للاستماع. لا يسمعك أحد.` });
     } catch (e) {
       if (e instanceof Unauthorized) { onExpired(); return; }
-      setListenMsg({ id, ok: false, text: listenError(e) });
+      setListenMsg({ ok: false, text: listenError(e) });
     } finally {
       setBusy(false);
       setAsk(null);
@@ -188,6 +189,8 @@ export function LivePage({ me, onCalls, onLogout, onExpired }: Props) {
 
       {notice && <div className={`live-notice ${board.available && connected ? "" : "off"}`} role="status">{notice}</div>}
 
+      {listenMsg && <div className={listenMsg.ok ? "live-notice" : "error"} role="status">{listenMsg.text}</div>}
+
       <section className="panel">
         <h2>مكالمات جارية <span className="muted num">({active.length})</span></h2>
         {active.length === 0 ? (
@@ -216,13 +219,11 @@ export function LivePage({ me, onCalls, onLogout, onExpired }: Props) {
                       <button className="link" disabled={busy} onClick={() => setAsk(null)}>إلغاء</button>
                     </div>
                   ) : (
-                    <button className="link live-listen-btn" onClick={() => { setAsk(c.call_id); setListenMsg(null); }}>
+                    <button className="link live-listen-btn" disabled={busy}
+                      onClick={() => { setAsk(c.call_id); setListenMsg(null); }}>
                       استماع
                     </button>
                   ))}
-                  {listenMsg?.id === c.call_id && (
-                    <div className={`small ${listenMsg.ok ? "" : "error"}`} role="status">{listenMsg.text}</div>
-                  )}
                 </article>
               );
             })}

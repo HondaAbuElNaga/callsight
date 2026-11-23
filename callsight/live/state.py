@@ -88,8 +88,12 @@ class LiveState:
         for c in self.calls.values():
             if not c.team:
                 continue
-            ch = {m.ext: m.channel_id for m in c.members.values()
-                  if m.ext and m.channel_id and m.status in TALKING | HOLD and (team is None or m.ext in team)}
+            ch: dict[str, str] = {}
+            # HOLD legs first, TALKING legs after: an extension with an old held leg and a new talking leg
+            # (transfer back) is listened to on the talking one
+            for m in sorted(c.members.values(), key=lambda m: m.status in TALKING):
+                if m.ext and m.channel_id and m.status in TALKING | HOLD and (team is None or m.ext in team):
+                    ch[m.ext] = m.channel_id
             if ch:
                 out[c.call_id] = ch
         return out
