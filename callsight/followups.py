@@ -2,7 +2,8 @@
 and the follow-up KPIs. One place for these rules: the API lists, the form, the KPI page and the PDF all use it.
 
 Decisions (spec): a form is needed for answered inbound team calls with talk > 20 s from `followup_start` on (3);
-form on time = by 23:00 Riyadh on the call's day, or 2 h after the call end when that is later (11); a not-solved
+form on time = by 21:30 Riyadh (end of the work day) on the call's day, or 21:30 the next day for a call that ended
+at/after 21:30 (spec 2026-11-23-agent-kpi; calls before DEADLINE_2130_FROM keep the old 23:00 / +2 h rule); a not-solved
 form's callback is done by the first saved outbound call to the same number (last 9 digits) after the call ended,
 by any team member, credited to the form's owner (2), when it is a proper try (answered, ended by the customer
 side / busy, or rang >= 30 s; spec 2026-11-15-ring-time); on time =
@@ -26,8 +27,10 @@ from .ingest.service import day_bounds
 MIN_TALK_SECONDS = 20          # talk must be MORE than this
 GRACE = timedelta(minutes=60)
 EARLY_HANGUP_SECONDS = 30      # spec 2026-11-15-ring-time: the agent hung up before this many ring seconds
-DAY_END_HOUR = 23
+DAY_END_HOUR = 23                # old rule (calls before DEADLINE_2130_FROM)
 LATE_CALL_EXTRA = timedelta(hours=2)
+WORK_DAY_END = (21, 30)          # spec 2026-11-23-agent-kpi: the work day ends at 21:30 Riyadh
+DEADLINE_2130_FROM = datetime(2026, 11, 24, tzinfo=RIYADH)   # the 21:30 rule applies from here (past % unchanged)
 FORWARD_HOP = timedelta(hours=24)    # a forwarded problem: each person's time (= forward.HOP_TIME); sets expected_at
 # spec 2026-11-16-priority-no-followup: fixed English codes (another system reads them), high -> low
 PRIORITIES = {"high": "عالية", "medium": "متوسطة", "low": "منخفضة"}
@@ -124,8 +127,23 @@ def form_deadline(call: Call) -> datetime:
     return after_deadline(call.end_time)
 
 
+def work_day_end(t: datetime) -> datetime:
+    """End of the work day `t` belongs to: 21:30 Riyadh that day, or 21:30 the next day when `t` is at/after 21:30."""
+    local = t.astimezone(RIYADH)
+    end = local.replace(hour=WORK_DAY_END[0], minute=WORK_DAY_END[1], second=0, microsecond=0)
+    return end if local < end else end + timedelta(days=1)
+
+
+def work_day_start(day: date) -> datetime:
+    """Start of work day `day`: 21:30 Riyadh the day before (a call after 21:30 counts as the next day's work)."""
+    return datetime(day.year, day.month, day.day, *WORK_DAY_END, tzinfo=RIYADH) - timedelta(days=1)
+
+
 def after_deadline(end_time: datetime) -> datetime:
-    """Form after a call / note after a callback: by 23:00 Riyadh that day, or 2 h after when that is later."""
+    """Form after a call / note after a callback / reply to a forward question: by the end of the work day (21:30
+    Riyadh; 21:30 the next day after 21:30). Before DEADLINE_2130_FROM: by 23:00 that day, or 2 h after when later."""
+    if end_time >= DEADLINE_2130_FROM:
+        return work_day_end(end_time)
     end = end_time.astimezone(RIYADH)
     day_end = end.replace(hour=DAY_END_HOUR, minute=0, second=0, microsecond=0)
     return max(day_end, end + LATE_CALL_EXTRA)

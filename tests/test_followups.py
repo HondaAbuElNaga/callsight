@@ -104,6 +104,20 @@ def test_deadline_is_23_or_two_hours_after_a_late_call(s):
     assert fu.form_deadline(late) == late.end_time + timedelta(hours=2)
 
 
+def test_deadline_2130_work_day_from_the_cut_over():
+    """spec 2026-11-23-agent-kpi: by 21:30 that day; a call at/after 21:30 -> 21:30 the next day (no +2 h)."""
+    d, nxt, old = date(2026, 11, 24), date(2026, 11, 25), date(2026, 11, 23)
+    assert fu.after_deadline(at(14, day=d)) == at(21, 30, day=d)
+    assert fu.after_deadline(at(21, 29, day=d)) == at(21, 30, day=d)
+    assert fu.after_deadline(at(21, 30, day=d)) == at(21, 30, day=nxt)
+    assert fu.after_deadline(at(21, 45, day=d)) == at(21, 30, day=nxt)
+    assert fu.after_deadline(at(1, 0, day=nxt)) == at(21, 30, day=nxt)
+    # before the cut-over the old rule stays, so past % don't change
+    assert fu.after_deadline(at(14, day=old)) == at(23, day=old)
+    assert fu.after_deadline(at(22, 30, day=old)) == at(0, 30, day=d)
+    assert fu.work_day_start(d) == at(21, 30, day=old)
+
+
 def test_form_state_edges(s):
     start_on(s)
     u = user(s)

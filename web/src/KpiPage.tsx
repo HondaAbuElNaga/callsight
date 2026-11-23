@@ -71,6 +71,10 @@ const AGENT_TILES: TileDef[] = [
   { key: "repeats", label: "متكررة منسوبة للموظف", kind: "count", goodUp: false },
 ];
 
+function score(v: number | null): string {
+  return v === null ? "–" : `${Math.round(v * 10) / 10}%`;
+}
+
 function show(v: number | null, kind: Kind): string {
   if (kind === "rate") return pct(v);
   if (kind === "seconds") return secs(v);
@@ -320,6 +324,42 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
             </section>
           )}
 
+          {data.agent_score && Object.keys(data.agent_score.agents).length > 0 && (
+            <section className="panel">   {/* spec 2026-11-23-agent-kpi */}
+              <h2>نسبة KPI لموظف خدمة العملاء</h2>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr>
+                    <th>الموظف</th><th>ردّ</th><th>فائتة</th><th>عاود الاتصال</th><th>درجة الرد</th>
+                    <th>نماذج مطلوبة</th><th>في وقتها</th><th>درجة النماذج</th>
+                    <th>AHT</th><th>درجة AHT</th><th>KPI النهائي</th>
+                  </tr></thead>
+                  <tbody>
+                    {Object.entries(data.agent_score.agents).map(([ext, v]) => (
+                      <tr key={ext}>
+                        <td>{ext} {data.agents.find((a) => a.ext === ext)?.name ?? ""}</td>
+                        <td className="num">{v.answered}</td><td className="num">{v.missed}</td>
+                        <td className="num">{v.recalled}</td><td className="num">{score(v.answer_score)}</td>
+                        <td className="num">{v.forms_due}</td><td className="num">{v.forms_on_time}</td>
+                        <td className="num">{score(v.forms_score)}</td>
+                        <td className="num">{secs(v.aht)}</td><td className="num">{score(v.aht_score)}</td>
+                        <td className="num"><b>{score(v.kpi)}</b></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="muted small">
+                يوم العمل ينتهي 21:30: المكالمة بعد 21:30 تُحتسب في اليوم التالي.
+                درجة الرد = (ردّ + فائتة عاود أحد الفريق الاتصال بها في نفس يوم العمل) ÷ (ردّ + فائتة)، مقرّبة لأعلى لأقرب 10
+                (مثال: 85% ← 90). «فائتة» = رنّت عنده ولم يرد عليها أحد؛ إن ردّ عليها زميل فلا تُحتسب عليه، والمكالمة بلا رقم لا تُحتسب.
+                درجة النماذج = النماذج المعبّأة في وقتها ÷ المطلوبة، مقرّبة لأعلى لأقرب 10؛ النموذج المتأخر لا يُحتسب.
+                درجة AHT: حتى 7 دقائق = 100، و7–10 = 90، و10–13 = 80، وهكذا (−10 لكل 3 دقائق).
+                KPI النهائي = متوسط الدرجات الموجودة («–» = لا توجد بيانات لهذا الجزء). لموظفي خدمة العملاء فقط.
+              </p>
+            </section>
+          )}
+
           {data.shares && (
             <section className="panel">   {/* spec 2026-11-22-shares-tab */}
               <h2>الرد على ملاحظات المشرف (خلال {data.shares.hours} ساعة)</h2>
@@ -398,8 +438,8 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
                 </table>
               </div>
               <p className="muted small">
-                تُحتسب من {data.followup.since ?? data.followup.start}. النموذج في وقته = قبل 23:00 يوم المكالمة (أو خلال ساعتين من نهاية مكالمة انتهت بعد 21:00).
-                المعاودات تُحتسب في كل جولة. الملاحظة بعد المعاودة في وقتها = قبل 23:00 يوم مكالمة المعاودة (أو خلال ساعتين منها).
+                تُحتسب من {data.followup.since ?? data.followup.start}. النموذج في وقته = قبل 21:30 يوم المكالمة (مكالمة بعد 21:30: قبل 21:30 اليوم التالي؛ المكالمات قبل 24/11 بالقاعدة القديمة 23:00).
+                المعاودات تُحتسب في كل جولة. الملاحظة بعد المعاودة في وقتها = قبل 21:30 يوم مكالمة المعاودة (أو 21:30 اليوم التالي إن كانت بعد 21:30).
                 «نماذج بها مشكلة» = النماذج المعبّأة عدا «لا تحتاج متابعة». «ما زالت مفتوحة» = بانتظار معاودة أو معاودة فائتة أو تحتاج ملاحظة.
                 «لا تحتاج متابعة» = نماذج عُلّمت بلا متابعة، و«نسبتها» = حصتها من كل النماذج المعبّأة (نسبة عالية تستحق المراجعة).
                 «عاد العميل بعد الحل» للعرض فقط.
@@ -543,7 +583,7 @@ function ForwardPeople({ from, to, agent, onExpired }: { from: string; to: strin
         لا يُحسب عليه. «تأخر» = تجاوز وقته 24 ساعة دون أن يحلّها (انتقلت لمن بعده، أو ما زالت عنده، أو حلّها بعدها).
         مشرف الفرع الذي أغلقها دون مكالمة جيدة للعميل يُذكر السبب؛ وإن كان ينتظر تقييم الرضا عندنا فلا يُحسب عليه.
         النسبة من المشاكل التي انتهت مهلتها فقط. اضغط عدد الأخطاء لرؤية الحالات، ثم الحالة لرؤية قصتها كاملة.
-        ردود موظفي المكالمات: في وقتها = قبل 23:00 يوم السؤال (أو خلال ساعتين لسؤال بعد 21:00)؛ «اطّلعت، لا يحتاج
+        ردود موظفي المكالمات: في وقتها = قبل 21:30 يوم السؤال (سؤال بعد 21:30: قبل 21:30 اليوم التالي)؛ «اطّلعت، لا يحتاج
         رداً» يُحتسب رداً؛ إن حُلّت المشكلة قبل الموعد فلا يُحتسب السؤال. فلتر «الموظف» أعلاه يغيّر جدول موظفي المكالمات
         فقط. للعرض فقط.
       </p>

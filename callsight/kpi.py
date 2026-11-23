@@ -323,7 +323,7 @@ def data_trusted(session: Session, need: int = TRUSTED_DAYS, today: date | None 
 def report(session: Session, period: Period, teams: TeamConfig, team: str | None = None, agent: str | None = None,
            now: datetime | None = None) -> dict:
     """KPIs of a period + the previous period's summary (trend) + flags for the page and the PDF."""
-    from . import followups, shares
+    from . import agent_score, followups, shares
     cur = compute(session, period.start, period.end, teams=teams, team=team, agent=agent)
     prev_p = period.previous()
     prev = compute(session, prev_p.start, prev_p.end, teams=teams, team=team, agent=agent)["summary"]
@@ -335,7 +335,10 @@ def report(session: Session, period: Period, teams: TeamConfig, team: str | None
             "followup": followups.kpi(session, lo, hi, _scope(teams, team, agent)[1], now,
                                       callers=sorted(teams.ext_team)),
             # spec 2026-11-22-shares-tab: did the agent reply to the supervisor's shared calls within 24 h
-            "shares": shares.kpi(session, lo, hi, _scope(teams, team, agent)[1], now)}
+            "shares": shares.kpi(session, lo, hi, _scope(teams, team, agent)[1], now),
+            # spec 2026-11-23-agent-kpi: customer-service employee KPI % (work days end at 21:30; page only)
+            "agent_score": agent_score.compute(session, period.start, period.end, _scope(teams, team, agent)[1],
+                                               agent_score.team_exts(teams.ext_team), now)}
     _use_snapshots(session, out, period, prev_p, team, agent)
     return out
 

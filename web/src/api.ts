@@ -153,7 +153,16 @@ export interface KpiReport {
   days: { day: string; calls: number; answered: number; unanswered: number }[];
   followup?: FollowupKpi;
   shares?: ShareKpi;
+  agent_score?: AgentScoreKpi;
 }
+
+// spec 2026-11-23-agent-kpi: customer-service employee KPI %; scores 0-100 in steps of 10, null = no data
+export interface AgentScore {
+  answered: number; missed: number; recalled: number; answer_score: number | null;
+  forms_due: number; forms_on_time: number; forms_score: number | null;
+  aht: number | null; aht_score: number | null; kpi: number | null;
+}
+export interface AgentScoreKpi { from: string; to: string; agents: Record<string, AgentScore> }
 
 export interface KpiFilters { from: string; to: string; team: string; agent: string }   // from/to: YYYY-MM-DD, both days included
 

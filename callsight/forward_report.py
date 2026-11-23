@@ -498,8 +498,8 @@ def people_kpi(s: Session, start: date, end: date, now: datetime | None = None, 
     - people: per person and level: received, solved, solved in 24 h (+ % of the decided ones), average time to
       solve, late (mistakes) with one line each. His time = his own (a question waiting for our agent's answer is
       not on his clock). A branch supervisor's close that waits only for OUR satisfaction score is not his mistake.
-    - agents: questions read in the period, answered on time / late / still waiting (the form rule: by 23:00 that
-      day, or 2 h after a question read after 21:00); a solve before the deadline ends the question. "Seen, no
+    - agents: questions read in the period, answered on time / late / still waiting (the form rule: by 21:30 that
+      day, or 21:30 the next day for a question read after 21:30); a solve before the deadline ends the question. "Seen, no
       answer needed" counts as an answer, a failed one does not.
     `agent` = an extension: the agents table shows only him (the people table stays whole)."""
     from .followups import after_deadline

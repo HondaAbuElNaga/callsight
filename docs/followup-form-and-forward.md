@@ -77,8 +77,9 @@ A forward still gets **save time + 24 h** from the server (the chain's own time)
 
 ### Time rules (deadline)
 
-- The form must be filled **by 23:00 Riyadh on the call's day**.
-  If the call ended after 21:00 → **2 hours after the call end**.
+- The form must be filled **by 21:30 Riyadh on the call's day** (the work day ends at 21:30).
+  If the call ended at/after 21:30 → **by 21:30 the next day** (spec 2026-11-23-agent-kpi; calls before
+  2026-11-24 keep the old rule: 23:00, or 2 hours after a call that ended after 21:00).
 - After the deadline: a first form can still be saved, but it **counts as late**.
 - After the deadline (or after the callback time passed): the agent **cannot edit** an existing form.
   (The server would accept a supervisor's save, but the screen never shows supervisors the form.)

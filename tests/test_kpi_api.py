@@ -76,6 +76,10 @@ def test_kpi_week_matches_hand_calculation(env):
     assert [a["ext"] for a in d["agents"]] == ["104", "116", "119"]
     assert d["days"][0] == {"day": "2026-11-01", "calls": 2, "answered": 2, "unanswered": 0}
     assert all("XX…" in x["number"] for x in d["top_repeaters"])
+    # spec 2026-11-23-agent-kpi: customer-service exts only, work days end at 21:30
+    assert set(d["agent_score"]["agents"]) == {"104", "119"}
+    assert d["agent_score"]["from"].startswith("2026-10-31T21:30")
+    assert {"answer_score", "forms_score", "aht_score", "kpi"} <= set(d["agent_score"]["agents"]["104"])
 
 
 def test_kpi_team_and_agent_filters(env):
