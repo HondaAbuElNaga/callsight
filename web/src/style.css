@@ -386,7 +386,6 @@ span.chip.rule-word { border: 1px solid var(--line); }
 .who-agent { color: var(--accent); background: #e8f0fa; }
 .who-customer { color: var(--ok); background: var(--ok-bg); }
 .who-speaker_1, .who-speaker_2, .who-unknown { color: var(--neutral); background: var(--neutral-bg); }
-.talk-line { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 8px; }
 
 /* forwards page: "needs action now" (2026-11-23) */
 .attention .tiles { margin-bottom: 0; }

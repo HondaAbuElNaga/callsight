@@ -104,7 +104,7 @@ def display_rows(session: Session, t: Transcript) -> list[dict]:
 
 
 def as_dict(session: Session, t: Transcript, staff: bool = False) -> dict:
-    """staff=True adds the talk metrics (open question 2: agents do not see them)."""
+    """Talk / interruption numbers are never sent (user 2026-11-23: out of business scope)."""
     done = t.status == "done"
     rows = display_rows(session, t) if done else []
     d = {
@@ -115,10 +115,6 @@ def as_dict(session: Session, t: Transcript, staff: bool = False) -> dict:
         "speaker_unsure": bool(t.speaker_unsure),
         "segments": [{"seq": i, **r} for i, r in enumerate(rows)],
     }
-    if staff and done and t.diarization_version and t.speaker_unsure is False:
-        d["talk"] = {"agent_s": t.agent_talk_s, "customer_s": t.customer_talk_s, "ratio": t.talk_ratio,
-                     "interruptions_agent": t.interruptions_agent,
-                     "interruptions_customer": t.interruptions_customer, "longest_wait_s": t.longest_wait_s}
     return d
 
 

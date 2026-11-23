@@ -65,7 +65,7 @@ def test_resave_replaces_the_old_split(env):
         assert s.scalar(select(func.count()).select_from(SpeakerTurn)) == 2
 
 
-def test_page_shows_speakers_and_agents_never_get_talk_metrics(env):
+def test_page_shows_speakers_and_nobody_gets_talk_metrics(env):
     client, Session = env
     cid, _ = saved(Session)
     login(client)
@@ -74,7 +74,7 @@ def test_page_shows_speakers_and_agents_never_get_talk_metrics(env):
     assert [(x["speaker"], x["dropped"], x["text"]) for x in d["segments"]] == [
         ("agent", False, "السلام عليكم معك"), ("customer", False, "ابي الفاتورة"), (None, True, ""),
         (None, False, "نص بلا توقيت")]
-    assert d["talk"]["ratio"] == pytest.approx(0.5)
+    assert "talk" not in d                                       # removed 2026-11-23: out of scope
     client.post("/api/logout")
     login(client, "agent1")                                      # the agent of call ext 119
     d = client.get(f"/api/calls/{cid}/transcript").json()
@@ -111,16 +111,14 @@ def test_without_split_the_view_is_unchanged(env):
     assert d["split"] is False and [x["speaker"] for x in d["segments"]] == [None, None]
 
 
-def test_kpi_talk_averages_only_named_splits(env):
+def test_kpi_has_no_talk_numbers(env):
     from callsight.ingest.classify import TeamConfig
     _, Session = env
     saved(Session)
-    with Session() as s:                                         # an unsplit call does not count
-        add_transcript(s, make_call(s), ["نص"])
+    with Session() as s:
         teams = TeamConfig(ext_team={"119": "customer_service", "104": "customer_service"})
         out = kpi.compute(s, date(2026, 11, 10), date(2026, 11, 11), teams=teams)
-    assert out["summary"]["talk"]["calls"] == 1 and out["summary"]["talk"]["ratio"] == pytest.approx(0.5)
-    assert next(a for a in out["agents"] if a["ext"] == "119")["talk"]["calls"] == 1
+    assert "talk" not in out["summary"] and all("talk" not in a for a in out["agents"])
 
 
 def test_resplit_queues_rating_set_first_then_newest(env, monkeypatch):

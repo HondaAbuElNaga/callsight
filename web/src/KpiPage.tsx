@@ -32,7 +32,7 @@ const pct = (v: number | null) => (v === null ? "–" : `${(v * 100).toFixed(1)}
 const secs = (v: number | null) => (v === null ? "–" : duration(v));
 
 type Kind = "count" | "rate" | "seconds";
-interface TileDef { key: Exclude<keyof KpiSummary, "talk">; label: string; kind: Kind; goodUp: boolean }
+interface TileDef { key: keyof KpiSummary; label: string; kind: Kind; goodUp: boolean }
 
 const TEAM_TILES: TileDef[] = [
   { key: "calls", label: "المكالمات الواردة", kind: "count", goodUp: true },
@@ -349,31 +349,6 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
               <p className="muted small">مكالمات متكررة غير منسوبة لموظف (لم يُرد على الاتصال السابق): {data.summary.repeats_unattributed}</p>
             ) : null}
           </section>
-
-          {data.summary.talk && (
-            <section className="panel">
-              <h2>الكلام والمقاطعة <span className="tag">آلي — للعرض فقط</span></h2>
-              <p className="muted small">من المكالمات التي فُصل فيها صوت الموظف عن العميل ({data.summary.talk.calls} مكالمة). لا يدخل في أي تقييم.</p>
-              <div className="table-wrap"><table>
-                <thead><tr><th>الموظف</th><th>مكالمات</th><th>كلام الموظف</th><th>قاطع العميل (متوسط)</th>
-                  <th>قاطعه العميل (متوسط)</th><th>أطول انتظار بعد العميل</th></tr></thead>
-                <tbody>
-                  {[{ key: "all", label: "الكل", t: data.summary.talk },
-                    ...data.agents.filter((a) => a.talk).map((a) => ({ key: a.ext, label: `${a.ext} ${a.name}`, t: a.talk! }))]
-                    .map(({ key, label, t }) => (
-                      <tr key={key}>
-                        <td>{label}</td>
-                        <td className="num">{t.calls}</td>
-                        <td className="num">{pct(t.ratio)}</td>
-                        <td className="num">{t.interruptions_agent === null ? "–" : t.interruptions_agent.toFixed(1)}</td>
-                        <td className="num">{t.interruptions_customer === null ? "–" : t.interruptions_customer.toFixed(1)}</td>
-                        <td className="num">{secs(t.longest_wait_s)}</td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table></div>
-            </section>
-          )}
 
           {data.shares && (
             <section className="panel">   {/* spec 2026-11-22-shares-tab */}

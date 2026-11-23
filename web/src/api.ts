@@ -43,11 +43,8 @@ export interface Transcript {
   dropped_windows: number;
   split?: boolean;              // diarization: lines are agent / customer, not 30 s windows
   speaker_unsure?: boolean;     // the agent could not be told apart: "متحدث 1 / 2"
-  talk?: TalkMetrics;           // admin + supervisor only
   segments: TranscriptSegment[];
 }
-export interface TalkMetrics { agent_s: number | null; customer_s: number | null; ratio: number | null;
-  interruptions_agent: number | null; interruptions_customer: number | null; longest_wait_s: number | null }
 
 export interface Leg {
   id: number;
@@ -115,14 +112,10 @@ export interface KpiSummary {
   outbound_avg_ring: number | null;
   repeats: number;
   repeats_unattributed: number | null;
-  talk?: TalkAvg | null;          // diarization: averages of speaker-split calls (show-only)
   satisfaction: number | null;
 }
 
-export interface TalkAvg { calls: number; ratio: number | null; interruptions_agent: number | null;
-  interruptions_customer: number | null; longest_wait_s: number | null }
 export interface KpiAgent {
-  talk?: TalkAvg;
   ext: string;
   name: string;
   team: string;

@@ -123,8 +123,9 @@ def test_report_reads_saved_numbers_for_erased_content(env, engine):  # noqa: F8
         assert "agent_score" not in d                                      # PDF path: no employee KPI %
         assert kpi.report(s, aug, TEAM, now=NOW, with_agent_score=True)["agent_score"] == {"saved": 3}
         assert "agent_score" in kpi._content_figures(kpi.report(s, aug, TEAM, now=NOW, with_agent_score=True))
-        assert d["summary"]["talk"] == {"calls": 9} and d["previous"]["talk"] == {"calls": 3}
-        assert {a["ext"]: a["talk"] for a in d["agents"]}["104"] == {"calls": 7}
+        assert "talk" not in d["summary"] and "talk" not in d["previous"]          # old saved talk numbers ignored
+        assert all("talk" not in a for a in d["agents"])
+        assert "talk" not in kpi._content_figures(kpi.report(s, aug, TEAM, now=NOW)).get("summary", {})
         assert "saved_numbers_at" not in kpi.report(s, aug, TEAM, agent="104", now=NOW)   # other scope: live
         assert "saved_numbers_at" not in kpi.report(s, kpi.date_range(aug.start, aug.end - timedelta(days=1)),
                                                     TEAM, now=NOW)                        # custom range: live

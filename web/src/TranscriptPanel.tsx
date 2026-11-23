@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, NotFound, Unauthorized, type TalkMetrics, type Transcript } from "./api";
+import { api, NotFound, Unauthorized, type Transcript } from "./api";
 import { mmss } from "./format";
 
 interface Props {
@@ -23,19 +23,6 @@ const STATUS_TEXT: Record<string, string> = {
   error: "تعذر تفريغ هذه المكالمة.",
   skipped: "هذه المكالمة لا تُفرَّغ (قصيرة جداً أو طويلة جداً أو بلا تسجيل).",
 };
-
-function TalkLine({ talk }: { talk: TalkMetrics }) {
-  const pct = talk.ratio === null ? null : Math.round(talk.ratio * 100);
-  return (
-    <p className="talk-line small">
-      {pct !== null && <span>كلام الموظف <b className="num">{pct}%</b> · العميل <b className="num">{100 - pct}%</b></span>}
-      <span>قاطع الموظف العميل <b className="num">{talk.interruptions_agent ?? 0}</b> مرة</span>
-      <span>قاطع العميل الموظف <b className="num">{talk.interruptions_customer ?? 0}</b> مرة</span>
-      {talk.longest_wait_s !== null && <span>أطول انتظار بعد كلام العميل <b className="num">{Math.round(talk.longest_wait_s)}</b> ث</span>}
-      <span className="muted">(للعرض فقط، آلي)</span>
-    </p>
-  );
-}
 
 export function TranscriptPanel({ callId, canSeek, time, onSeek, onExpired }: Props) {
   const [data, setData] = useState<Transcript | null>(null);
@@ -112,7 +99,6 @@ export function TranscriptPanel({ callId, canSeek, time, onSeek, onExpired }: Pr
               : "تفريغ آلي وقد يحتوي أخطاء. كل سطر يغطي حتى 30 ثانية من الصوت"}
             {canSeek ? "؛ اضغط على سطر لسماعه من بدايته." : "."}
           </p>
-          {data.talk && <TalkLine talk={data.talk} />}
           {segs.length === 0 && <p className="muted small">لا يوجد كلام مفهوم في هذه المكالمة.</p>}
           <ol className="segments" ref={listRef}
             onScroll={() => { if (ownScroll.current) ownScroll.current = false; else userBusy(); }}
