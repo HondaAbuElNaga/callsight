@@ -627,7 +627,7 @@ class ForwardHop(Base):
     __table_args__ = (CheckConstraint("level IN (1, 2, 3)", name="ck_forward_hop_level"),
                       CheckConstraint("result IN ('pending', 'open', 'solved', 'passed_on', 'closed_by_other', "
                                       "'failed')", name="ck_forward_hop_result"),
-                      CheckConstraint("erp_close IS NULL OR erp_close IN ('pending', 'done', 'failed')",
+                      CheckConstraint("erp_close IS NULL OR erp_close IN ('pending', 'done', 'failed', 'manual')",
                                       name="ck_forward_hop_erp_close"),
                       Index("ix_forward_hop_erp_close", "erp_close", postgresql_where=sa_text("erp_close = 'pending'")))
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

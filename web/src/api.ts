@@ -500,7 +500,8 @@ export const api = {
     return r.json() as Promise<GoldClip>;
   },
   logout: () => fetch("/api/logout", { method: "POST", credentials: "same-origin" }),
-  forwards: (p: { from?: string; to?: string; state?: string; level?: string; branch?: string; person?: string }) => {
+  forwards: (p: { from?: string; to?: string; state?: string; level?: string; branch?: string; person?: string;
+    need?: string }) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(p)) if (v) q.set(k, v);
     return get<ForwardsList>(`/api/forwards?${q.toString()}`);
@@ -509,6 +510,9 @@ export const api = {
   // a supervisor closes the forwarded problem: this person solved it (KPI point), the ticket closes there
   forwardDecide: (id: number, hopId: number) =>
     send<ForwardStory>("POST", `/api/forwards/${id}/decide`, { hop_id: hopId }),
+  // our worker could not close the ticket there; staff closed it by hand and say so (leaves "needs action now")
+  forwardClosedByHand: (id: number, hopId: number) =>
+    send<ForwardStory>("POST", `/api/forwards/${id}/closed-by-hand`, { hop_id: hopId }),
   // D4 (req 20): the people problems were forwarded to + the agents' answers to their questions (staff only)
   forwardKpi: (p: { from: string; to: string; agent?: string }) => {
     const q = new URLSearchParams();
@@ -584,12 +588,20 @@ export const api = {
 };
 
 // ---------- the forwards page (staff): archive, story, numbers ----------
-export type ForwardState = "open" | "solved" | "unsolved";
+export type ForwardState = "open" | "solved" | "unsolved" | "send_failed" | "sending";
+// "needs action now": late / due within 4 h / send failed or stuck (or the chain stopped) / ticket close failed
+// there / open + high / a question waiting for our agent
+export type ForwardNeed = "late" | "soon" | "send" | "erp_close" | "high" | "questions";
 export interface ForwardLineItem {
   call_id: number; customer_number: string | null; agent_ext: string | null; agent_name: string;
   priority: string | null; ticket_number: number | null; forwarded_at: string | null; state: ForwardState;
   level: 1 | 2 | 3 | null; first: { name: string | null; branch: string | null }; holders: string[];
   solved_by: { name: string | null; level: number } | null; solved_at: string | null; seconds_to_solve: number | null;
+  saved_at: string | null; send_error: string | null;
+  due: string | null;          // the holders' 24 h ends (open only)
+  needs: ForwardNeed[]; repeat: number;   // repeat = other forwards of this customer in the 30 days before
+  waiting_check: boolean;      // a branch supervisor closed it; our check of his call to the customer is due
+  hop_error: string | null;    // why the holder's step is stuck (e.g. nobody linked to pass it to)
 }
 export interface ForwardPersonStats {
   person_id: number; name: string | null; branch: string | null; received: number; solved: number;
@@ -604,6 +616,7 @@ export interface ForwardInsights {
 }
 export interface ForwardsList {
   items: ForwardLineItem[]; truncated: boolean; insights: ForwardInsights; from: string; to: string;
+  attention: Record<ForwardNeed, number>;
   filters: { branches: string[]; people: { id: number; name: string; branch: string }[] };
 }
 export interface ForwardStoryHop {
@@ -615,7 +628,7 @@ export interface ForwardStoryHop {
   items_cut: boolean;
   calls: ForwardProof["calls"] | null; proof: ForwardProof | null;
   // our supervisor's close (2026-11-22): who decided this person solved it; the ticket's close there
-  decided_by: string | null; decided_at: string | null; erp_close: "pending" | "done" | "failed" | null;
+  decided_by: string | null; decided_at: string | null; erp_close: "pending" | "done" | "failed" | "manual" | null;
   can_decide: boolean;
 }
 export interface ForwardStory {

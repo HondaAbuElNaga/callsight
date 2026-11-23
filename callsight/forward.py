@@ -716,6 +716,20 @@ def decide(s: Session, call_id: int, hop_id: int, user_id: int, now: datetime | 
     return h
 
 
+def closed_by_hand(s: Session, call_id: int, hop_id: int) -> ForwardHop:
+    """Staff closed by hand, in the other system, a ticket our worker could not close (erp_close failed): mark it
+    'manual' so it leaves the forwards page's "needs action now" list. Only a failed close can be marked. The
+    caller commits."""
+    call = s.get(Call, call_id)
+    h = s.scalars(select(ForwardHop).where(ForwardHop.id == hop_id, ForwardHop.call_id == call_id)
+                  .with_for_update()).first()
+    if call is None or call.content_deleted_at is not None or h is None or h.erp_close != "failed":
+        raise DecideError("لا يوجد إغلاق متعذّر لهذه التذكرة")
+    h.erp_close = "manual"
+    s.flush()
+    return h
+
+
 def close_decided(s: Session, client: CsClient, now: datetime | None = None) -> dict:
     """Close there the tickets of a supervisor's decision (oldest first, form row-locked, SKIP LOCKED). Refused ->
     failed with the reason (shown in the story); network / busy -> tried next run, for 3 days. CsAuthError stops."""

@@ -1,5 +1,6 @@
 """Forwards page API (staff only): the archive of forwarded problems, one problem's story, the period's numbers
-(spec 2026-11-16-priority-no-followup, "Part 4: forwards page"). Read-only."""
+(spec 2026-11-16-priority-no-followup, "Part 4: forwards page"), the supervisor's close, the "closed there by hand"
+mark of a failed ticket close."""
 
 from datetime import date, datetime, timedelta
 from typing import Annotated
@@ -14,6 +15,10 @@ class DecideIn(BaseModel):
     hop_id: int
 
 
+class ByHandIn(BaseModel):
+    hop_id: int
+
+
 def register(app: FastAPI, *, DB, Manager, audit_analysis, cfg=None) -> None:
 
     @app.get("/api/forwards")
@@ -21,12 +26,14 @@ def register(app: FastAPI, *, DB, Manager, audit_analysis, cfg=None) -> None:
                  date_from: Annotated[date | None, Query(alias="from")] = None,
                  date_to: Annotated[date | None, Query(alias="to")] = None,
                  state: str | None = None, level: int | None = None, branch: str | None = None,
-                 person: int | None = None) -> dict:
+                 person: int | None = None, need: str | None = None) -> dict:
         from .. import forward_report as fr
         today = datetime.now(RIYADH).date()
         end = date_to or today
         start = date_from or end - timedelta(days=29)
-        if start > end or (end - start).days >= fr.MAX_DAYS:
+        if need is not None and need not in fr.NEEDS:
+            raise HTTPException(422, "bad need")
+        if not need and (start > end or (end - start).days >= fr.MAX_DAYS):
             raise HTTPException(422, "bad date range (at most 366 days)")
         if state is not None and state not in fr.STATES:
             raise HTTPException(422, "bad state")
@@ -34,7 +41,8 @@ def register(app: FastAPI, *, DB, Manager, audit_analysis, cfg=None) -> None:
             raise HTTPException(422, "bad level")
         if branch is not None and len(branch) > 130:
             raise HTTPException(422, "bad branch")
-        out = fr.listing(s, start, end, state=state or None, level=level, branch=branch or None, person_id=person)
+        out = fr.listing(s, start, end, state=state or None, level=level, branch=branch or None, person_id=person,
+                         need=need or None)
         out["from"], out["to"] = start.isoformat(), end.isoformat()
         return out
 
@@ -84,5 +92,28 @@ def register(app: FastAPI, *, DB, Manager, audit_analysis, cfg=None) -> None:
             except Exception:  # noqa: BLE001  saved here, the close there is only sooner
                 pass
         got = fr.story(s, call_id)
+        audit_analysis(s, user, call_id)
+        return got
+
+    @app.post("/api/forwards/{call_id}/closed-by-hand")
+    def forward_closed_by_hand(call_id: int, body: ByHandIn, user: Manager, s: DB) -> dict:
+        """Needs action now (2026-11-23): our worker could not close this ticket there; a staff member closed it by
+        hand in the other system and says so here, so it leaves the list."""
+        from datetime import timezone
+        from .. import forward
+        from .. import forward_report as fr
+        from ..db.models import AdminLog
+        now = datetime.now(timezone.utc)
+        try:
+            h = forward.closed_by_hand(s, call_id, body.hop_id)
+        except forward.DecideError as exc:
+            s.rollback()
+            raise HTTPException(409, str(exc)) from None
+        s.add(AdminLog(user_id=user.id, action="forward_erp_closed_by_hand", target=f"call:{call_id} hop:{h.id}",
+                       at=now))
+        s.commit()
+        got = fr.story(s, call_id)
+        if got is None:
+            raise HTTPException(404, "no forwarded problem on this call")
         audit_analysis(s, user, call_id)
         return got

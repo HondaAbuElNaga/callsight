@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   api, Refused, Unauthorized,
-  type ForwardLineItem, type ForwardPersonStats, type ForwardsList, type ForwardStory, type Me,
+  type ForwardLineItem, type ForwardNeed, type ForwardPersonStats, type ForwardsList, type ForwardStory, type Me,
 } from "./api";
 import { HOP_LEVEL, HOP_RESULT, PROOF_REASON, type Priority, formatDateTime, riyadhToday } from "./format";
 import { PriorityTag } from "./WorkPanels";
@@ -12,7 +12,28 @@ interface Props { me: Me; onCalls: () => void; onLogout: () => void; onExpired: 
 
 const STATE_LABEL: Record<string, [string, string]> = {
   open: ["مفتوحة", "off"], solved: ["حُلّت", "ok"], unsolved: ["توقفت (تعذّر الإرسال)", "bad"],
+  send_failed: ["لم تُرسل (فشل)", "bad"], sending: ["عالقة في الإرسال", "warn"],
 };
+// "needs action now": [key, label, tone, what the supervisor does]
+const NEED: [ForwardNeed, string, string | undefined, string][] = [
+  ["late", "متأخرة الآن (انتهت 24 ساعة)", "bad",
+    "اتصل بمن عنده المشكلة. إن حُلّت فعلًا: افتح القصة واضغط «إغلاق: حلّها هذا الشخص»"],
+  ["soon", "تنتهي مهلتها خلال 4 ساعات", "warn", "ذكّر من عنده المشكلة، وإلا تنتقل تلقائيًا لمن بعده"],
+  ["send", "تعذّر الإرسال أو عالقة أو توقفت", "bad",
+    "تعذّر الإرسال: اطلب من موظف المكالمة أن يعدّل النموذج ويختار من جديد. توقفت: اقرأ السبب في السطر"],
+  ["erp_close", "تعذّر إغلاق التذكرة هناك", "bad",
+    "تأكد أنها لم تُفتح من جديد، ثم أغلقها يدويًا في نظام خدمة العملاء واضغط «أغلقتها يدويًا هناك» في القصة"],
+  ["high", "مفتوحة وأولويتها عالية", undefined, "تابعها أولًا"],
+  ["questions", "أسئلة تنتظر رد موظف المكالمة", "warn",
+    "اطلب من موظف المكالمة أن يرد من «المتابعات» ← «أسئلة تنتظر ردك»"],
+];
+
+/** "باقي 3 س 20 د" / "متأخرة 2 س 5 د": the holders' time left on their 24 h. */
+export function timeLeft(due: string | null, now: number = Date.now()): [string, string] | null {
+  if (!due) return null;
+  const sec = (new Date(due).getTime() - now) / 1000;
+  return sec <= 0 ? [`متأخرة ${took(-sec)}`, "bad"] : [`باقي ${took(sec)}`, sec <= 4 * 3600 ? "warn" : "off"];
+}
 const ITEM_TYPE: Record<string, string> = {
   created: "أُنشئت التذكرة", forwarded: "حُوّلت", priority: "تغيّرت الأولوية", reopened: "أُعيد فتحها",
   closed: "أُغلقت", followup: "كتب", followup_close: "أغلقها وكتب",
@@ -35,7 +56,8 @@ function minusDays(day: string, n: number): string {
 
 export function ForwardsPage({ me, onCalls, onLogout, onExpired }: Props) {
   const today = riyadhToday();
-  const [f, setF] = useState({ from: minusDays(today, 29), to: today, state: "", level: "", branch: "", person: "" });
+  const [f, setF] = useState({ from: minusDays(today, 29), to: today, state: "", level: "", branch: "", person: "",
+    need: "" });
   const [data, setData] = useState<ForwardsList | null>(null);
   const [error, setError] = useState("");
   const [open, setOpen] = useState<number | null>(null);
@@ -48,12 +70,23 @@ export function ForwardsPage({ me, onCalls, onLogout, onExpired }: Props) {
     setError("");
     api.forwards(f).then((d) => { if (live) setData(d); }).catch((e) => {
       if (!live) return;
+      setData(null);
       if (e instanceof Unauthorized) expired.current();
       else setError("تعذّر التحميل: تحقق من التواريخ (سنة على الأكثر)");
     });
     return () => { live = false; };
   }, [f]);
 
+  const [, setTick] = useState(0);                  // «باقي …» follows the clock; the numbers refresh too
+  useEffect(() => {
+    let n = 0;
+    const id = window.setInterval(() => {
+      n += 1;
+      setTick(n);
+      if (n % 5 === 0 && !document.hidden) setF((x) => ({ ...x }));
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
   const t = data?.insights.totals;
   return (
     <div className="page">
@@ -70,13 +103,13 @@ export function ForwardsPage({ me, onCalls, onLogout, onExpired }: Props) {
         <label>من <input id="fw-from" type="date" value={f.from} max={f.to} onChange={(e) => set({ from: e.target.value })} /></label>
         <label>إلى <input id="fw-to" type="date" value={f.to} min={f.from} onChange={(e) => set({ to: e.target.value })} /></label>
         <label>الحالة
-          <select id="fw-state" value={f.state} onChange={(e) => set({ state: e.target.value })}>
+          <select id="fw-state" value={f.state} disabled={!!f.need} onChange={(e) => set({ state: e.target.value })}>
             <option value="">الكل</option><option value="open">مفتوحة</option>
             <option value="solved">حُلّت</option><option value="unsolved">توقفت (تعذّر الإرسال)</option>
           </select>
         </label>
         <label>وصلت إلى
-          <select id="fw-level" value={f.level} onChange={(e) => set({ level: e.target.value })}>
+          <select id="fw-level" value={f.level} disabled={!!f.need} onChange={(e) => set({ level: e.target.value })}>
             <option value="">الكل</option><option value="1">موظف الفرع فقط</option>
             <option value="2">مشرف الفرع</option><option value="3">الإدارة</option>
           </select>
@@ -95,6 +128,20 @@ export function ForwardsPage({ me, onCalls, onLogout, onExpired }: Props) {
         </label>
       </form>
       {error && <p className="bad-text">{error}</p>}
+
+      {data && <section className="panel attention">
+        <h2>يحتاج متابعة الآن</h2>
+        <p className="muted small">كل المشكلات التي تحتاج تدخلًا الآن، أيًا كانت التواريخ المختارة. اضغط رقمًا لعرضها في القائمة.</p>
+        <div className="tiles">{NEED.map(([k, label, tone, todo]) => {
+          const n = data.attention[k];
+          return <button key={k} type="button" className={`tile action${f.need === k ? " active" : ""}`}
+            title={todo} aria-pressed={f.need === k} onClick={() => set({ need: f.need === k ? "" : k })}>
+            <span className="tile-label">{label}</span>
+            <span className={`tile-value ${n ? tone ?? "" : ""}`}>{n}</span>
+            {n > 0 && <span className="muted small">{todo}</span>}
+          </button>;
+        })}</div>
+      </section>}
 
       {t && <section className="tiles">
         <Tile label="حُوّلت" v={t.forwarded} />
@@ -122,11 +169,15 @@ export function ForwardsPage({ me, onCalls, onLogout, onExpired }: Props) {
         </section>}
 
         <section className="panel">
-          <h2>كل المشكلات المحوّلة{data.truncated ? " (أول 500)" : ""}</h2>
-          {data.items.length === 0 ? <p className="muted">لا توجد تحويلات في هذه الفترة.</p> :
+          {f.need ? <div className="line">
+            <h2>{NEED.find((x) => x[0] === f.need)?.[1]}{data.truncated ? " (أول 500)" : ""}</h2>
+            <button className="link" onClick={() => set({ need: "" })}>عرض كل المشكلات في الفترة</button>
+          </div> : <h2>كل المشكلات المحوّلة{data.truncated ? " (أول 500)" : ""}</h2>}
+          {f.need && <p className="muted small">الأكثر إلحاحًا أولًا. التواريخ والحالة و«وصلت إلى» لا تُطبَّق هنا، الفرع والشخص يُطبَّقان.</p>}
+          {data.items.length === 0 ? <p className="muted">{f.need ? "لا شيء هنا الآن." : "لا توجد تحويلات في هذه الفترة."}</p> :
             <div className="table-wrap"><table>
               <thead><tr><th>الوقت</th><th>العميل</th><th>موظف المكالمة</th><th>الأولوية</th><th>حُوّلت إلى</th>
-                <th>وصلت إلى</th><th>الحالة</th><th>حلّها</th><th>المدة</th></tr></thead>
+                <th>وصلت إلى</th><th>الحالة</th><th>الوقت المتبقي</th><th>حلّها</th><th>المدة</th></tr></thead>
               <tbody>{data.items.map((i) => <Line key={i.call_id} i={i} onOpen={() => setOpen(i.call_id)} />)}</tbody>
             </table></div>}
         </section>
@@ -171,16 +222,27 @@ function People({ title, rows, kind }: { title: string; rows: ForwardPersonStats
 
 function Line({ i, onOpen }: { i: ForwardLineItem; onOpen: () => void }) {
   const [label, tone] = STATE_LABEL[i.state] ?? [i.state, "off"];
+  const sent = i.state !== "send_failed" && i.state !== "sending";     // no ticket yet: no story to open
+  const left = timeLeft(i.due);
+  const when = i.forwarded_at ?? i.saved_at;
   return (
-    <tr className="clickable" onClick={onOpen}>
-      <td>{i.forwarded_at ? formatDateTime(i.forwarded_at) : "–"}</td>
-      <td className="num">{i.customer_number ?? "–"}</td>
+    <tr className={sent ? "clickable" : undefined} onClick={sent ? onOpen : undefined}>
+      <td>{when ? formatDateTime(when) : "–"}</td>
+      <td className="num">{i.customer_number ?? "–"}
+        {i.repeat > 0 && <> <span className="state warn" title="مشكلات أخرى لنفس العميل حُوّلت خلال 30 يومًا قبلها">
+          مكرر ×{i.repeat}</span></>}</td>
       <td>{i.agent_ext} <span className="muted">{i.agent_name}</span></td>
       <td><PriorityTag p={i.priority as Priority | null} /></td>
       <td>{i.first.name ?? "–"} <span className="muted">{i.first.branch}</span></td>
       <td>{i.level ? HOP_LEVEL[i.level] : "–"}</td>
       <td><span className={`state ${tone}`}>{label}</span>
-        {i.state === "open" && i.holders.length > 0 && <span className="muted small"> عند {i.holders.join("، ")}</span>}</td>
+        {i.state === "open" && i.holders.length > 0 && <span className="muted small"> عند {i.holders.join("، ")}</span>}
+        {i.send_error && <div className="small bad-text">{i.send_error}</div>}
+        {i.needs.includes("erp_close") && <div className="small bad-text">تعذّر إغلاق التذكرة هناك</div>}
+        {i.hop_error && <div className="small bad-text">{i.hop_error}</div>}
+        {i.waiting_check && <div className="small muted">أغلقها، ننتظر فحص مكالمته للعميل (من جهتنا)</div>}
+        {i.needs.includes("questions") && <div className="small">سؤال ينتظر رد موظف المكالمة</div>}</td>
+      <td>{left ? <span className={`state ${left[1]}`}>{left[0]}</span> : "–"}</td>
       <td>{i.solved_by ? `${i.solved_by.name ?? "–"} (${HOP_LEVEL[i.solved_by.level]})` : "–"}</td>
       <td className="num">{took(i.seconds_to_solve)}</td>
     </tr>
@@ -190,6 +252,7 @@ function Line({ i, onOpen }: { i: ForwardLineItem; onOpen: () => void }) {
 const ERP_CLOSE: Record<string, [string, string]> = {
   pending: ["تُغلق التذكرة في نظام خدمة العملاء…", "off"], done: ["أُغلقت التذكرة في نظام خدمة العملاء", "ok"],
   failed: ["تعذّر إغلاق التذكرة في نظام خدمة العملاء: أغلقها هناك يدويًا", "bad"],
+  manual: ["أُغلقت التذكرة يدويًا في نظام خدمة العملاء", "ok"],
 };
 
 export function Story({ id, onClose, onExpired, onChanged }:
@@ -197,19 +260,21 @@ export function Story({ id, onClose, onExpired, onChanged }:
   const [st, setSt] = useState<ForwardStory | null>(null);
   const [error, setError] = useState("");
   const [ask, setAsk] = useState<number | null>(null);      // the hop whose «حلّها» waits for the second click
+  const [askHand, setAskHand] = useState<number | null>(null);   // the hop whose «أغلقتها يدويًا» waits too
   const [busy, setBusy] = useState(false);
   const [decideError, setDecideError] = useState("");
   const shown = useRef(id);
   shown.current = id;
-  const decide = (hopId: number) => {
+  const decide = (hopId: number, byHand = false) => {
     const forId = id;
     setBusy(true);
     setDecideError("");
-    api.forwardDecide(forId, hopId).then((d) => {
+    (byHand ? api.forwardClosedByHand(forId, hopId) : api.forwardDecide(forId, hopId)).then((d) => {
       onChanged?.();
       if (shown.current !== forId) return;              // another problem is open now: keep its story
       setSt(d);
       setAsk(null);
+      setAskHand(null);
     }).catch((e) => {
       if (shown.current !== forId) return;
       if (e instanceof Unauthorized) expired.current();
@@ -225,6 +290,7 @@ export function Story({ id, onClose, onExpired, onChanged }:
     setSt(null);
     setError("");
     setAsk(null);
+    setAskHand(null);
     setDecideError("");
     api.forwardStory(id).then((d) => { if (live) setSt(d); }).catch((e) => {
       if (!live) return;
@@ -274,12 +340,20 @@ export function Story({ id, onClose, onExpired, onChanged }:
             {h.error && <span className="muted small"> ({h.error})</span>}
             {h.erp_close && <div className="small"><span className={`state ${ERP_CLOSE[h.erp_close][1]}`}>
               {ERP_CLOSE[h.erp_close][0]}</span></div>}
+            {h.erp_close === "failed" && <div className="row small">
+              {askHand === h.hop_id ? <>
+                <span>هل أغلقت التذكرة {h.ticket_number ?? ""} بنفسك في نظام خدمة العملاء؟</span>
+                <button disabled={busy} onClick={() => decide(h.hop_id, true)}>نعم، أغلقتها هناك</button>
+                <button className="link" disabled={busy} onClick={() => setAskHand(null)}>إلغاء</button>
+              </> : <button className="link" onClick={() => { setAskHand(h.hop_id); setAsk(null); setDecideError(""); }}>
+                أغلقتها يدويًا هناك</button>}
+            </div>}
             {h.can_decide && <div className="row small">
               {ask === h.hop_id ? <>
                 <span>حلّها «{h.name ?? "–"}»؟ تُغلق المشكلة وتُحسب له، وتُغلق التذكرة في نظام خدمة العملاء.</span>
                 <button disabled={busy} onClick={() => decide(h.hop_id)}>نعم، أغلقها</button>
                 <button className="link" disabled={busy} onClick={() => setAsk(null)}>إلغاء</button>
-              </> : <button className="link" onClick={() => { setAsk(h.hop_id); setDecideError(""); }}>
+              </> : <button className="link" onClick={() => { setAsk(h.hop_id); setAskHand(null); setDecideError(""); }}>
                 إغلاق: حلّها هذا الشخص</button>}
             </div>}
           </li>

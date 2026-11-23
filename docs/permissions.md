@@ -67,6 +67,7 @@ R = read, W = write. "own" = only calls of the agent's own extension.
 | POST /api/shares/{id}/close | move to my archive (the agent and each supervisor/admin have their own) | W (any) | W (any) | W (shared with them, only after replying; the reply is then locked) |
 | GET /api/forwards, /api/forwards/{id}, /api/kpi/forwards | forwards page | R | R | ❌ |
 | POST /api/forwards/{id}/decide | close a forwarded problem: pick who in the chain solved it (KPI point); the worker closes the ticket(s) in the ERP | W | W | ❌ |
+| POST /api/forwards/{id}/closed-by-hand | mark a ticket our worker could not close as "closed there by hand" (leaves "needs action now") | W | W | ❌ |
 
 ### KPIs, reports, rating, live
 
@@ -113,7 +114,7 @@ What a key can **never** do, whoever it acts as ("person only" in the table):
 **Important:** a key acting as **admin** gets every other admin right too: read everything, create users, reset
 passwords, change settings, and erase a call's content. If the ERP should only **read**, the ERP must act as a
 **supervisor** account (reads every call, KPI, report, forward, live board; writes only follow-ups, notes,
-shares and ratings), never as the admin. Which CallSight username the ERP uses is set on the ERP side.
+shares, ratings, the close of a forwarded problem and the "closed there by hand" mark), never as the admin. Which CallSight username the ERP uses is set on the ERP side.
 
 ## 5. What is written down (audit)
 

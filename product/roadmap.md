@@ -4,6 +4,7 @@
 
 **Current position (2026-11-18) — START HERE in a new session:**
 
+- **2026-11-23 forwards page «يحتاج متابعة الآن»**: counts (whatever the dates) of late / due within 4 h / send failed, stuck or chain stopped / ticket close failed in the ERP («أغلقتها يدويًا هناك» mark) / open + high / questions waiting for our agent; click = the list, most urgent first. Lines get «الوقت المتبقي» and «مكرر ×n» (same customer, 30 days). Migration 0030.
 - **2026-11-22 supervisor close of a forwarded problem** (`docs/followup-form-and-forward.md`, «Supervisor close»): staff pick who in the chain solved it (KPI point, on time only within his 24 h), the ticket closes in the ERP by the worker. Migration 0029. LIVE 2026-11-22 (e1480af).
 - **2026-11-22 shared calls tab** (`specs/2026-11-22-shares-tab/spec.md`): agent tab «ملاحظات المشرف» + archive, close after reply, 24 h reply KPI. LIVE 2026-11-22 (migration 0026). Review fixes LIVE the same day (migration 0027): each supervisor/admin has their own archive, a reply needs 10+ characters, an edit after the 24 h counts late, faster list.
 - **The plan to the end of the project:** [finish-plan.md](finish-plan.md), steps 0–10, every spec approved
