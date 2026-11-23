@@ -71,6 +71,27 @@ const AGENT_TILES: TileDef[] = [
   { key: "repeats", label: "متكررة منسوبة للموظف", kind: "count", goodUp: false },
 ];
 
+/** Circle percentage (spec 2026-11-23-agent-kpi): green >= 90, orange >= 70, red below; grey ring = no data. */
+function Ring({ value, size, label }: { value: number | null; size: number; label: string }) {
+  const stroke = size > 100 ? 12 : 8;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const v = value === null ? 0 : Math.max(0, Math.min(100, value));
+  const tone = value === null ? "none" : v >= 90 ? "ok" : v >= 70 ? "warn" : "bad";
+  return (
+    <figure className={`ring ring-${tone}`} style={{ width: size }} aria-label={`${label}: ${score(value)}`}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+        <circle className="ring-track" cx={size / 2} cy={size / 2} r={r} strokeWidth={stroke} />
+        {value !== null && v > 0 && <circle className="ring-value" cx={size / 2} cy={size / 2} r={r} strokeWidth={stroke}
+          strokeDasharray={`${(c * v) / 100} ${c}`} transform={`rotate(-90 ${size / 2} ${size / 2})`} />}
+        <text x="50%" y="50%" dominantBaseline="central" textAnchor="middle"
+          className={size > 100 ? "ring-num big" : "ring-num"}>{score(value)}</text>
+      </svg>
+      <figcaption>{label}</figcaption>
+    </figure>
+  );
+}
+
 function score(v: number | null): string {
   return v === null ? "–" : `${Math.round(v * 10) / 10}%`;
 }
@@ -232,27 +253,21 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
           {data.agent_score && Object.keys(data.agent_score.agents).length > 0 && (
             <section className="panel">   {/* spec 2026-11-23-agent-kpi */}
               <h2>نسبة KPI لموظف خدمة العملاء</h2>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr>
-                    <th>الموظف</th><th>ردّ</th><th>فائتة</th><th>عاود الاتصال</th><th>درجة الرد</th>
-                    <th>نماذج مطلوبة</th><th>في وقتها</th><th>درجة النماذج</th>
-                    <th>AHT</th><th>درجة AHT</th><th>KPI النهائي</th>
-                  </tr></thead>
-                  <tbody>
-                    {Object.entries(data.agent_score.agents).map(([ext, v]) => (
-                      <tr key={ext}>
-                        <td>{ext} {data.agents.find((a) => a.ext === ext)?.name ?? ""}</td>
-                        <td className="num">{v.answered}</td><td className="num">{v.missed}</td>
-                        <td className="num">{v.recalled}</td><td className="num">{score(v.answer_score)}</td>
-                        <td className="num">{v.forms_due}</td><td className="num">{v.forms_on_time}</td>
-                        <td className="num">{score(v.forms_score)}</td>
-                        <td className="num">{secs(v.aht)}</td><td className="num">{score(v.aht_score)}</td>
-                        <td className="num"><b>{score(v.kpi)}</b></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="score-cards">
+                {Object.entries(data.agent_score.agents).map(([ext, v]) => (
+                  <div className="score-card" key={ext}>
+                    <div className="score-name">{ext} {data.agents.find((a) => a.ext === ext)?.name ?? ""}</div>
+                    <Ring value={v.kpi} size={132} label="KPI النهائي" />
+                    <div className="score-parts">
+                      <div><Ring value={v.answer_score} size={74} label="الرد" />
+                        <span className="small muted">ردّ {v.answered} · فائتة {v.missed} · عاود {v.recalled}</span></div>
+                      <div><Ring value={v.forms_score} size={74} label="النماذج" />
+                        <span className="small muted">في وقتها {v.forms_on_time} من {v.forms_due}</span></div>
+                      <div><Ring value={v.aht_score} size={74} label="AHT" />
+                        <span className="small muted">متوسط {secs(v.aht)}</span></div>
+                    </div>
+                  </div>
+                ))}
               </div>
               <p className="muted small">
                 يوم العمل ينتهي 21:30: المكالمة بعد 21:30 تُحتسب في اليوم التالي.

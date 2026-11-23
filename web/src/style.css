@@ -394,3 +394,21 @@ span.chip.rule-word { border: 1px solid var(--line); }
 .tile.action:hover { border-color: var(--muted); }
 .tile.action.active { border-color: var(--ok); box-shadow: inset 0 0 0 1px var(--ok); }
 .tile-value.warn { color: var(--warn); }
+
+/* spec 2026-11-23-agent-kpi: employee KPI % as circles */
+.score-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-bottom: 10px; }
+.score-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; justify-items: center; gap: 10px; }
+.score-name { font-weight: 600; justify-self: start; }
+.score-parts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: 100%; }
+.score-parts > div { display: grid; justify-items: center; gap: 4px; text-align: center; }
+.ring { margin: 0; display: grid; justify-items: center; gap: 4px; }
+.ring figcaption { font-size: 13px; color: var(--muted); }
+.ring-track { fill: none; stroke: var(--neutral-bg); }
+.ring-value { fill: none; stroke-linecap: round; }
+.ring-ok .ring-value { stroke: var(--ok); }
+.ring-warn .ring-value { stroke: var(--warn); }
+.ring-bad .ring-value { stroke: var(--bad); }
+.ring-num { font-size: 15px; font-weight: 700; fill: var(--ink); }
+.ring-num.big { font-size: 26px; }
+.ring-none .ring-num { fill: var(--muted); }
+.ring svg { direction: ltr; }
