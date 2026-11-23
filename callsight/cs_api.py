@@ -5,7 +5,9 @@ account" every request is recorded under). An empty key = part 4 is off.
 """
 from __future__ import annotations
 
+import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -14,6 +16,16 @@ import httpx
 
 DEFAULT_URL = "https://api4.sstli.com/api/customer-service"
 TIMEOUT = 20.0
+log = logging.getLogger(__name__)
+
+
+def _snippet(r: httpx.Response) -> str:
+    """The start of an error answer, one line, for the log (their error text; never our key: it is only sent in a
+    header)."""
+    try:
+        return " ".join(r.text.split())[:400]
+    except Exception:  # noqa: BLE001
+        return "(body not readable)"
 
 
 class CsError(Exception):
@@ -76,16 +88,24 @@ class CsClient:
         self.close()
 
     def _call(self, method: str, path: str, **kw) -> Any:
+        t0 = time.monotonic()
         try:
             r = self._http.request(method, path, **kw)
         except httpx.HTTPError as exc:
+            log.warning("cs api %s %s failed after %.1fs: %s", method, path, time.monotonic() - t0, type(exc).__name__)
             raise CsUnavailable(type(exc).__name__) from None      # never the URL: no key in logs
+        took = time.monotonic() - t0
+        if r.status_code >= 400:   # the exact answer, so a failed forward can be explained (2026-11-23)
+            log.warning("cs api %s %s -> HTTP %s in %.1fs: %s", method, path, r.status_code, took, _snippet(r))
         if r.status_code >= 500 or r.status_code in (408, 429):      # busy / too many requests: try later
             raise CsUnavailable(f"HTTP {r.status_code}", r.status_code)
         try:
             data = r.json()
         except ValueError:
             data = None
+        if not isinstance(data, dict) and r.status_code < 400:
+            log.warning("cs api %s %s -> HTTP %s in %.1fs, answer is not a JSON object: %s", method, path,
+                        r.status_code, took, _snippet(r))
         if r.status_code >= 400:
             msg = data.get("message") if isinstance(data, dict) else None
             msg = (str(msg) if msg else f"HTTP {r.status_code}")[:250]
