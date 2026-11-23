@@ -19,6 +19,7 @@ on:
           - live-on
           - live-off
           - live-log
+          - live-status
           - sync-agents
           - rating-fetch
           - rating-create
@@ -72,7 +73,9 @@ jobs:
             live-off)
               sed -i 's/^LIVE_ENABLED=.*/LIVE_ENABLED=false/' .env
               "${C[@]}" --profile live stop live; "${C[@]}" up -d api ;;
-            live-log) "${C[@]}" --profile live logs --tail 60 live ;;
+            live-log) "${C[@]}" --profile live logs --tail 400 live | grep -v "not shown" | tail -80 ;;
+            live-status)   # what the live page gets right now: states and extension numbers only (no caller numbers)
+              "${C[@]}" exec -T api python -c 'import json,os,time,redis; r=redis.Redis.from_url(os.environ["REDIS_URL"]); s=json.loads(r.get("live:snapshot") or "null"); print("no snapshot (live service off)" if not s else "status %s seq %s age %ss calls %s" % (s["status"], s["seq"], round(time.time()-s["published_at"]), len(s["calls"]))); [print(c["state"], c["direction"], "agents", c["agents"], "ringing", c["ringing"]) for c in (s or {}).get("calls", [])]; print("listen channels for", len(json.loads(r.get("live:channels") or "{}")), "calls")' ;;
             retention-check)      # PDPL: counts only, deletes nothing (dry run); saves the old periods' KPI numbers
               # the first one saves many weeks' / months' numbers: can take long. A run cut by the timeout keeps working
               # inside the container (holds the maintenance lock): wait, then run again.
