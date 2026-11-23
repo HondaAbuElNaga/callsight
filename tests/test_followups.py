@@ -330,11 +330,10 @@ def test_validate_rules(s):
     sup = user(s, "boss", "supervisor", "114")
     ok = {"what_happened": "x", "solved": False, "priority": "low", "responsible_kind": "user",
           "responsible_user_id": sup.id, "expected_at": at(16), "callback_at": at(15)}
-    assert fu.validate(s, ok, c, now)["callback_at"] == at(15)
+    got = fu.validate(s, ok, c, now)
+    assert got["callback_at"] is None and got["expected_at"] is None         # times sent by an old page: ignored
     for bad in ({**ok, "what_happened": " "}, {**ok, "solved": None}, {**ok, "responsible_kind": "boss"},
-                {**ok, "responsible_user_id": 999}, {**ok, "callback_at": at(10, 30)},
-                {**ok, "callback_at": now + timedelta(days=15)}, {**ok, "expected_at": None},
-                {**ok, "callback_at": datetime(2026, 11, 10, 15)}):
+                {**ok, "responsible_user_id": 999}):
         with pytest.raises(fu.FormError):
             fu.validate(s, bad, c, now)
     assert fu.validate(s, {"no_followup": True, "what_happened": "ignored"}, c, now)["what_happened"] is None
@@ -362,10 +361,15 @@ def _row(s, c):
 
 
 def _note(s, c, u, now, *, rnd=2, solved=False, callback=None):
+    """A note; `callback` = an OLD note that still carries a callback time (the form takes none since 2026-11-23)."""
     data = {"round": rnd, "what_happened": "called back", "solved": solved}
     if not solved:
-        data |= {"responsible_kind": "customer", "expected_at": callback, "callback_at": callback}
-    return fu.add_note(s, c, data, u, EXTS, now)
+        data |= {"responsible_kind": "customer"}
+    n = fu.add_note(s, c, data, u, EXTS, now)
+    if callback is not None:
+        n.expected_at = n.callback_at = callback
+        s.commit()
+    return n
 
 
 def test_steps_before_and_after_the_form(s):
@@ -433,17 +437,6 @@ def test_note_only_when_needed_and_for_the_shown_round(s):
     _note(s, c, u, at(15), solved=True)
     with pytest.raises(fu.NoteConflict):
         _note(s, c, u, at(15, 1), solved=True)                      # second click
-    with pytest.raises(fu.FormError):
-        _note(s, *_open_case_again(s), at(15), callback=at(14, 30))  # callback time in the past
-
-
-def _open_case_again(s):
-    u = s.query(AppUser).filter_by(username="ali").one()
-    c = mk(s, "orig2", at(9), number="0507777777")
-    form(s, c, u, filled=at(9, 5), callback=at(13))
-    mk(s, "cb_o2", at(13, 5), direction="outbound", agent="119", number="0507777777")
-    s.commit()
-    return c, u
 
 
 def test_note_deadline_edges(s):
@@ -541,35 +534,15 @@ def test_kpi_per_agent_split_and_no_number_is_not_open(s):
 
 # ---------- not solved: solve time within 2 days, callback optional (2026-11-15) ----------
 
-def test_solve_time_max_two_days_and_callback_optional(s):
+def test_no_solve_or_callback_time_any_more(s):
+    """User 2026-11-23: the form asks no expected solve time and no callback time; any sent are ignored."""
     start_on(s)
     c = mk(s, "a", at(10))
     now = at(11)
-    base = {"what_happened": "x", "solved": False, "priority": "medium", "responsible_kind": "customer"}
-    got = fu.validate(s, {**base, "expected_at": now + timedelta(days=2)}, c, now)
-    assert got["callback_at"] is None and got["expected_at"] == now + timedelta(days=2)
-    for bad in ({**base, "expected_at": now + timedelta(days=2, minutes=1)},          # over 2 days
-                {**base, "expected_at": at(10, 30)},                                   # in the past
-                {**base, "expected_at": None, "callback_at": at(15)},                  # solve time still required
-                {**base, "expected_at": at(16), "callback_at": now + timedelta(days=2, minutes=1)}):
-        with pytest.raises(fu.FormError):
-            fu.validate(s, bad, c, now)
-
-
-def test_no_callback_waits_for_the_solve_time_then_a_note_closes_it(s):
-    start_on(s)
-    u = user(s)
-    c = mk(s, "orig", at(10))
-    f = form(s, c, u, filled=at(10, 5))
-    f.callback_at, f.expected_at = None, at(16)
-    mk(s, "other", at(12), direction="outbound", agent="104")     # a call without a promised callback: not "note"
-    s.commit()
-    d = _row(s, c).as_dict(at(13))
-    assert d["step"] == "waiting_solution" and d["callback"] is None and d["solve_by"] == at(16).isoformat()
-    assert _row(s, c).step(at(17, 1)) == "solution_overdue"
-    n = _note(s, c, u, at(14), solved=True)                       # a note is allowed while waiting
-    assert n.cb_call_id is None
-    assert _row(s, c).step(at(14, 1)) == "solved_after"
+    base = {"what_happened": "x", "solved": False, "priority": "high", "responsible_kind": "customer"}
+    for extra in ({}, {"expected_at": now + timedelta(days=9), "callback_at": at(10, 30)}):
+        got = fu.validate(s, {**base, **extra}, c, now)
+        assert got["expected_at"] is None and got["callback_at"] is None and got["responsible_kind"] == "customer"
 
 
 def test_note_without_callback_keeps_waiting(s):
@@ -580,6 +553,6 @@ def test_note_without_callback_keeps_waiting(s):
     f.callback_at, f.expected_at = None, at(16)
     s.commit()
     fu.add_note(s, c, {"round": 2, "what_happened": "waiting for IT", "solved": False,
-                       "responsible_kind": "other_department", "expected_at": at(20)}, u, EXTS, at(15))
+                       "responsible_kind": "other_department"}, u, EXTS, at(15))
     r = _row(s, c)
-    assert r.step(at(19)) == "waiting_solution" and r.step(at(21, 1)) == "solution_overdue"
+    assert r.step(at(19)) == "waiting_solution" and r.step(at(21, 1)) == "waiting_solution"   # no time: never late

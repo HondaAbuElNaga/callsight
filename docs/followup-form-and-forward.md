@@ -65,13 +65,12 @@ If **لا** (not solved), more fields appear:
 | من يجب أن يحلّها؟ | Yes | A user, العميل, قسم آخر, **or a person to forward to** (تحويل · <اسم الفرع>) |
 | بحث عن موظف للتحويل | — | Search the ~474 employees by name or branch |
 | ملاحظة للمسؤول | No | Only when forwarding, max 500 |
-| وقت الحل المتوقع | Yes | Within **2 days** (within **1 day** if priority is high). **Hidden for «تحويل»** |
-| وقت معاودة الاتصال | No | In the future, within 2 days. **Hidden for «تحويل»** |
-
-**Forward = no times (2026-11-22, user decision):** when a person under «تحويل» is picked, both time fields are
-hidden: the chain has its own times (24 h per person). The server sets the expected time to **save time + 24 h**
-(the first person's deadline) and no callback; times sent by an old page are ignored. Same for the notes written
-on a forwarded problem. Code: `followups.validate()` (`FORWARD_HOP`).
+**No times at all (2026-11-23, user decision):** the two fields «وقت الحل المتوقع» and «وقت معاودة الاتصال» are
+removed from the form and the notes, for every choice (not only «تحويل»). The server stores no expected / callback
+time and ignores any sent by an old page; old rows keep theirs (their steps and KPI numbers still count). Effect:
+a not-solved problem with «العميل» / «قسم آخر» / a user stays «بانتظار الحل» until a note closes it (never «فات موعد
+الحل»), and no new callbacks enter the callback KPI, so the callback columns are gone from the KPI page and the PDF.
+A forward still gets **save time + 24 h** from the server (the chain's own time). Code: `followups.validate()`.
 
 **Suggestion:** if the caller's phone is found in the training system, the form shows the student and
 **pre-picks** the trainer or the branch supervisor. The agent can change it.

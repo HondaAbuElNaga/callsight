@@ -28,9 +28,6 @@ GRACE = timedelta(minutes=60)
 EARLY_HANGUP_SECONDS = 30      # spec 2026-11-15-ring-time: the agent hung up before this many ring seconds
 DAY_END_HOUR = 23
 LATE_CALL_EXTRA = timedelta(hours=2)
-MAX_CALLBACK_DAYS = 2         # callback (optional) within 2 days
-MAX_SOLVE = timedelta(days=2)  # a problem not solved must have an expected solve time within 2 days
-MAX_SOLVE_HIGH = timedelta(days=1)   # ... within 1 day when the priority is high (spec 2026-11-16, requirement 14)
 FORWARD_HOP = timedelta(hours=24)    # a forwarded problem: each person's time (= forward.HOP_TIME); sets expected_at
 # spec 2026-11-16-priority-no-followup: fixed English codes (another system reads them), high -> low
 PRIORITIES = {"high": "عالية", "medium": "متوسطة", "low": "منخفضة"}
@@ -969,11 +966,10 @@ FORM = object()      # validate(priority=FORM): the first form, whose own `prior
 NO_FORWARD = {"forward_person_id": None, "forward_note": None}
 
 
-def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: datetime | None = None,
-             real_now: datetime | None = None, *, priority=FORM, forward_ok: bool = False,
+def validate(s: Session, data: dict, call: Call, now: datetime, *, priority=FORM, forward_ok: bool = False,
              forwarded: bool = False) -> dict:
-    """Server-side checks of a submitted form (priority=FORM) or note (priority = the first form's priority, which
-    sets the solve-time limit); returns the clean fields. A note's clean fields never carry a priority.
+    """Server-side checks of a submitted form (priority=FORM) or note (priority = the first form's priority;
+    a note has none of its own); returns the clean fields. A note's clean fields never carry a priority.
     Part 4: forward_ok = the link to the customer-service system is on (form only); forwarded = this note belongs to
     a forwarded problem (only the supervisor closes it; the note keeps kind "forward")."""
     is_form = priority is FORM
@@ -1025,7 +1021,7 @@ def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: d
         # the chain has its own times (24 h per person: employee -> branch supervisor -> management), so the agent
         # gives none (user, 2026-11-22). Expected = the first person's 24 h; no callback by the agent. Times sent by
         # an old page are ignored.
-        clean.update(responsible_kind=kind, expected_at=(real_now or now) + FORWARD_HOP, callback_at=None)
+        clean.update(responsible_kind=kind, expected_at=now + FORWARD_HOP, callback_at=None)
         return clean
     uid = data.get("responsible_user_id")
     if kind == "user":
@@ -1033,28 +1029,9 @@ def validate(s: Session, data: dict, call: Call, now: datetime, keep_expected: d
         if u is None or not u.active or u.role not in ("supervisor", "agent"):
             raise FormError("المسؤول غير موجود")
         clean["responsible_user_id"] = u.id
-    expected, callback = data.get("expected_at"), data.get("callback_at")
-    if not isinstance(expected, datetime):
-        raise FormError("حدد وقت الحل المتوقع")
-    if callback is not None and not isinstance(callback, datetime):
-        raise FormError("وقت معاودة الاتصال غير صحيح")
-    if expected.tzinfo is None or (callback is not None and callback.tzinfo is None):
-        raise FormError("الوقت يحتاج المنطقة الزمنية")
-    t_now = real_now or now                      # _validate_keep moves `now` back for the callback only
-    if expected != keep_expected and expected <= t_now:   # an unchanged old time may be in the past by now
-        raise FormError("وقت الحل المتوقع يجب أن يكون في المستقبل")
-    # high: checked even for an unchanged time (a form edited to high must fit 1 day from now). The 2-day limit is
-    # not re-checked on an unchanged time: forms saved before that rule may hold a later time (review 2026-11-16)
-    if priority == "high" and expected > t_now + MAX_SOLVE_HIGH:
-        raise FormError("أقصى وقت لحل مشكلة عالية الأولوية يوم واحد")
-    if expected != keep_expected and expected > t_now + MAX_SOLVE:
-        raise FormError("أقصى وقت لحل المشكلة يومان")
-    if callback is not None:                     # optional
-        if callback <= now:
-            raise FormError("وقت معاودة الاتصال يجب أن يكون في المستقبل")
-        if callback > now + timedelta(days=MAX_CALLBACK_DAYS):
-            raise FormError("وقت معاودة الاتصال خلال يومين على الأكثر")
-    clean.update(responsible_kind=kind, expected_at=expected, callback_at=callback)
+    # no expected solve time and no callback time any more (user, 2026-11-23): the agent only says who solves it.
+    # Times sent by an old page are ignored; old rows keep theirs.
+    clean.update(responsible_kind=kind, expected_at=None, callback_at=None)
     return clean
 
 
@@ -1068,9 +1045,7 @@ def save(s: Session, call: Call, data: dict, user: AppUser, now: datetime | None
                   .execution_options(populate_existing=True)).first()
     if f is not None and f.forward_status == "sent":
         raise FormError("حُوّلت المشكلة لمشرف الفرع: لا يمكن تعديل النموذج")
-    keep = f.expected_at if f is not None else None
-    clean = (validate(s, data, call, now, keep, forward_ok=forward_ok) if not _same_callback(f, data)
-             else _validate_keep(s, data, call, now, f, forward_ok))
+    clean = validate(s, data, call, now, forward_ok=forward_ok)
     # forward: (re)send on every save while not sent; any other answer drops a waiting / failed send
     clean.update(forward_status="pending" if clean["responsible_kind"] == "forward" else None,
                  forward_error=None, forward_tries=0)
@@ -1088,15 +1063,3 @@ def save(s: Session, call: Call, data: dict, user: AppUser, now: datetime | None
         s.rollback()
         raise FormError("حُفظ النموذج للتو من طلب آخر، أعد فتح المكالمة") from None
     return f
-
-
-def _same_callback(f: CallFollowup | None, data: dict) -> bool:
-    return (f is not None and f.callback_at is not None and not data.get("no_followup")
-            and data.get("solved") is False and data.get("callback_at") == f.callback_at)
-
-
-def _validate_keep(s: Session, data: dict, call: Call, now: datetime, f: CallFollowup, forward_ok: bool = False
-                   ) -> dict:
-    """Editing a form without moving its callback time: the old time may be in the past by now (still valid)."""
-    return validate(s, data, call, min(now, f.callback_at - timedelta(seconds=1)), f.expected_at, now,
-                    forward_ok=forward_ok)

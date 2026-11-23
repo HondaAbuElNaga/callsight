@@ -184,19 +184,17 @@ def agents_table(agents: list[dict], outbound_only: bool = False) -> str:
 
 
 def followup_table(fu: dict, agents: list[dict]) -> str:
-    """Forms + callbacks (agent-supervisor spec). Only called when the admin switched these KPIs on."""
+    """Forms (agent-supervisor spec). Only called when the admin switched these KPIs on."""
     names = {a["ext"]: a["name"] for a in agents}
-    out = [f'<p>تُحتسب من {escape(fu["since"] or "")}. معاودة الاتصال في وقتها = خلال 60 دقيقة من الوقت المحدد.</p>',
+    # no callback columns: the form has no callback time any more (user, 2026-11-23)
+    out = [f'<p>تُحتسب من {escape(fu["since"] or "")}.</p>',
            '<table><tr><th>الموظف</th><th class="n">نماذج مطلوبة</th><th class="n">في وقتها</th>'
-           '<th class="n">نسبة النماذج</th><th class="n">معاودات مستحقة</th><th class="n">في وقتها</th>'
-           '<th class="n">نسبة المعاودة</th></tr>']
+           '<th class="n">نسبة النماذج</th></tr>']
     rows = [(f'{num(e)} {escape(names.get(e, ""))}', v) for e, v in fu["agents"].items()]
     rows.append(("الإجمالي", fu["summary"]))
     for label, v in rows:
         out.append(f'<tr><td>{label}</td><td class="n">{num(v["forms_due"])}</td>'
-                   f'<td class="n">{num(v["forms_on_time"])}</td><td class="n">{pct(v["forms_rate"])}</td>'
-                   f'<td class="n">{num(v["callbacks_due"])}</td><td class="n">{num(v["callbacks_on_time"])}</td>'
-                   f'<td class="n">{pct(v["callbacks_rate"])}</td></tr>')
+                   f'<td class="n">{num(v["forms_on_time"])}</td><td class="n">{pct(v["forms_rate"])}</td></tr>')
     out.append("</table>")
     # follow-up stages spec: how problems ended
     out.append('<table><tr><th>الموظف</th><th class="n">نماذج بها مشكلة</th><th class="n">حُلّت من أول مكالمة</th>'

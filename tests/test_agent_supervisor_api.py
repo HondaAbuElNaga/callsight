@@ -80,6 +80,15 @@ def not_solved(boss_id, minutes=60, priority="medium") -> dict:
             "responsible_user_id": boss_id, "expected_at": iso(t + timedelta(hours=1)), "callback_at": iso(t)}
 
 
+def old_times(Session, call_id, minutes=60) -> None:
+    """Give the saved form a callback + expected time, as forms saved before 2026-11-23 have (the form asks none)."""
+    t = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    with Session() as s:
+        f = s.scalars(select(CallFollowup).where(CallFollowup.call_id == call_id)).one()
+        f.callback_at, f.expected_at = t, t + timedelta(hours=1)
+        s.commit()
+
+
 def boss_id(Session) -> int:
     with Session() as s:
         return s.scalars(select(AppUser.id).where(AppUser.username == "boss")).one()
@@ -101,7 +110,8 @@ def test_agent_fills_own_form(env):
     r = client.put(f"/api/calls/{ids['own']}/followup", json=not_solved(boss_id(Session)))
     assert r.status_code == 200, r.text
     d = r.json()
-    assert d["needed"] and d["form"]["solved"] is False and d["callback"]["status"] == "waiting"
+    assert d["needed"] and d["form"]["solved"] is False and d["callback"] is None and d["step"] == "waiting_solution"
+    assert d["form"]["expected_at"] is None and d["form"]["callback_at"] is None     # times sent: ignored
     assert {o["username"] for o in d["options"]} == {"boss", "ali", "sara", "omar"}     # admin is not a choice
     with Session() as s:
         f = s.scalars(select(CallFollowup)).one()
@@ -120,8 +130,8 @@ def test_bad_form_is_422(env):
     client, Session, ids, *_ = env
     switch_on(client)
     login(client, "ali")
-    bad = {**not_solved(boss_id(Session)), "callback_at": iso(datetime.now(timezone.utc) - timedelta(minutes=5))}
-    assert client.put(f"/api/calls/{ids['own']}/followup", json=bad).status_code == 422
+    no_who = {k: v for k, v in not_solved(boss_id(Session)).items() if k != "responsible_kind"}
+    assert client.put(f"/api/calls/{ids['own']}/followup", json=no_who).status_code == 422
     assert client.put(f"/api/calls/{ids['own']}/followup", json={"solved": "yes"}).status_code == 422
     assert client.put(f"/api/calls/{ids['own']}/followup", json={"x": 1}).status_code == 422
 
@@ -352,6 +362,7 @@ def test_note_after_callback_flow(env):
     switch_on(client)
     login(client, "ali")
     assert client.put(f"/api/calls/{ids['own']}/followup", json=not_solved(boss_id(Session))).status_code == 200
+    old_times(Session, ids["own"])
     v = client.get(f"/api/calls/{ids['own']}/followup").json()
     assert v["step"] == "waiting_callback" and v["round"] == 1
     assert client.post(f"/api/calls/{ids['own']}/followup/notes",
@@ -464,6 +475,7 @@ def test_form_is_frozen_once_a_note_exists_and_wrong_round_is_409(env):
     switch_on(client)
     login(client, "ali")
     client.put(f"/api/calls/{ids['own']}/followup", json=not_solved(boss_id(Session)))
+    old_times(Session, ids["own"])
     _callback_call(Session, ids)
     wrong = client.post(f"/api/calls/{ids['own']}/followup/notes", json={"round": 3, "what_happened": "x", "solved": True})
     assert wrong.status_code == 409
@@ -471,7 +483,7 @@ def test_form_is_frozen_once_a_note_exists_and_wrong_round_is_409(env):
     nxt.pop("what_happened")
     nxt.pop("priority")                       # set once, in the first form: a note never carries it
     r = client.post(f"/api/calls/{ids['own']}/followup/notes", json={"round": 2, "what_happened": "لم يُحل", **nxt})
-    assert r.status_code == 200 and r.json()["step"] == "waiting_callback" and r.json()["round"] == 2
+    assert r.status_code == 200 and r.json()["step"] == "waiting_solution" and r.json()["round"] == 2
     login(client, "boss")
     assert client.put(f"/api/calls/{ids['own']}/followup", json={"no_followup": True}).status_code == 409
 

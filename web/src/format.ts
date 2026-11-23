@@ -103,7 +103,7 @@ export const STEP_CLASS: Record<string, string> = {
 export const STEP_NEXT: Record<string, string> = {
   required: "عبّئ نموذج المتابعة", overdue: "عبّئ نموذج المتابعة (تأخر)", note_needed: "اكتب ما حدث في مكالمة المعاودة",
   waiting_callback: "اتصل بالعميل في الموعد", callback_missed: "اتصل بالعميل الآن (فات الموعد)",
-  waiting_solution: "تابع الحل واكتب تحديثًا عند الحل (خلال يومين)", solution_overdue: "فات موعد الحل: اكتب تحديثًا الآن",
+  waiting_solution: "تابع الحل واكتب تحديثًا عند الحل", solution_overdue: "فات موعد الحل: اكتب تحديثًا الآن",
   forwarded: "المسؤول في نظام خدمة العملاء يحلّها ويغلقها؛ اكتب تحديثًا إن اتصل العميل",
   forward_overdue: "انتهت مهلة الـ24 ساعة: تنتقل تلقائيًا للمستوى التالي (عند الإدارة: متأخرة)",
   forward_failed: "لم تصل المشكلة: عدّل النموذج واختر من جديد",

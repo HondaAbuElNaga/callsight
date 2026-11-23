@@ -6,7 +6,7 @@ import {
   type HistoryEntry, type Me, type NoteIn, type Person, type Share, type StudentLookup, type TrackerItem,
 } from "./api";
 import {
-  CALLBACK_LABEL, HOP_LEVEL, HOP_RESULT, PROOF_REASON, PRIORITIES, PRIORITY_CLASS, PRIORITY_LABEL, STEP_CLASS, type Priority, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, fromRiyadhInput, ringText, toRiyadhInput,
+  CALLBACK_LABEL, HOP_LEVEL, HOP_RESULT, PROOF_REASON, PRIORITIES, PRIORITY_CLASS, PRIORITY_LABEL, STEP_CLASS, type Priority, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, ringText,
 } from "./format";
 
 export const CB_CLASS: Record<string, string> = { on_time: "ok", waiting: "off", late: "warn", missed: "bad", no_number: "off" };
@@ -23,18 +23,13 @@ function useFail(onExpired: () => void, setError: (m: string) => void) {
 // ---------- follow-up form + steps (agent-supervisor spec; steps and notes: follow-up stages spec) ----------
 
 type Solved = "" | "yes" | "no";
-const MAX_SOLVE_MS = 2 * 24 * 3600_000;     // a problem not solved: expected solve time within 2 days (server checks too)
-const nowIn = () => toRiyadhInput(new Date().toISOString());
-const maxIn = () => toRiyadhInput(new Date(Date.now() + MAX_SOLVE_MS).toISOString());
 // resp: "user:<id>" / "customer" / "other_department" / "forward:<id>" (form) / "forward" (note on a forwarded problem)
-interface Problem { what: string; solved: Solved; resp: string; expected: string; callback: string; fnote: string }
-const EMPTY: Problem = { what: "", solved: "", resp: "", expected: "", callback: "", fnote: "" };
+interface Problem { what: string; solved: Solved; resp: string; fnote: string }
+const EMPTY: Problem = { what: "", solved: "", resp: "", fnote: "" };
 
-const MAX_SOLVE_HIGH_MS = 24 * 3600_000;    // ... within 1 day when the priority is high
-
-/** Check the fields; returns the body part or an error text. `priority`: the first form's priority (sets the solve
- * limit); `askPriority`: this is the first form, so the priority is required and sent with it. */
-function problemBody(p: Problem, keepExpected = "", priority = "", askPriority = false
+/** Check the fields; returns the body part or an error text. `askPriority`: this is the first form, so the
+ * priority is required and sent with it. No expected solve / callback time any more (user, 2026-11-23). */
+function problemBody(p: Problem, priority = "", askPriority = false
 ): { body?: Omit<FollowupIn, "no_followup">; error?: string } {
   if (!p.what.trim()) return { error: "اكتب ما حدث في المكالمة" };
   if (askPriority && !priority) return { error: "اختر الأولوية" };
@@ -43,19 +38,11 @@ function problemBody(p: Problem, keepExpected = "", priority = "", askPriority =
   if (p.solved === "yes") return { body: { what_happened: p.what.trim(), solved: true, ...prio } };
   if (!p.resp) return { error: "اختر من يجب أن يحلّها" };
   const [kind, uid] = p.resp.split(":");
-  if (kind === "forward")      // the chain has its own times (24 h per person): no expected / callback time here
+  if (kind === "forward")
     return { body: { what_happened: p.what.trim(), solved: false, ...prio, responsible_kind: kind,
       ...(uid ? { forward_person_id: Number(uid), forward_note: p.fnote.trim() } : {}) } };
-  if (!p.expected) return { error: "حدد وقت الحل المتوقع (خلال يومين)" };
-  const left = (v: string) => new Date(fromRiyadhInput(v)).getTime() - Date.now();
-  if (priority === "high" && left(p.expected) > MAX_SOLVE_HIGH_MS)        // the server checks this even unchanged
-    return { error: "أقصى وقت لحل مشكلة عالية الأولوية يوم واحد" };
-  if (p.expected !== keepExpected && left(p.expected) > MAX_SOLVE_MS) return { error: "أقصى وقت لحل المشكلة يومان" };
-  if (p.callback && left(p.callback) <= 0) return { error: "وقت معاودة الاتصال يجب أن يكون في المستقبل" };
-  if (p.callback && left(p.callback) > MAX_SOLVE_MS) return { error: "وقت معاودة الاتصال خلال يومين على الأكثر" };
-  const who = { responsible_user_id: uid ? Number(uid) : null };
-  return { body: { what_happened: p.what.trim(), solved: false, ...prio, responsible_kind: kind, ...who,
-    expected_at: fromRiyadhInput(p.expected), ...(p.callback ? { callback_at: fromRiyadhInput(p.callback) } : {}) } };
+  return { body: { what_happened: p.what.trim(), solved: false, ...prio, responsible_kind: kind,
+    responsible_user_id: uid ? Number(uid) : null } };
 }
 
 const WHAT_MAX = 500;      // = the textarea and the server (followups.validate)
@@ -92,12 +79,11 @@ function FillFromSummary({ summary, what, onFill }:
   );
 }
 
-function ProblemFields({ p, set, options, label, afterText, high, forwardOptions = [], forwardedTo, summary }:
-  { p: Problem; set: (p: Problem) => void; options: Person[]; label: string; afterText?: ReactNode; high?: boolean;
+function ProblemFields({ p, set, options, label, afterText, forwardOptions = [], forwardedTo, summary }:
+  { p: Problem; set: (p: Problem) => void; options: Person[]; label: string; afterText?: ReactNode;
     forwardOptions?: ForwardOption[];   // first form, link on: the branch supervisors
     forwardedTo?: Forward | null;       // a note on a forwarded problem: only the supervisor closes it
     summary?: AgentSummary["analysis"] }) {   // first form only: the «املأ من ملخص المكالمة» button
-  const max = high ? toRiyadhInput(new Date(Date.now() + MAX_SOLVE_HIGH_MS).toISOString()) : maxIn();
   const toSupervisor = p.resp.startsWith("forward:");
   const [fq, setFq] = useState("");          // search in the ~474 employees of the other system
   const q = fq.trim();
@@ -145,12 +131,6 @@ function ProblemFields({ p, set, options, label, afterText, high, forwardOptions
           {toSupervisor && <label>ملاحظة للمسؤول (اختياري)
             <textarea value={p.fnote} maxLength={500} rows={2} onChange={(e) => set({ ...p, fnote: e.target.value })} />
           </label>}
-          {/* a forward has its own times (the chain): no expected / callback time (user, 2026-11-22) */}
-          {toSupervisor || forwardedTo ? <p className="muted small">لا يُطلب وقت حل أو معاودة اتصال: للتحويل مهلته
-            الخاصة (24 ساعة لكل مسؤول).</p> : <>
-            <label>وقت الحل المتوقع ({high ? "خلال يوم واحد: أولوية عالية" : "خلال يومين على الأكثر"}) <input type="datetime-local" value={p.expected} min={nowIn()} max={max} onChange={(e) => set({ ...p, expected: e.target.value })} /></label>
-            <label>وقت معاودة الاتصال بالعميل (اختياري) <input type="datetime-local" value={p.callback} min={nowIn()} max={maxIn()} onChange={(e) => set({ ...p, callback: e.target.value })} /></label>
-          </>}
         </>
       )}
     </>
@@ -328,7 +308,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
     setForm({ what: f.what_happened ?? "", solved: f.no_followup || f.solved === null ? "" : f.solved ? "yes" : "no",
       resp: f.responsible_kind === "user" ? `user:${f.responsible_user_id}`
         : f.responsible_kind === "forward" ? `forward:${f.forward_person_id}` : f.responsible_kind ?? "",
-      expected: toRiyadhInput(f.expected_at), callback: toRiyadhInput(f.callback_at), fnote: f.forward_note ?? "" });
+      fnote: f.forward_note ?? "" });
   };
   useEffect(() => { api.followup(callId).then(load).catch(fail); /* eslint-disable-next-line */ }, [callId]);
   // the agent's own open first form (or one re-opened after a failed forward): staff never see the box
@@ -361,12 +341,12 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
   };
   const saveForm = (body: FollowupIn) => run(() => api.saveFollowup(callId, body), "تم حفظ النموذج.");
   const submitForm = () => {
-    const r = problemBody(form, toRiyadhInput(view.form?.expected_at), prio, true);   // unchanged old time stays valid
+    const r = problemBody(form, prio, true);
     if (r.error) { setError(r.error); return; }
     saveForm({ no_followup: false, ...r.body });
   };
   const submitNote = () => {
-    const r = problemBody(note, "", view.form?.priority ?? "");     // the first form's priority sets the limit
+    const r = problemBody(note);
     if (r.error) { setError(r.error); return; }
     run(() => api.addNote(callId, { ...(r.body as Omit<NoteIn, "round">), round: view.round + 1 }), "تم حفظ الملاحظة.");
   };
@@ -416,7 +396,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
             : "تحديث المتابعة"}</legend>
           {view.forward?.status === "sent" && <p className="muted small">تُكتب هذه الملاحظة أيضاً في التذكرة في نظام
             خدمة العملاء، ويراها {view.forward.holders?.length ? view.forward.holders.join("، ") : view.forward.name ?? "المسؤول"}.</p>}
-          <ProblemFields p={note} set={setNote} options={view.options} high={view.form?.priority === "high"}
+          <ProblemFields p={note} set={setNote} options={view.options}
             forwardedTo={view.forward}
             label={view.step === "note_needed" ? "ماذا حدث في مكالمة المعاودة؟" : "ماذا حدث في المشكلة؟"} />
           <button type="button" className="primary" onClick={submitNote}>حفظ الملاحظة</button>
@@ -431,7 +411,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
         <fieldset disabled={ro} className="form">
           {view.form && <legend>تعديل النموذج</legend>}
           {!view.form && <button type="button" onClick={() => saveForm({ no_followup: true })}>لا تحتاج متابعة (رقم خطأ، استفسار انتهى…)</button>}
-          <ProblemFields p={form} set={setForm} options={view.options} label="ماذا حدث؟" high={prio === "high"}
+          <ProblemFields p={form} set={setForm} options={view.options} label="ماذا حدث؟"
             forwardOptions={view.forward_enabled ? view.forward_options : []} summary={summary}
             afterText={<label>الأولوية
               <select value={prio} required onChange={(e) => setPrio(e.target.value)}>

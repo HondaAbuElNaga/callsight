@@ -30,23 +30,16 @@ def test_priority_required_and_kept_in_the_form(s):  # noqa: F811
     assert list(fu.PRIORITIES) == ["high", "medium", "low"]
 
 
-def test_high_priority_must_be_solved_within_one_day(s):  # noqa: F811
+def test_note_never_returns_a_priority(s):  # noqa: F811
+    """A note follows the first form's priority and never returns one of its own. No solve-time limit by priority
+    any more (user, 2026-11-23: the form has no expected time)."""
     start_on(s)
     c = mk(s, "a", at(10))
     now = at(11)
     base = {"what_happened": "x", "solved": False, "responsible_kind": "customer"}
-    with pytest.raises(fu.FormError, match="يوم واحد"):
-        fu.validate(s, {**base, "priority": "high", "expected_at": now + timedelta(hours=25)}, c, now)
-    assert fu.validate(s, {**base, "priority": "high", "expected_at": now + timedelta(hours=23)}, c, now)
-    assert fu.validate(s, {**base, "priority": "medium", "expected_at": now + timedelta(hours=40)}, c, now)
-    with pytest.raises(fu.FormError, match="يومان"):
-        fu.validate(s, {**base, "priority": "low", "expected_at": now + timedelta(hours=49)}, c, now)
-    # a note follows the first form's priority and never returns one of its own
-    note = fu.validate(s, {**base, "expected_at": now + timedelta(hours=20)}, c, now, priority="high")
-    assert "priority" not in note
-    with pytest.raises(fu.FormError, match="يوم واحد"):
-        fu.validate(s, {**base, "expected_at": now + timedelta(hours=25)}, c, now, priority="high")
-    assert fu.validate(s, {**base, "expected_at": now + timedelta(hours=40)}, c, now, priority=None)
+    assert fu.validate(s, {**base, "priority": "high", "expected_at": now + timedelta(hours=25)}, c, now)
+    note = fu.validate(s, base, c, now, priority="high")
+    assert "priority" not in note and note["expected_at"] is None
 
 
 def test_priority_in_form_dict_and_history(s):  # noqa: F811
@@ -82,10 +75,7 @@ def test_priority_rules_through_the_api(env):  # noqa: F811
         assert r.status_code == 200, r.text
         assert r.json()["form"]["priority"] == code and r.json()["form"]["priority_ar"] == ar
         assert r.json()["history"][0]["priority_ar"] == ar
-    far = iso(datetime.now(timezone.utc) + timedelta(hours=30))      # high = within 1 day
-    r = client.put(url, json={**body, "priority": "high", "expected_at": far})
-    assert r.status_code == 422 and "يوم واحد" in r.json()["detail"]
-    assert client.put(url, json={**body, "priority": "medium", "expected_at": far}).status_code == 200
+    assert client.put(url, json={**body, "priority": "medium"}).status_code == 200
     lst = client.get("/api/followups", params={"state": "", "priority": "medium"}).json()
     assert [i["call_id"] for i in lst["items"]] == [ids["own"]]
     assert lst["items"][0]["form"]["priority_ar"] == "متوسطة"
@@ -110,10 +100,6 @@ def test_note_cannot_carry_a_priority(env):  # noqa: F811
     assert client.post(url, json={"round": 2, "what_happened": "x", "solved": True, "priority": "low"}
                        ).status_code == 422
     nxt = {k: v for k, v in not_solved(boss_id(Session)).items() if k not in ("what_happened", "priority")}
-    nxt["expected_at"] = iso(datetime.now(timezone.utc) + timedelta(hours=30))   # high form: 1 day for notes too
-    r = client.post(url, json={"round": 2, "what_happened": "لم يُحل", **nxt})
-    assert r.status_code == 422 and "يوم واحد" in r.json()["detail"]
-    nxt["expected_at"] = iso(datetime.now(timezone.utc) + timedelta(hours=20))
     r = client.post(url, json={"round": 2, "what_happened": "لم يُحل", **nxt})
     assert r.status_code == 200, r.text
     h = r.json()["history"]
@@ -175,26 +161,6 @@ def test_no_followup_counter_and_filter(env):  # noqa: F811
     # a priority filter does not empty this view (no-follow-up forms have no priority; review 2026-11-16)
     d = client.get("/api/followups", params={"state": "no_followup", "priority": "high"}).json()
     assert [i["call_id"] for i in d["items"]] == [ids["own"]]
-
-
-def test_unchanged_expected_time_on_edit(s):  # noqa: F811   (review 2026-11-16)
-    start_on(s)
-    u = user(s)
-    c = mk(s, "a", at(10))
-    t0 = at(11)
-    base = {"what_happened": "x", "solved": False, "responsible_kind": "customer", "callback_at": None}
-    fu.save(s, c, {**base, "priority": "medium", "expected_at": t0 + timedelta(hours=40)}, u, t0)
-    with pytest.raises(fu.FormError, match="يوم واحد"):        # edited to high, same time 40 h away: refused
-        fu.save(s, c, {**base, "priority": "high", "expected_at": t0 + timedelta(hours=40)}, u, t0 + timedelta(hours=1))
-    s.rollback()
-    # same time, later and after it passed: still accepted (only a CHANGED time must be in the future)
-    later = t0 + timedelta(hours=41)
-    assert fu.save(s, c, {**base, "priority": "low", "expected_at": t0 + timedelta(hours=40)}, u, later).priority == "low"
-    # an old form from before the 2-day rule (time 10 days away) can still be re-saved without moving it
-    f = s.scalars(select(CallFollowup)).one()
-    f.expected_at = later + timedelta(days=10)
-    s.commit()
-    assert fu.save(s, c, {**base, "priority": "medium", "expected_at": f.expected_at}, u, later).priority == "medium"
 
 
 # ---------- "تحتاج حل" (requirement 11) ----------
