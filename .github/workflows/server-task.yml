@@ -28,6 +28,8 @@ on:
           - retention-check
           - retention-on
           - retention-off
+          - listen-on
+          - listen-off
       value:
         description: "rating-fetch / rating-create: days YYYY-MM-DD,YYYY-MM-DD,... (rating-create: then ;N, default 500)"
         type: string
@@ -81,6 +83,11 @@ jobs:
               grep -q '^RETENTION_ENABLED=' .env && sed -i "s/^RETENTION_ENABLED=.*/RETENTION_ENABLED=$V/" .env || echo "RETENTION_ENABLED=$V" >> .env
               "${C[@]}" up -d --force-recreate worker      # only the worker reads it (nightly job + CLI)
               grep -E '^RETENTION_ENABLED=' .env ;;
+            listen-on|listen-off)   # Listen button (spec 2026-11-17-listen); the API reads LISTEN_ENABLED on every request
+              V=$([ "$TASK" = listen-on ] && echo true || echo false)
+              grep -q '^LISTEN_ENABLED=' .env && sed -i "s/^LISTEN_ENABLED=.*/LISTEN_ENABLED=$V/" .env || echo "LISTEN_ENABLED=$V" >> .env
+              "${C[@]}" up -d --force-recreate api
+              grep -E '^LISTEN_ENABLED=' .env ;;
             sync-agents) "${C[@]}" exec -T worker python -m callsight sync-agents ;;
             rating-fetch|rating-create)
               [[ "$VALUE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(,[0-9]{4}-[0-9]{2}-[0-9]{2}){0,30}(\;[0-9]{1,4})?$ ]] || { echo "value must be YYYY-MM-DD,YYYY-MM-DD[;N] (at most 31 days)"; exit 1; }
