@@ -30,7 +30,7 @@ handling time short. Mission link: measurable service quality per agent.
 ## Scope
 **In:** the score engine, a new panel «نسبة KPI للموظف» on the KPI page (staff only, like the page), the new 21:30
 form deadline, page/doc texts that state the deadline, tests.
-**Out:** the PDF report and archived snapshots (page only, like the shares KPI; can be added later), agents seeing
+**Out:** the PDF report (page only, like the shares KPI; can be added later), agents seeing
 their own score, after-sales team, changing the other KPI tables.
 
 ## Requirements
@@ -77,3 +77,13 @@ their own score, after-sales team, changing the other KPI tables.
 1. Missed call without a customer number: **leave it out of part 1** (no one can call back) / count as missed.
 2. Apply the 21:30 deadline to old calls too? **No — only from the go-live day**, so past % don't change.
 3. Final % when one part has no data (e.g. forms not switched on): **average of the parts that have data** / count it as 0.
+
+## Review (2026-11-23, 3 agents: bugs, security, accuracy)
+- Security: no findings.
+- Bugs 1 (low, fixed): `report()` computed the score for the PDF / CLI too, where nobody shows it →
+  `report(..., with_agent_score=False)`; only `/api/kpi` and `save_snapshots` ask for it.
+- Bugs 2 (low, fixed): after the 90-day erase the forms part of an old week/month would change → the score is saved
+  in the closed-period snapshot (`_content_figures`) and read back like `followup` / `shares`.
+- Accuracy 1 (low, fixed): roadmap line added.
+- Accuracy 2 (low, open until push): `DEADLINE_2130_FROM` = 2026-11-24; **set it to the real go-live day before
+  pushing** if the push is later, so no past form turns late after the fact.

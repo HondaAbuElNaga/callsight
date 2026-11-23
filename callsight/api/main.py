@@ -367,7 +367,7 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
 
     @app.get("/api/kpi")
     def kpis(user: Manager, s: DB, q: Kpi) -> dict:   # agents: no KPI page (decided by the user 2026-11-15)
-        return kpi.report(s, q.period, cfg.teams(), team=q.team, agent=q.agent)
+        return kpi.report(s, q.period, cfg.teams(), team=q.team, agent=q.agent, with_agent_score=True)
 
     @app.get("/api/reports/pdf")
     def report_pdf(user: Manager, s: DB, q: Kpi) -> Response:

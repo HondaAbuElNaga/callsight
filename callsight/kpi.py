@@ -321,7 +321,7 @@ def data_trusted(session: Session, need: int = TRUSTED_DAYS, today: date | None 
 
 
 def report(session: Session, period: Period, teams: TeamConfig, team: str | None = None, agent: str | None = None,
-           now: datetime | None = None) -> dict:
+           now: datetime | None = None, *, with_agent_score: bool = False) -> dict:
     """KPIs of a period + the previous period's summary (trend) + flags for the page and the PDF."""
     from . import agent_score, followups, shares
     cur = compute(session, period.start, period.end, teams=teams, team=team, agent=agent)
@@ -335,10 +335,10 @@ def report(session: Session, period: Period, teams: TeamConfig, team: str | None
             "followup": followups.kpi(session, lo, hi, _scope(teams, team, agent)[1], now,
                                       callers=sorted(teams.ext_team)),
             # spec 2026-11-22-shares-tab: did the agent reply to the supervisor's shared calls within 24 h
-            "shares": shares.kpi(session, lo, hi, _scope(teams, team, agent)[1], now),
-            # spec 2026-11-23-agent-kpi: customer-service employee KPI % (work days end at 21:30; page only)
-            "agent_score": agent_score.compute(session, period.start, period.end, _scope(teams, team, agent)[1],
-                                               agent_score.team_exts(teams.ext_team), now)}
+            "shares": shares.kpi(session, lo, hi, _scope(teams, team, agent)[1], now)}
+    if with_agent_score:   # spec 2026-11-23-agent-kpi: the page + snapshots only (not the PDF)
+        out["agent_score"] = agent_score.compute(session, period.start, period.end, _scope(teams, team, agent)[1],
+                                                 agent_score.team_exts(teams.ext_team), now)
     _use_snapshots(session, out, period, prev_p, team, agent)
     return out
 
@@ -363,8 +363,8 @@ def _use_snapshots(session: Session, out: dict, period: Period, prev_p: Period, 
     snap = _snapshot(session, period, team, agent)
     if snap is not None:
         d = snap.data
-        for k in ("followup", "shares"):
-            if k in d:
+        for k in ("followup", "shares", "agent_score"):
+            if k in d and k in out:
                 out[k] = d[k]
         out["summary"]["talk"] = (d.get("summary") or {}).get("talk")
         talk = {a.get("ext"): a.get("talk") for a in d.get("agents") or []}
@@ -379,7 +379,7 @@ def _use_snapshots(session: Session, out: dict, period: Period, prev_p: Period, 
 
 def _content_figures(rep: dict) -> dict:
     """Only what retention erases the source of (no top repeaters / masked numbers: those stay live)."""
-    keep = {"followup": rep.get("followup"), "shares": rep.get("shares"),
+    keep = {"followup": rep.get("followup"), "shares": rep.get("shares"), "agent_score": rep.get("agent_score"),
             "summary": {"talk": rep["summary"].get("talk")},
             "agents": [{"ext": a["ext"], "talk": a.get("talk")} for a in rep["agents"]]}
     return json.loads(json.dumps(keep, default=str))
@@ -406,7 +406,8 @@ def save_snapshots(session: Session, teams: TeamConfig, days, now: datetime | No
             key = scope_key(team, agent)
             if key in have:
                 continue
-            data = _content_figures(report(session, p, teams, team=team, agent=agent, now=now))
+            data = _content_figures(report(session, p, teams, team=team, agent=agent, now=now,
+                                                    with_agent_score=True))
             session.add(KpiSnapshot(kind=p.kind, start=p.start, scope=key, data=data, saved_at=now))
             saved += 1
         if commit:

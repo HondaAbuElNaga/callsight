@@ -113,13 +113,16 @@ def test_report_reads_saved_numbers_for_erased_content(env, engine):  # noqa: F8
     aug, jul = kpi.period_for("month", date(2026, 8, 6)), kpi.period_for("month", date(2026, 7, 6))
     with Session() as s:
         s.add_all([KpiSnapshot(kind="month", start=aug.start, scope="all", saved_at=NOW,
-                               data={"followup": {"saved": 1}, "shares": {"saved": 2},
+                               data={"followup": {"saved": 1}, "shares": {"saved": 2}, "agent_score": {"saved": 3},
                                      "summary": {"talk": {"calls": 9}}, "agents": [{"ext": "104", "talk": {"calls": 7}}]}),
                    KpiSnapshot(kind="month", start=jul.start, scope="all", saved_at=NOW,
                                data={"summary": {"talk": {"calls": 3}}})])
         s.commit()
         d = kpi.report(s, aug, TEAM, now=NOW)
         assert d["followup"] == {"saved": 1} and d["shares"] == {"saved": 2} and d["saved_numbers_at"]
+        assert "agent_score" not in d                                      # PDF path: no employee KPI %
+        assert kpi.report(s, aug, TEAM, now=NOW, with_agent_score=True)["agent_score"] == {"saved": 3}
+        assert "agent_score" in kpi._content_figures(kpi.report(s, aug, TEAM, now=NOW, with_agent_score=True))
         assert d["summary"]["talk"] == {"calls": 9} and d["previous"]["talk"] == {"calls": 3}
         assert {a["ext"]: a["talk"] for a in d["agents"]}["104"] == {"calls": 7}
         assert "saved_numbers_at" not in kpi.report(s, aug, TEAM, agent="104", now=NOW)   # other scope: live
