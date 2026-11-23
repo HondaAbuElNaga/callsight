@@ -6,6 +6,8 @@ failed logins get the IP auto-blocked, so we stop after `max_login_failures` fai
 from __future__ import annotations
 
 import logging
+import re
+import threading
 import time
 from datetime import datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -24,6 +26,7 @@ API_PATH = "/openapi/v1.0"
 TOKEN_MAX_AGE = 25 * 60          # refresh before the 30 min expiry
 TOKEN_LIMIT_ERRCODE = 60002      # "MAX LIMITATION EXCEEDED": more than 8 valid tokens for this API app
 PAGE_SIZE = 100
+CHANNEL_RE = re.compile(r"[A-Za-z0-9/_.:@\-]{1,100}")   # e.g. PJSIP/2000-00000114 (from event 30011)
 
 
 def safe_recording_name(file: str) -> str:
@@ -50,7 +53,8 @@ class YeastarAdapter(PbxAdapter):
             from .tls import check_pin
         self._check_pin = check_pin
         self.guard = guard                   # shared pbx:auth_blocked switch (Redis); None = in-process limit only
-        self.listen_enabled = listen_enabled  # 2nd gate for call/listen; nothing sets it True yet (spec live-board)
+        self.listen_enabled = listen_enabled  # 2nd gate for call/listen: True only in the API when LISTEN_ENABLED=true
+        self._listen_lock = threading.Lock()  # the API answers in threads; one Listen request to the PBX at a time
         self.login_gate = login_gate         # live service: raises when a login is not allowed yet (1 per 10 min)
         self.max_login_failures = max_login_failures
         self.login_failures = 0
@@ -158,12 +162,34 @@ class YeastarAdapter(PbxAdapter):
         """The next token() refreshes (refresh_token first; a new login only if that fails)."""
         self._token_at = self._clock() - TOKEN_MAX_AGE
 
-    def listen(self, monitor_ext: str, call_id: str) -> dict:
-        """Silent listen (POST call/listen). Second gate: refuses unless this adapter was built with
-        listen_enabled=True, which no code does yet (feature paused by the user; legal steps first)."""
+    def listen(self, monitor_ext: str, channel_id: str) -> dict:
+        """Silent listen (POST call/listen, type "listen": the monitor hears both sides, nobody hears the monitor).
+        The PBX rings `monitor_ext`; `channel_id` is the monitored agent's channel from event 30011. Second gate:
+        refuses unless this adapter was built with listen_enabled=True (the API does so only while
+        LISTEN_ENABLED=true). Sent ONCE (no retry: a repeat would ring the supervisor's phone twice)."""
         if not self.listen_enabled:
             raise PbxError("listen is switched off in the PBX adapter")
-        raise PbxError("listen is not wired to the PBX yet")   # NEEDS USER before this is ever implemented
+        if not (isinstance(monitor_ext, str) and monitor_ext.isdigit() and 1 <= len(monitor_ext) <= 6):
+            raise PbxError("listen: bad monitor extension")
+        if not (isinstance(channel_id, str) and CHANNEL_RE.fullmatch(channel_id)):
+            raise PbxError("listen: bad channel id")
+        body = {"monitor": monitor_ext, "channel_id": channel_id, "type": "listen"}
+        with self._listen_lock:
+            for attempt in (1, 2):
+                self._ensure_token()
+                try:
+                    resp = self.http.request("POST", self._url("call/listen"),
+                                             params={"access_token": self.access_token}, json=body)
+                except httpx.TransportError as exc:
+                    raise PbxUnavailable(f"call/listen: PBX unreachable ({type(exc).__name__})") from None
+                data = self._json(resp, "call/listen")
+                if data.get("errcode") == 0:
+                    return data
+                if attempt == 1 and "TOKEN" in str(data.get("errmsg", "")).upper():
+                    self.access_token = None      # expired token: log in again once (nothing was rung)
+                    continue
+                raise PbxError(f"call/listen refused: errcode={data.get('errcode')} errmsg={data.get('errmsg')}")
+        raise PbxError("call/listen failed")  # pragma: no cover
 
     def get(self, endpoint: str, **params: Any) -> dict:
         for attempt in (1, 2):

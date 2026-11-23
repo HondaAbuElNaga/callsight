@@ -52,7 +52,7 @@ class ApiConfig:
     # Listen (spec live-board, decision 4): OFF. Gate 1 = this flag, read on EVERY request (LISTEN_ENABLED);
     # gate 2 = the PBX adapter's listen() refuses too. Every attempt is written to listen_audit.
     listen_enabled: Callable[[], bool] = lambda: False
-    listen_client: Callable[[], object] | None = None   # -> object with listen(monitor_ext, call_id)
+    listen_client: Callable[[], object] | None = None   # -> object with listen(monitor_ext, channel_id)
     live_lookup: Callable[[str], dict | None] | None = None   # live call by PBX call id (from the snapshot)
     # agent-supervisor spec: admin delete -> worker task removes the backup copy (BACKUP_DIR is read-only here)
     delete_backup_copy: Callable[[int, str], None] | None = None
@@ -287,7 +287,9 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
 
     @app.get("/api/me")
     def me(user: User) -> dict:
-        return {"username": user.username, "role": user.role, "ext": user.ext}
+        # listen: the live page shows the «استماع» button (staff only, and only while LISTEN_ENABLED=true)
+        return {"username": user.username, "role": user.role, "ext": user.ext,
+                "listen": user.role in auth.STAFF_ROLES and cfg.listen_enabled()}
 
     # ---------- calls ----------
 
@@ -604,14 +606,15 @@ def create_app(session_factory: Callable[[], Session], cfg: ApiConfig) -> FastAP
             listen_audit(s, user, ip, call_id, "error")
             raise HTTPException(503, "live data not available") from None
         agent = ((live or {}).get("agents") or [None])[0]
-        if live is None or agent is None:
+        channel = ((live or {}).get("channels") or {}).get(agent) if agent else None   # private, never in the board
+        if live is None or agent is None or not channel:
             listen_audit(s, user, ip, call_id, "not_found", agent)
             raise HTTPException(404, "no such call talking now")
         attempt = listen_audit(s, user, ip, call_id, "pending", agent)
         try:
             if cfg.listen_client is None:
                 raise RuntimeError("no PBX client")
-            cfg.listen_client().listen(user.ext, call_id)       # the adapter refuses too (2nd gate)
+            cfg.listen_client().listen(user.ext, channel)       # the adapter refuses too (2nd gate)
             result = "ok"
         except PbxError:
             result = "refused"
@@ -705,19 +708,31 @@ def _live_lookup_from_env() -> Callable[[str], dict | None]:
     import json
 
     from ..app import redis_client
-    from ..live.bus import SNAPSHOT_KEY
+    from ..live.bus import CHANNELS_KEY, SNAPSHOT_KEY
 
     def lookup(call_id: str) -> dict | None:
-        raw = redis_client().get(SNAPSHOT_KEY)
+        raw, raw_ch = redis_client().mget(SNAPSHOT_KEY, CHANNELS_KEY)
         calls = (json.loads(raw) or {}).get("calls") or [] if raw else []
-        return next((c for c in calls if c.get("call_id") == call_id), None)
+        call = next((c for c in calls if c.get("call_id") == call_id), None)
+        if call is None:
+            return None
+        channels = (json.loads(raw_ch) or {}).get(call_id) or {} if raw_ch else {}
+        return {**call, "channels": channels}
     return lookup
 
 
+_LISTEN_ADAPTER: list = []
+
+
 def _listen_adapter():
-    """Only reached when LISTEN_ENABLED=true; its listen() still refuses (listen_enabled=False, 2nd gate)."""
-    from ..app import pbx_adapter
-    return pbx_adapter("api", fail_closed=True)
+    """Only reached while LISTEN_ENABLED=true (gate 1, read on every request). One adapter per API process: its
+    token is reused (the PBX allows max 8 open logins: worker + CLI + live + this one)."""
+    if not _LISTEN_ADAPTER:
+        from ..app import pbx_adapter
+        ad = pbx_adapter("api", fail_closed=True)
+        ad.listen_enabled = True                  # gate 2 opens only here, only after gate 1 said yes
+        _LISTEN_ADAPTER.append(ad)
+    return _LISTEN_ADAPTER[0]
 
 
 def _health_from_env(cache_seconds: float = 15.0) -> Callable[[Session], dict]:

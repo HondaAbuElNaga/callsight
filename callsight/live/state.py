@@ -80,6 +80,20 @@ class LiveState:
     def snapshot(self) -> list[dict]:
         return [self._out(c) for c in sorted(self.calls.values(), key=lambda c: c.started_at) if c.team]
 
+    def channels(self) -> dict[str, dict[str, str]]:
+        """PRIVATE (never sent to a browser): the PBX channel id of each talking team agent, per call. Listen
+        (POST call/listen) needs the monitored extension's channel id (spec 2026-11-17-listen)."""
+        team = None if self.team is None else self.team.ext_team
+        out: dict[str, dict[str, str]] = {}
+        for c in self.calls.values():
+            if not c.team:
+                continue
+            ch = {m.ext: m.channel_id for m in c.members.values()
+                  if m.ext and m.channel_id and m.status in TALKING | HOLD and (team is None or m.ext in team)}
+            if ch:
+                out[c.call_id] = ch
+        return out
+
     def _out(self, call: LiveCall) -> dict:
         return call.to_dict(None if self.team is None else self.team.ext_team)
 

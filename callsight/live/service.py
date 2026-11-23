@@ -202,7 +202,7 @@ class LiveService:
         if status:
             self.status = status
         try:
-            self.pub.publish(self.state.snapshot(), deltas, self.status)
+            self.pub.publish(self.state.snapshot(), deltas, self.status, self.state.channels())
         except Exception as exc:  # noqa: BLE001 - Redis hiccup: the next publish carries the full snapshot again
             log.warning("could not publish live state (%s)", type(exc).__name__)
 

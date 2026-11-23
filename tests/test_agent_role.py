@@ -276,7 +276,7 @@ def test_agents_list_has_only_own_entry(env):
     client, *_ = env
     login(client)
     assert client.get("/api/agents").json() == [{"ext": "119", "name": "Agent 119", "team": "customer_service"}]
-    assert client.get("/api/me").json() == {"username": "ali", "role": "agent", "ext": "119"}
+    assert client.get("/api/me").json() == {"username": "ali", "role": "agent", "ext": "119", "listen": False}
 
 
 def test_staff_still_see_everything(env):

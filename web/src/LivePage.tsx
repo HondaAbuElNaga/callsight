@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, Unauthorized, type Agent, type LiveCall, type LiveMessage, type Me } from "./api";
+import { api, Refused, Unauthorized, type Agent, type LiveCall, type LiveMessage, type Me } from "./api";
 import { DIRECTION_LABEL, formatDateTime, mmss } from "./format";
 
 interface Props { me: Me; onCalls: () => void; onLogout: () => void; onExpired: () => void }
@@ -124,9 +124,37 @@ function agentLabel(ext: string, names: Map<string, string>): string {
   return n ? `${n} (${ext})` : `تحويلة ${ext}`;
 }
 
-// Admin + supervisor: the calls happening now. Listen is switched off (no button): see the notice.
+// The server's refusal reasons (api/main.py listen route) in plain words.
+function listenError(e: unknown): string {
+  const m = e instanceof Refused ? e.message : "";
+  if (m === "no such call talking now") return "انتهت المكالمة أو لم يعد الموظف يتحدث.";
+  if (m === "feature off") return "الاستماع المباشر متوقف حاليًا.";
+  if (m === "your account has no extension to ring") return "حسابك بدون تحويلة هاتف، اطلب من المدير إضافتها.";
+  if (m.startsWith("too many")) return "محاولات كثيرة، حاول بعد دقيقة.";
+  return "لم يبدأ الاستماع: رفض السنترال الطلب أو هاتفك مشغول. حاول مرة أخرى.";
+}
+
+// Admin + supervisor: the calls happening now. «استماع» (spec 2026-11-17-listen) only while the server has
+// LISTEN_ENABLED=true (me.listen) and the account has an extension: the PBX rings that phone, listen only.
 export function LivePage({ me, onCalls, onLogout, onExpired }: Props) {
   const [board, connected] = useLiveBoard(onExpired);
+  const canListen = !!me.listen && !!me.ext;
+  const [ask, setAsk] = useState<string | null>(null);           // call id waiting for "yes, ring my phone"
+  const [busy, setBusy] = useState(false);
+  const [listenMsg, setListenMsg] = useState<{ id: string; ok: boolean; text: string } | null>(null);
+  const listen = async (id: string) => {
+    setBusy(true);
+    try {
+      await api.liveListen(id);
+      setListenMsg({ id, ok: true, text: `يرن هاتفك (تحويلة ${me.ext}) الآن: ارفع السماعة للاستماع. لا يسمعك أحد.` });
+    } catch (e) {
+      if (e instanceof Unauthorized) { onExpired(); return; }
+      setListenMsg({ id, ok: false, text: listenError(e) });
+    } finally {
+      setBusy(false);
+      setAsk(null);
+    }
+  };
   const [agents, setAgents] = useState<Agent[]>([]);
   const now = useNow();
 
@@ -181,6 +209,20 @@ export function LivePage({ me, onCalls, onLogout, onExpired }: Props) {
                     {c.caller && <> · <span className="num" dir="ltr">{c.caller}</span></>}
                     {c.queue && <> · طابور {c.queue}</>}
                   </div>
+                  {canListen && c.state === "talking" && c.agents.length > 0 && (ask === c.call_id ? (
+                    <div className="live-listen">
+                      <span className="small">سيرن هاتفك (تحويلة {me.ext}). متابعة؟</span>
+                      <button disabled={busy} onClick={() => listen(c.call_id)}>نعم، اتصل بي</button>
+                      <button className="link" disabled={busy} onClick={() => setAsk(null)}>إلغاء</button>
+                    </div>
+                  ) : (
+                    <button className="link live-listen-btn" onClick={() => { setAsk(c.call_id); setListenMsg(null); }}>
+                      استماع
+                    </button>
+                  ))}
+                  {listenMsg?.id === c.call_id && (
+                    <div className={`small ${listenMsg.ok ? "" : "error"}`} role="status">{listenMsg.text}</div>
+                  )}
                 </article>
               );
             })}
@@ -205,9 +247,10 @@ export function LivePage({ me, onCalls, onLogout, onExpired }: Props) {
       </section>
 
       <p className="muted small live-legal">
-        الاستماع المباشر متوقف. قبل تشغيله يلزم: إشعار في الرد الآلي بأن المكالمات قد تُسجَّل أو تُراقَب، وسياسة
-        مراقبة مكتوبة للموظفين، وموافقة قانونية (نظام حماية البيانات الشخصية ونظام مكافحة الجرائم المعلوماتية).
-        أرقام المتصلين تظهر مخفية (آخر 4 أرقام فقط).
+        {canListen
+          ? "الاستماع المباشر: يرن هاتفك وتسمع المكالمة فقط، ولا يسمعك الموظف ولا العميل. كل محاولة استماع تُسجَّل (من، أي مكالمة، متى)."
+          : "الاستماع المباشر متوقف حاليًا."}
+        {" "}أرقام المتصلين تظهر مخفية (آخر 4 أرقام فقط).
       </p>
     </div>
   );

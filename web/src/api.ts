@@ -65,7 +65,7 @@ export interface CallDetail extends CallRow { legs: Leg[] }
 export interface CallPage { total: number; page: number; page_size: number; items: CallRow[] }
 export interface Summary { total: number; by_status: Record<Status, number> }
 export interface Agent { ext: string; name: string; team: string | null }
-export interface Me { username: string; role: string; ext: string | null }
+export interface Me { username: string; role: string; ext: string | null; listen?: boolean }  // listen: show «استماع» (staff, LISTEN_ENABLED)
 
 export interface Filters {
   from: string;
@@ -461,6 +461,8 @@ function query(f: Filters, extra: Record<string, string> = {}): string {
 export const api = {
   me: () => get<Me>("/api/me"),
   agents: () => get<Agent[]>("/api/agents"),
+  /** Live Listen: the PBX rings the supervisor's own extension (spec 2026-11-17-listen). */
+  liveListen: (callId: string) => send<{ ok: boolean }>("POST", `/api/live/${encodeURIComponent(callId)}/listen`),
   calls: (f: Filters, page: number) => get<CallPage>(`/api/calls?${query(f, { page: String(page) })}`),
   summary: (f: Filters) => get<Summary>(`/api/calls/summary?${query(f)}`),
   call: (id: number) => get<CallDetail>(`/api/calls/${id}`),
