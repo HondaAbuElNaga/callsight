@@ -357,17 +357,22 @@ export interface FollowupIn {
   responsible_user_id?: number | null; expected_at?: string; callback_at?: string;
   forward_person_id?: number | null; forward_note?: string;
 }
+// spec 2026-11-25-share-chat: a shared call is a chat between the supervisors and one agent
+export const OPEN_CHAT = "callsight:open-chat";     // window event: open this chat id in the popup (ChatDock)
+export type ChatStatus = "open" | "archived" | "closed";
+export interface ChatMessage { id: number; text: string; at: string; who: string; agent: boolean; mine: boolean }
 export interface Share {
-  id: number; call_id: number; from: string; to: string; to_user_id: number; created_at: string;
-  note: string | null;          // agents: null until they click the note (that click = seen_at, shown to the supervisor)
-  seen_at: string | null; call_start: string | null; agent_ext: string | null;
-  reply: string | null; reply_at: string | null;      // the agent's answer to the supervisor
-  // spec 2026-11-22-shares-tab: 24 h from created_at to reply; each side closes it into its own archive
-  first_reply_at: string | null; deadline: string; reply_state: ShareReplyState;
-  agent_closed_at: string | null; staff_closed_at: string | null; closed: boolean;   // closed = by my side
+  id: number; call_id: number; from: string; to: string; to_user_id: number; to_ext: string | null; created_at: string; note: string;
+  seen_at: string | null;       // the agent opened the chat the first time
+  call_start: string | null; agent_ext: string | null;
+  status: ChatStatus; archived_at: string | null; closed_at: string | null;
+  first_reply_at: string | null; deadline: string; reply_state: ShareReplyState;   // 24 h to reply (KPI)
+  last: { text: string; at: string; who: string; agent: boolean } | null; last_at: string;
+  unread: number;               // messages from the other side not read yet
+  messages?: ChatMessage[];     // only when one chat is opened
 }
 export type ShareReplyState = "pending" | "on_time" | "late" | "missing" | "old";   // old = sent before the 24 h rule
-export interface ShareList { items: Share[]; truncated: boolean; open: number; unseen: number }
+export interface ShareList { items: Share[]; truncated: boolean; open: number; unread: number }
 export interface ShareFilters { box: "open" | "archive"; agent?: string; from?: string; to?: string }
 export interface ShareKpiBucket { due: number; on_time: number; late: number; missing: number; rate: number | null }
 export interface ShareKpi { since: string | null; hours: number; summary: ShareKpiBucket; agents: Record<string, ShareKpiBucket> }
@@ -539,19 +544,19 @@ export const api = {
     return get<FollowupList>(`/api/followups?${q.toString()}`);
   },
   agentSummary: (id: number) => get<AgentSummary>(`/api/calls/${id}/summary`),
-  shares: (f: ShareFilters) => {
+  chats: (f: ShareFilters) => {
     const q = new URLSearchParams({ box: f.box });
     if (f.agent) q.set("agent", f.agent);
     if (f.box === "archive" && f.from) q.set("from", f.from);
     if (f.box === "archive" && f.to) q.set("to", f.to);
-    return get<ShareList>(`/api/shares?${q}`);
+    return get<ShareList>(`/api/chats?${q}`);
   },
-  closeShare: (id: number) => send<Share>("POST", `/api/shares/${id}/close`),
+  chat: (id: number) => get<Share>(`/api/chats/${id}`),       // also marks it read
+  chatSay: (id: number, text: string) => send<Share>("POST", `/api/chats/${id}/messages`, { text }),
+  chatState: (id: number, action: "archive" | "close" | "reopen") => send<Share>("POST", `/api/chats/${id}/${action}`),
   callShares: (id: number) => get<CallShares>(`/api/calls/${id}/shares`),
   share: (id: number, to_user_id: number, note: string) =>
     send<Share>("POST", `/api/calls/${id}/shares`, { to_user_id, note }),
-  shareSeen: (id: number) => send<Share>("POST", `/api/shares/${id}/seen`),
-  shareReply: (id: number, text: string) => send<Share>("PUT", `/api/shares/${id}/reply`, { text }),
   unshare: (id: number) => send<{ ok: true }>("DELETE", `/api/shares/${id}`),
   users: () => get<AppUserRow[]>("/api/admin/users"),
   createUser: (username: string, role: string, ext: string | null) =>

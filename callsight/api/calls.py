@@ -145,10 +145,11 @@ def visible_call(session: Session, call_id: int, scope: Scope) -> Call | None:
 
 
 def is_shared_with(session: Session, call_id: int, scope: Scope) -> bool:
-    """A supervisor shared this call with this agent (agent-supervisor spec, scope item 7)."""
+    """A supervisor shared this call with this agent (agent-supervisor spec, scope item 7) and the chat is still open
+    (spec 2026-11-25-share-chat: an archived or closed chat no longer opens the call or its recording for the agent)."""
     if scope.everything or not scope.agent_ext or not scope.user_id:
         return False
-    return session.scalar(select(CallShare.id).where(CallShare.call_id == call_id,
+    return session.scalar(select(CallShare.id).where(CallShare.call_id == call_id, CallShare.status == "open",
                                                      CallShare.to_user_id == scope.user_id).limit(1)) is not None
 
 

@@ -703,6 +703,23 @@ class CallShare(Base):
     agent_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     staff_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))   # unused since 0027:
     # each supervisor/admin has their own archive now (ShareStaffClose)
+    # spec 2026-11-25-share-chat (migration 0031): the share is a chat. open -> archived (staff, can reopen) or
+    # closed (staff, gone for both sides, still in the KPI). agent_closed_at / ShareStaffClose are no longer used.
+    status: Mapped[str] = mapped_column(String(10), default="open", server_default="open", index=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    agent_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))   # the agent read up to here
+    staff_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))   # any supervisor/admin did
+
+
+class ShareMessage(Base):
+    """One chat message on a shared call (spec 2026-11-25-share-chat). Never edited or removed."""
+    __tablename__ = "share_message"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    share_id: Mapped[int] = mapped_column(ForeignKey("call_share.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    text: Mapped[str] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ShareStaffClose(Base):

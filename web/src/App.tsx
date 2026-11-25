@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FollowupsPage } from "./FollowupsPage";
 import { UsersPage } from "./UsersPage";
 import { api, type Me } from "./api";
@@ -13,12 +13,14 @@ import { RatingPage } from "./RatingPage";
 import { LivePage } from "./LivePage";
 import { RulesPage } from "./RulesPage";
 import { PrivacyPage } from "./PrivacyPage";
+import { ChatDock } from "./ChatDock";
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = still checking
   const [view, setView] = useState<"calls" | "goldset" | "firstspeaker" | "kpi" | "health" | "live" | "rating" | "followups" | "users" | "forwards" | "rules" | "privacy">("calls");
   const [openCall, setOpenCall] = useState<number | null>(null);   // follow-ups page -> open that call's panel
   const [problems, setProblems] = useState(0);
+  const expired = useCallback(() => setMe(null), []);     // stable: ChatDock's effects depend on it
   const isAdmin = me?.role === "admin";
   const isStaff = me?.role === "admin" || me?.role === "supervisor";
   const isAgent = me?.role === "agent";   // agents: the follow-ups page is their only page (+ the call they open)
@@ -98,5 +100,6 @@ export function App() {
       الخصوصية
     </button>
   );
-  return <>{banner}{page}{privacyLink}</>;
+  // spec 2026-11-25-share-chat: shared calls pop up as a chat on every page
+  return <>{banner}{page}<ChatDock me={me} onLogout={logout} onExpired={expired} />{privacyLink}</>;
 }

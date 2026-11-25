@@ -8,7 +8,6 @@ import {
 } from "./format";
 import { CB_CLASS, PriorityTag, RESP_LABEL } from "./WorkPanels";
 import { CallsPage } from "./CallsPage";
-import { SharesTab } from "./SharesTab";
 
 interface Props { me: Me; onCalls?: () => void;   // agents: no calls page (follow-ups is their only page)
   onLogout: () => void; onExpired: () => void }
@@ -166,14 +165,11 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
   const [state, setState] = useState("action");
   const [priority, setPriority] = useState("");   // spec 2026-11-16: filters the list, the counters count all
   const [data, setData] = useState<FollowupList | null>(null);
-  const [tab, setTab] = useState<"work" | "shares">("work");   // spec 2026-11-22-shares-tab
-  const [sharesOpen, setSharesOpen] = useState(0);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [error, setError] = useState("");
   const [tick, setTick] = useState(0);
   const [open, setOpen] = useState<number | null>(null);   // the call shown in the side panel, on this page
-  const [fromShare, setFromShare] = useState(false);        // opened from a supervisor's note: no follow-up form
-  const onOpenCall = (id: number, share = false) => { setFromShare(share); setOpen(id); };
+  const onOpenCall = (id: number) => setOpen(id);
 
   const fail = useCallback((e: unknown) => {
     if (e instanceof Unauthorized) onExpired();
@@ -193,10 +189,6 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
       .then((d) => { if (alive) { setData(d); setError(""); } }).catch((e) => alive && fail(e));
     return () => { alive = false; };
   }, [from, to, agent, state, priority, fail, tick]);
-  useEffect(() => {   // the tab label shows how many shared calls are still open (also while on the other tab)
-    if (tab === "shares") return;      // the tab itself reports the count
-    api.shares({ box: "open" }).then((d) => setSharesOpen(d.open)).catch(fail);
-  }, [tab, tick, fail]);
 
   const now = Date.now();
   const c = data?.counts;
@@ -212,18 +204,6 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
       </header>
       {error && <div className="error">{error}</div>}
 
-      <div className="chips" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === "work"} className={`chip${tab === "work" ? " on" : ""}`}
-          onClick={() => setTab("work")}>المتابعات</button>
-        <button type="button" role="tab" aria-selected={tab === "shares"}
-          className={`chip${tab === "shares" ? " on" : ""}${sharesOpen ? " st-warn" : ""}`} onClick={() => setTab("shares")}>
-          {staff ? "المكالمات المشاركة مع الموظفين" : "ملاحظات المشرف"} {sharesOpen > 0 && <b>{sharesOpen}</b>}</button>
-      </div>
-
-      {tab === "shares" ? (
-        <SharesTab staff={staff} agents={agents} tick={tick} onOpenCall={(id) => onOpenCall(id, true)}
-          onExpired={onExpired} onCount={setSharesOpen} />
-      ) : <>
       {data && !data.linked && (
         <p className="error">حسابك غير مرتبط بتحويلة في فريق خدمة العملاء أو ما بعد البيع، لذلك لا تظهر لك متابعات. اطلب من مدير النظام ربط تحويلتك.</p>
       )}
@@ -327,9 +307,8 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
         {data && <Unsolved items={data.unsolved} truncated={data.unsolved_truncated} staff={staff} onOpen={(id) => onOpenCall(id)} />}
         </div>
       )}
-      </>}
       {open !== null && (   /* the call opens in the side panel over this list; ✕ closes it and refreshes the list */
-        <CallsPage key={`${open}-${fromShare}`} me={me} onLogout={onLogout} onExpired={onExpired} detailOnly embedded openCallId={open} fromShare={fromShare}
+        <CallsPage key={open} me={me} onLogout={onLogout} onExpired={onExpired} detailOnly embedded openCallId={open}
           onFollowups={() => { setOpen(null); setTick((n) => n + 1); }} />
       )}
     </div>

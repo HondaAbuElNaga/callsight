@@ -6,9 +6,9 @@ No `from __future__ import annotations` here: the route signatures use the Annot
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
-from sqlalchemy import exists, func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,7 +16,7 @@ from .. import followups as fu
 from .. import shares as shr
 from ..config import RIYADH
 from ..db.models import (Agent, AdminLog, AppUser, Call, CallFollowup, CallFollowupNote, CallPrivateNote, CallShare,
-                         ShareStaffClose)
+                         ShareMessage)
 from ..ingest.service import day_bounds
 from . import auth
 from .calls import visible_call, visible_scope
@@ -70,12 +70,12 @@ class MyNoteIn(BaseModel):
     text: str = Field(max_length=300)
 
 
-class ReplyIn(BaseModel):
+class MessageIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    text: str = Field(max_length=1000)
+    text: str = Field(min_length=1, max_length=1000)
 
 
-REPLY_MIN = 10      # a share reply: at least 10 letters ("ok" / "تم" is not an answer); empty = remove it
+REPLY_MIN = 10      # the agent's 24 h reply: the first message of at least 10 letters ("ok" / "تم" is not an answer)
 
 
 class ShareIn(BaseModel):
@@ -444,42 +444,65 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         topics = cfg.topics() if cfg.topics else current_topics(s)     # the rules page list (or topics.yaml)
         return topics, prompt_version(topics)
 
-    # ---------- shared calls (decision 10: one-way note, agent marks seen) ----------
+    # ---------- shared calls = chats (spec 2026-11-25-share-chat) ----------
+    # A supervisor shares a call with an agent: that starts a chat (first message = the note). Staff archive it
+    # (can reopen) or close it (gone for both sides, still in the 24 h KPI). Agents only see open chats.
 
-    def share_ctx(s: Session, shares: list[CallShare], user: AppUser) -> dict:
-        """What share_dict needs for many shares, read in a few queries (not one per share)."""
+    def is_agent_msg(sh: CallShare, m: ShareMessage) -> bool:
+        return m.user_id == sh.to_user_id
+
+    def chat_ctx(s: Session, shares: list[CallShare], user: AppUser) -> dict:
+        """What chat_dict needs for many chats, read in a few queries (not one per chat)."""
         ids = [sh.id for sh in shares]
         call_ids = {sh.call_id for sh in shares}
         calls = {c.id: c for c in s.scalars(select(Call).where(Call.id.in_(call_ids)))} if call_ids else {}
-        mine = {}
-        if staff(user) and ids:
-            mine = dict(s.execute(select(ShareStaffClose.share_id, ShareStaffClose.closed_at)
-                                  .where(ShareStaffClose.user_id == user.id, ShareStaffClose.share_id.in_(ids))).all())
-        return {"names": usernames(s), "calls": calls, "mine": mine, "since": shr.rule_start(s), "now": _now()}
+        last, unread = {}, {}
+        if ids:
+            newest = select(func.max(ShareMessage.id)).where(ShareMessage.share_id.in_(ids)).group_by(ShareMessage.share_id)
+            last = {m.share_id: m for m in s.scalars(select(ShareMessage).where(ShareMessage.id.in_(newest)))}
+            mark = CallShare.staff_read_at if staff(user) else CallShare.agent_read_at
+            other = (ShareMessage.user_id == CallShare.to_user_id) if staff(user) else (ShareMessage.user_id != CallShare.to_user_id)
+            unread = dict(s.execute(
+                select(ShareMessage.share_id, func.count()).join(CallShare, CallShare.id == ShareMessage.share_id)
+                .where(ShareMessage.share_id.in_(ids), other, or_(mark.is_(None), ShareMessage.created_at > mark))
+                .group_by(ShareMessage.share_id)).all())
+        return {"names": usernames(s), "exts": dict(s.execute(select(AppUser.id, AppUser.ext)).all()), "calls": calls, "last": last, "unread": unread,
+                "since": shr.rule_start(s), "now": _now()}
 
-    def share_dict(sh: CallShare, ctx: dict, user: AppUser) -> dict:
-        """An agent gets the note text only after clicking it (seen_at): until then `note` is None.
-        Staff: `staff_closed_at` / `closed` = THIS supervisor's own archive (each one has their own)."""
+    def chat_dict(sh: CallShare, ctx: dict, user: AppUser) -> dict:
         c = ctx["calls"].get(sh.call_id)
         users = ctx["names"]
-        hidden = not staff(user) and sh.seen_at is None
         iso = lambda t: t.isoformat() if t else None      # noqa: E731
-        my_close = ctx["mine"].get(sh.id) if staff(user) else sh.agent_closed_at
-        return {"id": sh.id, "call_id": sh.call_id, "note": None if hidden else sh.note,
-                "from": users.get(sh.from_user_id, ""),
-                "reply": sh.reply, "reply_at": iso(sh.reply_at), "first_reply_at": iso(sh.first_reply_at),
-                "to": users.get(sh.to_user_id, ""), "to_user_id": sh.to_user_id,
+        m = ctx["last"].get(sh.id)
+        return {"id": sh.id, "call_id": sh.call_id, "note": sh.note,
+                "from": users.get(sh.from_user_id, ""), "to": users.get(sh.to_user_id, ""), "to_user_id": sh.to_user_id,
+                "to_ext": ctx["exts"].get(sh.to_user_id),
                 "created_at": sh.created_at.isoformat(), "seen_at": iso(sh.seen_at),
-                # spec 2026-11-22-shares-tab: 24 h to reply; each side closes it into its own archive
-                "deadline": shr.deadline(sh).isoformat(),
+                "status": sh.status, "archived_at": iso(sh.archived_at), "closed_at": iso(sh.closed_at),
+                "first_reply_at": iso(sh.first_reply_at), "deadline": shr.deadline(sh).isoformat(),
                 "reply_state": shr.reply_state(sh, ctx["now"], ctx["since"]),
-                "agent_closed_at": iso(sh.agent_closed_at),
-                "staff_closed_at": iso(my_close) if staff(user) else None,
-                "closed": my_close is not None,
+                "last": None if m is None else {"text": m.text, "at": m.created_at.isoformat(),
+                                                "who": users.get(m.user_id, ""), "agent": is_agent_msg(sh, m)},
+                "last_at": (m.created_at if m else sh.created_at).isoformat(),
+                "unread": ctx["unread"].get(sh.id, 0),
                 "call_start": c.start_time.isoformat() if c else None, "agent_ext": c.agent_ext if c else None}
 
-    def one_share(s: Session, sh: CallShare, user: AppUser) -> dict:
-        return share_dict(sh, share_ctx(s, [sh], user), user)
+    def one_chat(s: Session, sh: CallShare, user: AppUser, messages: bool = False) -> dict:
+        d = chat_dict(sh, chat_ctx(s, [sh], user), user)
+        if messages:
+            names = usernames(s)
+            d["messages"] = [{"id": m.id, "text": m.text, "at": m.created_at.isoformat(), "who": names.get(m.user_id, ""),
+                              "agent": is_agent_msg(sh, m), "mine": m.user_id == user.id}
+                             for m in s.scalars(select(ShareMessage).where(ShareMessage.share_id == sh.id)
+                                                .order_by(ShareMessage.id))]
+        return d
+
+    def get_chat(s: Session, share_id: int, user: AppUser, lock: bool = False) -> CallShare:
+        """Staff: any chat that is not closed. Agent: only their own open chats (never archived / closed)."""
+        sh = s.get(CallShare, share_id, with_for_update=lock)
+        if sh is None or sh.status == "closed" or (not staff(user) and (sh.to_user_id != user.id or sh.status != "open")):
+            raise HTTPException(404, "no such chat")
+        return sh
 
     def usernames(s: Session) -> dict[int, str]:
         return dict(s.execute(select(AppUser.id, AppUser.username)).all())
@@ -492,25 +515,22 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         return [{"id": u.id, "username": u.username, "ext": u.ext} for u in users
                 if u.ext and c.team and ext_team.get(u.ext) == c.team]
 
-    @app.get("/api/shares")
-    def list_shares(user: User, s: DB,
-                    agent: Annotated[str | None, Query(pattern=r"^\d{1,6}$")] = None,
-                    box: Annotated[str, Query(pattern=r"^(open|archive)$")] = "open",
-                    from_: Annotated[date | None, Query(alias="from")] = None,
-                    to: date | None = None) -> dict:
-        """The shared-calls tab: `open` (not closed by this side) or `archive` (closed; من/إلى = the day the call
-        was shared, Riyadh). Agents: only their own shares; staff: all, or one agent (`agent` = extension)."""
-        if staff(user):     # each supervisor/admin has their own archive
-            closed = exists().where(ShareStaffClose.share_id == CallShare.id, ShareStaffClose.user_id == user.id)
-        else:
-            closed = CallShare.agent_closed_at.is_not(None)
+    @app.get("/api/chats")
+    def list_chats(user: User, s: DB,
+                   agent: Annotated[str | None, Query(pattern=r"^\d{1,6}$")] = None,
+                   box: Annotated[str, Query(pattern=r"^(open|archive)$")] = "open",
+                   from_: Annotated[date | None, Query(alias="from")] = None,
+                   to: date | None = None) -> dict:
+        """Open chats (newest activity first) or, staff only, the archive (من/إلى = the day the call was shared,
+        Riyadh). Agents: only their own open chats. `unread` = chats with messages from the other side not read."""
         base = select(CallShare)
         if not staff(user):
             base = base.where(CallShare.to_user_id == user.id)
-        elif agent:     # staff picked one agent: only the calls shared with that agent
+            if box == "archive":
+                return {"items": [], "truncated": False, "open": 0, "unread": 0}
+        elif agent:
             base = base.where(CallShare.to_user_id.in_(select(AppUser.id).where(AppUser.ext == agent)))
-        open_n = s.scalar(select(func.count()).select_from(base.where(~closed).subquery())) or 0
-        stmt = base.where(~closed if box == "open" else closed)
+        stmt = base.where(CallShare.status == ("open" if box == "open" else "archived"))
         if box == "archive":
             if from_ and to and to < from_:
                 raise HTTPException(422, "'to' is before 'from'")
@@ -520,43 +540,98 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
                 stmt = stmt.where(CallShare.created_at < day_bounds(to)[1])
         stmt = stmt.order_by(CallShare.created_at.desc(), CallShare.id.desc()).limit(LIST_LIMIT + 1)
         rows = list(s.scalars(stmt))
-        ctx = share_ctx(s, rows[:LIST_LIMIT], user)
-        items = [share_dict(sh, ctx, user) for sh in rows[:LIST_LIMIT]]
-        return {"items": items, "truncated": len(rows) > LIST_LIMIT, "open": open_n,
-                "unseen": sum(1 for i in items if i["seen_at"] is None)}
+        ctx = chat_ctx(s, rows[:LIST_LIMIT], user)
+        items = [chat_dict(sh, ctx, user) for sh in rows[:LIST_LIMIT]]
+        if box == "open":
+            items.sort(key=lambda i: i["last_at"], reverse=True)
+        return {"items": items, "truncated": len(rows) > LIST_LIMIT,
+                "open": len(items) if box == "open" else 0, "unread": sum(1 for i in items if i["unread"])}
 
-    @app.post("/api/shares/{share_id}/close")
-    def close_share(share_id: int, user: User, s: DB) -> dict:
-        """Move a shared call to this side's archive. Agent: only their own, and only after replying (the reply is
-        then locked). Staff: any share, at any time (the agent's 24 h KPI is not changed by it)."""
-        sh = s.get(CallShare, share_id, with_for_update=True)
-        if sh is None or (not staff(user) and sh.to_user_id != user.id):
-            raise HTTPException(404, "no such share")
-        if staff(user):     # only this supervisor's archive: other staff still see it open
-            if s.get(ShareStaffClose, (sh.id, user.id)) is None:
-                s.add(ShareStaffClose(share_id=sh.id, user_id=user.id, closed_at=_now()))
+    @app.get("/api/chats/{share_id}")
+    def read_chat(share_id: int, user: User, s: DB) -> dict:
+        """The chat with its messages. Reading marks it read for this side (agent: the first read = "opened")."""
+        sh = get_chat(s, share_id, user, lock=True)
+        now = _now()
+        # read up to the newest message that exists now (not "now": a message saved a moment ago but committed
+        # after this read must still count as unread)
+        newest = s.scalar(select(func.max(ShareMessage.created_at)).where(ShareMessage.share_id == sh.id))
+        if staff(user):
+            sh.staff_read_at = max(filter(None, (sh.staff_read_at, newest)), default=None)
         else:
-            if sh.reply is None:
-                raise HTTPException(409, "اكتب ردّك على المشرف أولاً")
-            if sh.agent_closed_at is None:
-                sh.agent_closed_at = _now()
-        s.add(AdminLog(user_id=user.id, action="share_close", target=f"call:{sh.call_id} share:{sh.id}", at=_now()))
+            sh.agent_read_at = max(filter(None, (sh.agent_read_at, newest)), default=None)
+            sh.seen_at = sh.seen_at or now
         s.commit()
-        return one_share(s, sh, user)
+        return one_chat(s, sh, user, messages=True)
+
+    @app.post("/api/chats/{share_id}/messages")
+    def chat_message(share_id: int, body: MessageIn, user: User, s: DB) -> dict:
+        """Write in the chat. Agent: own open chat; the first message of at least REPLY_MIN letters is the 24 h
+        reply (KPI). Staff: writing in an archived chat reopens it."""
+        sh = get_chat(s, share_id, user, lock=True)
+        c = s.get(Call, sh.call_id)
+        if c is None or c.content_deleted_at is not None:
+            raise HTTPException(409, "this call's content was deleted")
+        text_ = body.text.strip()
+        if not text_:
+            raise HTTPException(422, "اكتب رسالة")
+        now = _now()
+        # the writer has read what their page showed, not "now" (see read_chat)
+        newest = s.scalar(select(func.max(ShareMessage.created_at)).where(ShareMessage.share_id == sh.id))
+        s.add(ShareMessage(share_id=sh.id, user_id=user.id, text=text_, created_at=now))
+        if staff(user):
+            sh.staff_read_at = max(filter(None, (sh.staff_read_at, newest)), default=None)
+            if sh.status == "archived":
+                sh.status, sh.archived_at = "open", None
+                s.add(AdminLog(user_id=user.id, action="share_reopen", target=f"call:{sh.call_id} share:{sh.id}", at=now))
+        else:
+            sh.agent_read_at = max(filter(None, (sh.agent_read_at, newest)), default=None)
+            sh.seen_at = sh.seen_at or now
+            if sh.first_reply_at is None and len(text_) >= REPLY_MIN:
+                sh.first_reply_at = now
+                sh.reply, sh.reply_at = text_, now        # the old one-reply columns: the first counted reply
+        s.add(AdminLog(user_id=user.id, action="share_message", target=f"call:{sh.call_id} share:{sh.id}", at=now))
+        s.commit()                                         # never the text itself in the log
+        return one_chat(s, sh, user, messages=True)
+
+    @app.post("/api/chats/{share_id}/{action}")
+    def chat_state(share_id: int, action: Annotated[str, Path(pattern=r"^(archive|close|reopen)$")],
+                   user: Manager, s: DB) -> dict:
+        """Staff: archive (open -> archive, can reopen), close (gone for both sides, still in the KPI), reopen."""
+        sh = get_chat(s, share_id, user, lock=True)
+        now = _now()
+        if action == "archive":
+            if sh.status != "open":
+                raise HTTPException(409, "المحادثة ليست مفتوحة")
+            sh.status, sh.archived_at = "archived", now
+        elif action == "reopen":
+            if sh.status != "archived":
+                raise HTTPException(409, "المحادثة ليست في الأرشيف")
+            sh.status, sh.archived_at = "open", None
+            last_staff = s.scalar(select(func.max(ShareMessage.created_at)).where(
+                ShareMessage.share_id == sh.id, ShareMessage.user_id != sh.to_user_id))
+            if last_staff is not None and sh.agent_read_at is not None and sh.agent_read_at >= last_staff:
+                sh.agent_read_at = last_staff - timedelta(microseconds=1)   # pops up for the agent again
+        else:
+            sh.status, sh.closed_at = "closed", now
+        s.add(AdminLog(user_id=user.id, action=f"share_{action}", target=f"call:{sh.call_id} share:{sh.id}", at=now))
+        s.commit()
+        return one_chat(s, sh, user)
 
     @app.get("/api/calls/{call_id}/shares")
     def call_shares(call_id: int, user: User, s: DB) -> dict:
+        """The chats of one call (closed ones are gone). Agents: only their own open ones."""
         c = owned_call(s, call_id, user)
-        stmt = select(CallShare).where(CallShare.call_id == c.id).order_by(CallShare.id)
+        stmt = select(CallShare).where(CallShare.call_id == c.id, CallShare.status != "closed").order_by(CallShare.id)
         if not staff(user):
-            stmt = stmt.where(CallShare.to_user_id == user.id)
-        shares = list(s.scalars(stmt))      # opening the call does NOT mark the note seen: clicking it does
-        ctx = share_ctx(s, shares, user)
-        return {"items": [share_dict(sh, ctx, user) for sh in shares],
+            stmt = stmt.where(CallShare.to_user_id == user.id, CallShare.status == "open")
+        shares = list(s.scalars(stmt))
+        ctx = chat_ctx(s, shares, user)
+        return {"items": [chat_dict(sh, ctx, user) for sh in shares],
                 "targets": targets(s, c) if staff(user) else []}
 
     @app.post("/api/calls/{call_id}/shares")
     def add_share(call_id: int, body: ShareIn, user: Manager, s: DB) -> dict:
+        """Start a chat with an agent about this call; the note is its first message."""
         c = s.get(Call, call_id)
         if c is None:
             raise HTTPException(404, "no such call")
@@ -567,52 +642,15 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         note = body.note.strip()
         if not note:
             raise HTTPException(422, "write a note")
-        sh = CallShare(call_id=c.id, from_user_id=user.id, to_user_id=body.to_user_id, note=note, created_at=_now())
+        now = _now()
+        sh = CallShare(call_id=c.id, from_user_id=user.id, to_user_id=body.to_user_id, note=note, created_at=now,
+                       status="open", staff_read_at=now)
         s.add(sh)
-        s.add(AdminLog(user_id=user.id, action="share_call", target=f"call:{c.id} user:{body.to_user_id}", at=_now()))
+        s.flush()
+        s.add(ShareMessage(share_id=sh.id, user_id=user.id, text=note, created_at=now))
+        s.add(AdminLog(user_id=user.id, action="share_call", target=f"call:{c.id} user:{body.to_user_id}", at=now))
         s.commit()
-        return one_share(s, sh, user)
-
-    @app.post("/api/shares/{share_id}/seen")
-    def share_seen(share_id: int, user: User, s: DB) -> dict:
-        sh = s.get(CallShare, share_id)
-        if sh is None or sh.to_user_id != user.id:
-            raise HTTPException(404, "no such share")
-        if sh.seen_at is None:
-            sh.seen_at = _now()
-            s.commit()
-        return one_share(s, sh, user)
-
-    @app.put("/api/shares/{share_id}/reply")
-    def share_reply(share_id: int, body: ReplyIn, user: User, s: DB) -> dict:
-        """The agent answers the supervisor (one reply, may be changed; empty text removes it). Only after the note
-        was opened, and never on a call whose content was deleted."""
-        sh = s.get(CallShare, share_id, with_for_update=True)
-        if sh is None or sh.to_user_id != user.id:
-            raise HTTPException(404, "no such share")
-        if sh.seen_at is None:
-            raise HTTPException(409, "open the note first")
-        if sh.agent_closed_at is not None:
-            raise HTTPException(409, "هذه الملاحظة في الأرشيف: لا يمكن تعديل الرد")
-        c = s.get(Call, sh.call_id)
-        if c is None or c.content_deleted_at is not None:
-            raise HTTPException(409, "this call's content was deleted")
-        text_ = body.text.strip()
-        if text_ == (sh.reply or ""):
-            return one_share(s, sh, user)     # nothing changed: keep the reply times (and the KPI) as they are
-        if text_ and len(text_) < REPLY_MIN:
-            raise HTTPException(422, f"اكتب ردًا واضحًا ({REPLY_MIN} أحرف على الأقل)")
-        sh.reply, sh.reply_at = (text_, _now()) if text_ else (None, None)
-        if not text_:
-            sh.first_reply_at = None          # removed: the 24 h clock counts the next reply
-        elif sh.first_reply_at is None or sh.reply_at > shr.deadline(sh):
-            # the KPI time: an edit within the 24 h keeps the first time; an edit after them counts as a late
-            # reply (a quick "ok" then the real answer days later is not on time)
-            sh.first_reply_at = sh.reply_at
-        s.add(AdminLog(user_id=user.id, action="share_reply" if text_ else "share_reply_removed",
-                       target=f"call:{sh.call_id} share:{sh.id}", at=_now()))      # never the text itself
-        s.commit()
-        return one_share(s, sh, user)
+        return one_chat(s, sh, user, messages=True)
 
     @app.delete("/api/shares/{share_id}")
     def delete_share(share_id: int, user: Manager, s: DB) -> dict:

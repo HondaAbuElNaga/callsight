@@ -1,9 +1,9 @@
 // Call-panel boxes of the agent-supervisor spec: follow-up form, agent summary, share with a note, delete content.
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  api, Refused, Unauthorized,
+  api, OPEN_CHAT, Refused, Unauthorized,
   type AgentSummary, type CallShares, type Forward, type ForwardOption, type FollowupIn, type FollowupView,
-  type HistoryEntry, type Me, type NoteIn, type Person, type Share, type StudentLookup, type TrackerItem,
+  type HistoryEntry, type Me, type NoteIn, type Person, type StudentLookup, type TrackerItem,
 } from "./api";
 import {
   CALLBACK_LABEL, HOP_LEVEL, HOP_RESULT, PROOF_REASON, PRIORITIES, PRIORITY_CLASS, PRIORITY_LABEL, STEP_CLASS, type Priority, STEP_LABEL, STEP_NEXT, earlyText, formatDateTime, ringText,
@@ -464,6 +464,7 @@ export function AgentSummaryPanel({ callId, onExpired }: { callId: number; onExp
 // ---------- shares ----------
 
 export function SharePanel({ callId, me, onExpired }: { callId: number; me: Me; onExpired: () => void }) {
+  // spec 2026-11-25-share-chat: staff start a chat with an agent here; the chat itself runs in the popup (ChatDock)
   const [d, setD] = useState<CallShares | null>(null);
   const [to, setTo] = useState("");
   const [note, setNote] = useState("");
@@ -471,79 +472,45 @@ export function SharePanel({ callId, me, onExpired }: { callId: number; me: Me; 
   const fail = useFail(onExpired, setError);
   const staff = me.role === "admin" || me.role === "supervisor";
   const reload = () => api.callShares(callId).then(setD).catch(fail);
-  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [callId]);
-  if (!d || (!staff && d.items.length === 0)) return null;
+  useEffect(() => { if (staff) reload(); /* eslint-disable-next-line */ }, [callId, staff]);
+  if (!staff || !d) return null;     // agents: the chat pops up by itself
+  const openChat = (id: number) => window.dispatchEvent(new CustomEvent(OPEN_CHAT, { detail: id }));
   const send = async () => {
     setError("");
     if (!to || !note.trim()) { setError("اختر الموظف واكتب الملاحظة"); return; }
-    try { await api.share(callId, Number(to), note.trim()); setNote(""); setTo(""); reload(); } catch (e) { fail(e); }
+    try {
+      const sh = await api.share(callId, Number(to), note.trim());
+      setNote(""); setTo(""); reload(); openChat(sh.id);
+    } catch (e) { fail(e); }
   };
   return (
     <section className="panel work">
-      <h3>{staff ? "مشاركة المكالمة مع موظف" : "ملاحظة المشرف"}</h3>
+      <h3>مشاركة المكالمة مع موظف</h3>
       {d.items.map((s) => (
         <div key={s.id} className="share">
-          {!staff && !s.seen_at ? (
-            /* the note stays hidden until the agent clicks it; the click is what the supervisor sees as "opened" */
-            <button type="button" className="primary" onClick={() => api.shareSeen(s.id).then(reload).catch(fail)}>
-              ملاحظة جديدة من {s.from}: اضغط لعرضها</button>
-          ) : <p>{s.note}</p>}
           <p className="muted small">
-            من {s.from} إلى {s.to} · {formatDateTime(s.created_at)} · {s.seen_at ? `فتحها الموظف ${formatDateTime(s.seen_at)}` : "لم يفتحها الموظف بعد"}
-            {staff && <button className="link" onClick={() => api.unshare(s.id).then(reload).catch(fail)}>سحب</button>}
+            إلى {s.to} · {formatDateTime(s.created_at)} · {s.status === "archived" ? "في الأرشيف" : "مفتوحة"}
+            {s.unread > 0 && <> · <b>{s.unread} رسالة جديدة</b></>}
+            <button type="button" className="link" onClick={() => openChat(s.id)}>فتح المحادثة</button>
+            <button type="button" className="link danger" title="للمشاركة بالخطأ فقط: تُحذف ولا تُحتسب في مؤشرات الأداء. لإنهاء المحادثة استخدم «إغلاق المحادثة»."
+              onClick={() => api.unshare(s.id).then(reload).catch(fail)}>حذف (أُرسلت بالخطأ)</button>
           </p>
-          {staff && s.reply && <p className="reply"><b>ردّ {s.to}:</b> {s.reply} <span className="muted small">· {formatDateTime(s.reply_at!)}</span></p>}
-          {!staff && s.seen_at && !s.closed && <ReplyBox share={s} onSaved={reload} onFail={fail} />}
-          {!staff && s.closed && s.reply && <p className="muted small">ردّك ({formatDateTime(s.reply_at!)}): {s.reply} · في الأرشيف</p>}
-          {!staff && s.seen_at && !s.closed && s.reply && (   /* spec 2026-11-22-shares-tab: close -> the agent's archive */
-            <button type="button" className="small" onClick={() => api.closeShare(s.id).then(reload).catch(fail)}>
-              إغلاق ونقل للأرشيف</button>
-          )}
-          {!s.reply && s.reply_state === "missing" && <p className="state bad">لم يتم الرد خلال 24 ساعة</p>}
-          {s.reply_state === "late" && <p className="state bad">تم الرد بعد مهلة 24 ساعة</p>}
         </div>
       ))}
-      {staff && (
-        d.targets.length === 0 ? <p className="muted small">لا يوجد موظف بحساب نشط في فريق هذه المكالمة.</p> : (
-          <div className="form">
-            <label>إلى
-              <select value={to} onChange={(e) => setTo(e.target.value)}>
-                <option value="">اختر…</option>
-                {d.targets.map((t) => <option key={t.id} value={t.id}>{t.username}{t.ext ? ` · ${t.ext}` : ""}</option>)}
-              </select>
-            </label>
-            <label>الملاحظة <textarea value={note} maxLength={1000} rows={2} onChange={(e) => setNote(e.target.value)} /></label>
-            <button type="button" onClick={send}>إرسال</button>
-          </div>
-        )
+      {d.targets.length === 0 ? <p className="muted small">لا يوجد موظف بحساب نشط في فريق هذه المكالمة.</p> : (
+        <div className="form">
+          <label>إلى
+            <select value={to} onChange={(e) => setTo(e.target.value)}>
+              <option value="">اختر…</option>
+              {d.targets.map((t) => <option key={t.id} value={t.id}>{t.username}{t.ext ? ` · ${t.ext}` : ""}</option>)}
+            </select>
+          </label>
+          <label>الرسالة <textarea value={note} maxLength={1000} rows={2} onChange={(e) => setNote(e.target.value)} /></label>
+          <button type="button" onClick={send}>بدء محادثة</button>
+        </div>
       )}
       {error && <div className="error">{error}</div>}
     </section>
-  );
-}
-
-const REPLY_MIN = 10;     // same as the server (api/work.py REPLY_MIN)
-
-function ReplyBox({ share, onSaved, onFail }: { share: Share; onSaved: () => void; onFail: (e: unknown) => void }) {
-  const [text, setText] = useState(share.reply ?? "");
-  const [busy, setBusy] = useState(false);
-  const save = async () => {
-    if (busy) return;
-    setBusy(true);
-    try { await api.shareReply(share.id, text.trim()); onSaved(); } catch (e) { onFail(e); } finally { setBusy(false); }
-  };
-  const t = text.trim();
-  const short = t.length > 0 && t.length < REPLY_MIN;       // empty = remove the reply (allowed)
-  const lateEdit = share.reply_state === "on_time" && Date.now() > new Date(share.deadline).getTime();
-  return (
-    <div className="form">
-      {share.reply && <p className="muted small">ردّك ({formatDateTime(share.reply_at!)}): {share.reply}</p>}
-      <label>{share.reply ? "تعديل ردّك على المشرف" : "ردّك على المشرف"}
-        <textarea value={text} maxLength={1000} rows={2} onChange={(e) => setText(e.target.value)} /></label>
-      {short && <p className="muted small">اكتب ردًا واضحًا ({REPLY_MIN} أحرف على الأقل).</p>}
-      {lateEdit && <p className="state warn">انتهت مهلة 24 ساعة: تعديل الرد الآن يُحتسب ردًا متأخرًا.</p>}
-      <button type="button" disabled={busy || short || t === (share.reply ?? "")} onClick={save}>إرسال الرد</button>
-    </div>
   );
 }
 

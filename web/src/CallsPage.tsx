@@ -24,7 +24,7 @@ interface Props {
   onOpened?: () => void;           // called once openCallId was used (so it never reopens later)
   detailOnly?: boolean;            // agents: no call list, only the opened call (their home is the follow-ups page)
   embedded?: boolean;              // inside the follow-ups page: no page header, only the side panel (+ player)
-  fromShare?: boolean;             // opened from the supervisor's shared calls: the note first, no follow-up form
+  fromShare?: boolean;             // opened from a shared-call chat: no follow-up form
 }
 
 // A function, not a constant: the page may stay open past midnight.

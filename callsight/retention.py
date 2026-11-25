@@ -89,7 +89,7 @@ def rating_work():
 def open_work(session: Session, teams=None):
     """SQL condition on Call: the call still has open work (the follow-up page's open list, kept simple and on the
     safe side): a follow-up whose latest entry is not "solved" and whose forward chain is not solved, a forward
-    still sending / failed, an open forwarded ticket, a shared call the agent has not closed, or (with `teams`) a
+    still sending / failed, an open forwarded ticket, a shared-call chat still open or archived, or (with `teams`) a
     needed follow-up form never filled."""
     from . import followups as fu
     last_note = (select(CallFollowupNote.solved).where(CallFollowupNote.call_id == CallFollowup.call_id)
@@ -101,7 +101,7 @@ def open_work(session: Session, teams=None):
                                ~hop_solved)
     conds = [form_open,
              exists().where(ForwardHop.call_id == Call.id, ForwardHop.result.in_(("open", "pending"))),
-             exists().where(CallShare.call_id == Call.id, CallShare.agent_closed_at.is_(None))]
+             exists().where(CallShare.call_id == Call.id, CallShare.status != "closed")]   # spec 2026-11-25-share-chat
     start = fu.get_setting(session, fu.SETTING_START)
     if teams is not None and start is not None and teams.ext_team:
         conds.append(and_(*fu.needed_conditions(sorted(teams.ext_team), start),

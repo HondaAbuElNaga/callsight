@@ -225,13 +225,13 @@ def test_share_flow(env):
     assert client.get("/api/calls").status_code == 403                      # agents have no call list at all
     assert client.get(f"/api/calls/{ids['other']}/followup").json()["needed"] is False
     assert client.put(f"/api/calls/{ids['other']}/followup", json={"no_followup": True}).status_code in (404, 409)
-    lst = client.get("/api/shares").json()
-    assert lst["unseen"] == 1 and lst["items"][0]["note"] is None          # hidden until the agent clicks it
-    got = client.post(f"/api/shares/{share_id}/seen").json()
-    assert got["seen_at"] and got["note"] == "استمع للترحيب"
+    lst = client.get("/api/chats").json()
+    assert lst["unread"] == 1 and lst["items"][0]["seen_at"] is None
+    got = client.get(f"/api/chats/{share_id}").json()
+    assert got["seen_at"] and [m["text"] for m in got["messages"]] == ["استمع للترحيب"]
     login(client, "sara")
-    assert client.get("/api/shares").json()["items"] == []
-    assert client.post(f"/api/shares/{share_id}/seen").status_code == 404
+    assert client.get("/api/chats").json()["items"] == []
+    assert client.get(f"/api/chats/{share_id}").status_code == 404
     assert client.get(f"/api/calls/{ids['other']}/shares").json()["items"] == []
     login(client, "boss")
     assert client.delete(f"/api/shares/{share_id}").status_code == 200
@@ -436,27 +436,6 @@ def test_agent_without_team_extension_is_told(env):
     assert d["linked"] is False and d["items"] == []
 
 
-def test_note_hidden_until_clicked_then_reply(env):
-    client, _, ids, *_ = env
-    login(client, "boss")
-    sid = client.post(f"/api/calls/{ids['other']}/shares", json={"to_user_id": ids["ali"], "note": "استمع"}).json()["id"]
-    login(client, "ali")
-    item = client.get(f"/api/calls/{ids['other']}/shares").json()["items"][0]
-    assert item["seen_at"] is None and item["note"] is None                 # opening the call does not show/mark it
-    assert client.put(f"/api/shares/{sid}/reply", json={"text": "تم"}).status_code == 409   # open the note first
-    assert client.post(f"/api/shares/{sid}/seen").json()["note"] == "استمع"
-    r = client.put(f"/api/shares/{sid}/reply", json={"text": " سأحسّن الترحيب "})
-    assert r.status_code == 200 and r.json()["reply"] == "سأحسّن الترحيب" and r.json()["reply_at"]
-    login(client, "sara")
-    assert client.put(f"/api/shares/{sid}/reply", json={"text": "x"}).status_code == 404
-    login(client, "boss")
-    item = client.get("/api/shares").json()["items"][0]
-    assert item["seen_at"] and item["reply"] == "سأحسّن الترحيب"           # the supervisor sees click time + reply
-    assert client.put(f"/api/shares/{sid}/reply", json={"text": "x"}).status_code == 404     # only the agent replies
-    login(client, "ali")
-    assert client.put(f"/api/shares/{sid}/reply", json={"text": ""}).json()["reply"] is None
-
-
 def test_agent_hears_only_shared_calls(env):
     client, _, ids, *_ = env
     login(client, "ali")
@@ -527,8 +506,8 @@ def test_staff_share_list_follows_the_agent_filter(env):
     client, _, ids, *_ = env
     login(client, "boss")
     client.post(f"/api/calls/{ids['other']}/shares", json={"to_user_id": ids["ali"], "note": "لعلي"})
-    assert len(client.get("/api/shares").json()["items"]) == 1
-    assert len(client.get("/api/shares", params={"agent": "119"}).json()["items"]) == 1
-    assert client.get("/api/shares", params={"agent": "104"}).json()["items"] == []
+    assert len(client.get("/api/chats").json()["items"]) == 1
+    assert len(client.get("/api/chats", params={"agent": "119"}).json()["items"]) == 1
+    assert client.get("/api/chats", params={"agent": "104"}).json()["items"] == []
     login(client, "sara")
-    assert client.get("/api/shares", params={"agent": "119"}).json()["items"] == []     # agents: own shares only
+    assert client.get("/api/chats", params={"agent": "119"}).json()["items"] == []     # agents: own shares only

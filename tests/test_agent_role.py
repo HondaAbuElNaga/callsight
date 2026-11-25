@@ -31,9 +31,9 @@ AGENT_ALLOWED = {
     ("POST", "/api/calls/{call_id}/followup/notes"), ("PUT", "/api/calls/{call_id}/my-note"),
     ("POST", "/api/calls/{call_id}/forward/messages"),    # D3: the call's agent answers the ticket's question
     ("GET", "/api/calls/{call_id}/student"),    # training look-up: the call's agent (own form only)
-    ("GET", "/api/shares"), ("GET", "/api/calls/{call_id}/shares"), ("POST", "/api/shares/{share_id}/seen"),
-    ("PUT", "/api/shares/{share_id}/reply"),
-    ("POST", "/api/shares/{share_id}/close"),      # spec 2026-11-22-shares-tab: own share, after replying
+    ("GET", "/api/calls/{call_id}/shares"),
+    # spec 2026-11-25-share-chat: own open chats, read + write
+    ("GET", "/api/chats"), ("GET", "/api/chats/{share_id}"), ("POST", "/api/chats/{share_id}/messages"),
     ("GET", "/api/calls/{call_id}/summary"),
 }
 STAFF_ONLY = {
@@ -49,6 +49,7 @@ STAFF_ONLY = {
     ("WS", "/api/live"), ("POST", "/api/live/{call_id}/listen"),       # live board + Listen stub (live-board spec)
     # agent-supervisor spec: sharing (staff), users / settings / log / delete (admin)
     ("POST", "/api/calls/{call_id}/shares"), ("DELETE", "/api/shares/{share_id}"),
+    ("POST", "/api/chats/{share_id}/{action}"),     # archive / close / reopen a chat (spec 2026-11-25-share-chat)
     ("GET", "/api/admin/users"), ("POST", "/api/admin/users"), ("PATCH", "/api/admin/users/{user_id}"),
     ("POST", "/api/admin/users/{user_id}/password"), ("GET", "/api/admin/settings"), ("PUT", "/api/admin/settings"),
     ("GET", "/api/admin/log"), ("POST", "/api/calls/{call_id}/delete-content"),
@@ -196,11 +197,13 @@ def test_agent_allowed_routes_answer(env):
     for method, path in sorted(_api_routes(app) & AGENT_ALLOWED):
         if method != "GET":          # writes are tested with real bodies in test_agent_supervisor_api.py
             continue
-        url = path.replace("{call_id}", str(ids["own"]))
+        url = path.replace("{call_id}", str(ids["own"])).replace("{share_id}", "999999")
         params = today() if path.startswith("/api/calls") else None
         r = client.request(method, url, params=params)
         if "/transcript" in path:   # own call, but no transcript row in this fixture: 404 "no transcript", not 403
             assert r.status_code == 404 and r.json()["detail"] == "no transcript", (method, path)
+        elif "{share_id}" in path:   # no chat with that id: 404, not 403
+            assert r.status_code == 404 and r.json()["detail"] == "no such chat", (method, path)
         elif path.endswith("/recording"):    # own call not shared by a supervisor: agents may not hear it
             assert r.status_code == 404 and r.json()["detail"] == "no recording", (method, path)
         else:

@@ -61,10 +61,11 @@ R = read, W = write. "own" = only calls of the agent's own extension.
 | POST /api/calls/{id}/followup/notes | add a note | W | W | W own |
 | POST /api/calls/{id}/forward/messages | answer the person holding a forwarded problem | ❌ (only the call's agent) | ❌ | W own |
 | PUT /api/calls/{id}/my-note | private reminder (nobody else reads it) | W | W | W own |
-| GET /api/shares, /api/calls/{id}/shares | notes shared with agents (`box=open\|archive`, `from`/`to`, `agent`: ignored for agents) | R | R | R (shared with them) |
-| POST /api/calls/{id}/shares, DELETE /api/shares/{id} | share a call with an agent / remove | W | W | ❌ |
-| POST /api/shares/{id}/seen, PUT /api/shares/{id}/reply | mark seen / reply | only the person it was shared with | same | W (shared with them) |
-| POST /api/shares/{id}/close | move to my archive (the agent and each supervisor/admin have their own) | W (any) | W (any) | W (shared with them, only after replying; the reply is then locked) |
+| GET /api/calls/{id}/shares | the chats of one call (closed ones are gone) | R | R | R (own open chats) |
+| POST /api/calls/{id}/shares, DELETE /api/shares/{id} | start a chat with an agent about a call / remove it | W | W | ❌ |
+| GET /api/chats (`box=open\|archive`, `from`/`to`, `agent`), GET /api/chats/{id} (marks read) | shared-call chats (spec 2026-11-25-share-chat) | R (all, not closed) | R (all, not closed) | R (own open chats; no archive) |
+| POST /api/chats/{id}/messages | write in a chat (staff writing in an archived chat reopens it) | W | W | W (own open chats) |
+| POST /api/chats/{id}/archive\|close\|reopen | archive (can reopen) / close (gone for both sides, still in the 24 h KPI) / reopen | W | W | ❌ |
 | GET /api/forwards, /api/forwards/{id}, /api/kpi/forwards | forwards page | R | R | ❌ |
 | POST /api/forwards/{id}/decide | close a forwarded problem: pick who in the chain solved it (KPI point); the worker closes the ticket(s) in the ERP | W | W | ❌ |
 | POST /api/forwards/{id}/closed-by-hand | mark a ticket our worker could not close as "closed there by hand" (leaves "needs action now") | W | W | ❌ |

@@ -82,7 +82,7 @@ def test_open_work_is_kept_until_closed_at_most_180_days(env):
         u = _user(s)
         s.add_all([CallShare(call_id=share_open.id, from_user_id=u, to_user_id=u, note="n"),
                    CallShare(call_id=share_closed.id, from_user_id=u, to_user_id=u, note="n",
-                             agent_closed_at=NOW)])
+                             status="closed", closed_at=NOW)])
         s.commit()
         gone = set(_uids(retention.select_calls(s, 90, NOW)))
         assert {"solved", "nofu", "capped", "later", "share_closed"} <= gone
@@ -196,7 +196,7 @@ def test_the_week_a_share_was_sent_in_is_saved_too(env, engine):  # noqa: F811
         # the fixture's old calls are on Thu 2026-08-06; this share was sent on Sun 9 Aug (next week)
         call = s.scalar(select(Call).where(Call.uid == "old"))
         u = _user(s)
-        s.add(CallShare(call_id=call.id, from_user_id=u, to_user_id=u, note="n", agent_closed_at=NOW,
+        s.add(CallShare(call_id=call.id, from_user_id=u, to_user_id=u, note="n", status="closed", closed_at=NOW,
                         created_at=call.start_time + timedelta(days=3)))
         s.commit()
         r = retention.run(s, ON, audio, files, NOW, teams=TEAM)

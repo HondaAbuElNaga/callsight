@@ -81,7 +81,6 @@ input[aria-invalid="true"] { border-color: var(--bad); }
 .st-abandoned_queue, .st-abandoned_ivr { --c: var(--bad); --cb: var(--bad-bg); }
 .st-no_answer, .st-busy { --c: var(--warn); --cb: var(--warn-bg); }
 .st-voicemail { --c: var(--neutral); --cb: var(--neutral-bg); }
-.st-warn { --c: var(--warn); --cb: var(--warn-bg); }   /* shares tab: open shared calls */
 .badge[class*="st-"] { color: var(--c); background: var(--cb); }
 .chip[class*="st-"] b { color: var(--c); }
 .tag { font-size: 12px; color: var(--warn); background: var(--warn-bg); border-radius: 4px; padding: 0 6px; margin-inline-start: 6px; }
@@ -411,3 +410,31 @@ span.chip.rule-word { border: 1px solid var(--line); }
 .ring-num.big { font-size: 26px; }
 .ring-none .ring-num { fill: var(--muted); }
 .ring svg { direction: ltr; }
+
+/* shared calls as a popup chat (spec 2026-11-25-share-chat) */
+.chat-fab { position: fixed; bottom: 40px; inset-inline-start: 12px; z-index: 30; border-radius: 999px; padding: 8px 16px;
+  background: var(--panel); box-shadow: 0 2px 8px rgb(0 0 0 / 12%); display: inline-flex; gap: 8px; align-items: center; }
+.chat-fab.has-new { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.chat-fab b { background: var(--bad); color: #fff; border-radius: 999px; padding: 0 7px; font-size: 13px; }
+.chat-win { position: fixed; bottom: 12px; inset-inline-start: 12px; z-index: 30; width: min(380px, calc(100vw - 24px));
+  height: min(560px, calc(100vh - 24px)); display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 6px 24px rgb(0 0 0 / 18%); }
+.chat-head { display: flex; align-items: center; gap: 6px; }
+.chat-head .grow, .chat-head b:first-child { flex: 1; }
+.chat-tools .filters { padding: 6px 0; border: none; background: none; }
+.chat-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+.chat-list li { border-bottom: 1px solid var(--line); }
+.chat-list li > button { all: unset; box-sizing: border-box; display: grid; gap: 2px; width: 100%; padding: 8px 4px; cursor: pointer; }
+.chat-list li > button:hover { background: var(--bg); }
+.chat-list .line { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.chat-snippet { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-badge { background: var(--bad); color: #fff; border-radius: 999px; padding: 0 7px; font-size: 12px; }
+.chat-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chat-msgs { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 4px;
+  background: var(--bg); border-radius: var(--radius); }
+.chat-msg { align-self: flex-end; max-width: 85%; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 6px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-msg.mine { align-self: flex-start; background: var(--ok-bg); border-color: transparent; }
+.chat-input { display: flex; gap: 6px; align-items: flex-end; }
+.chat-input textarea { flex: 1; resize: none; }
+.chat-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
