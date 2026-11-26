@@ -29,6 +29,8 @@ function Asked({ i }: { i: FollowupItem }) {
 const LOOKBACK_DAYS = 62;   // same as the server's look-back for unfinished work
 const REFRESH_MS = 60_000;
 const SOON_MS = 60 * 60_000;
+// newest call first, like the calls page
+const newestFirst = (list: FollowupItem[]) => [...list].sort((a, b) => Date.parse(b.start_time) - Date.parse(a.start_time));
 
 function daysAgo(n: number): string {
   const [y, m, d] = riyadhToday().split("-").map(Number);
@@ -121,7 +123,7 @@ function Number_({ n }: { n: string | null }) {
   };
   return (
     <span className="nowrap">
-      <a dir="ltr" className="num" href={`tel:${n.replace(/[^0-9+]/g, "")}`} onClick={(e) => e.stopPropagation()}>{n}</a>
+      <a dir="ltr" className="num phone-num" href={`tel:${n.replace(/[^0-9+]/g, "")}`} onClick={(e) => e.stopPropagation()}>{n}</a>
       <button type="button" className="link small" onClick={copy} title="نسخ الرقم">{copied ? "نُسخ" : "نسخ"}</button>
     </span>
   );
@@ -186,7 +188,9 @@ export function FollowupsPage({ me, onCalls, onLogout, onExpired }: Props) {
   useEffect(() => {
     let alive = true;                 // filters apply at once: an older, slower answer must not win
     api.followups({ from, to, agent, state, priority })
-      .then((d) => { if (alive) { setData(d); setError(""); } }).catch((e) => alive && fail(e));
+      .then((d) => {   // newest call first in every state, like the calls page (the server sorts "action" by urgency)
+        if (alive) { setData({ ...d, items: newestFirst(d.items), unsolved: newestFirst(d.unsolved) }); setError(""); }
+      }).catch((e) => alive && fail(e));
     return () => { alive = false; };
   }, [from, to, agent, state, priority, fail, tick]);
 

@@ -160,7 +160,7 @@ export function ForwardsPage({ me, onCalls, onLogout, onExpired }: Props) {
         <People title="الإدارة" rows={data.insights.managers} kind="manager" />
         {data.insights.branches.length > 0 && <section className="panel">
           <h2>الفروع</h2>
-          <div className="table-wrap"><table>
+          <div className="table-wrap"><table className="num-table">
             <thead><tr><th>الفرع</th><th>استلم</th><th>حُلّت داخل الفرع</th><th>وصلت للإدارة</th></tr></thead>
             <tbody>{data.insights.branches.map((b) => <tr key={b.branch}>
               <td>{b.branch}</td><td className="num">{b.received}</td><td className="num">{b.solved_in_branch}</td>
@@ -200,7 +200,7 @@ function People({ title, rows, kind }: { title: string; rows: ForwardPersonStats
   return (
     <section className="panel">
       <h2>{title}</h2>
-      <div className="table-wrap"><table>
+      <div className="table-wrap"><table className="num-table two">
         <thead><tr><th>الاسم</th><th>الفرع</th><th>استلم</th><th>حلّ</th>
           {kind === "employee" && <th>لم يحلّها خلال 24 ساعة</th>}
           {kind === "supervisor" && <th>لم يحلّها خلال 24 ساعة – انتقلت للإدارة</th>}

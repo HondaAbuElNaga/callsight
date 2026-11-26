@@ -394,7 +394,10 @@ span.chip.rule-word { border: 1px solid var(--line); }
 .tile-value.warn { color: var(--warn); }
 
 /* spec 2026-11-23-agent-kpi: employee KPI % as circles */
-.score-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-bottom: 10px; }
+/* spread evenly: one card centered, two each centered in a half, three in a third...; wraps when the row is full */
+.score-cards { display: flex; flex-wrap: wrap; justify-content: space-around; gap: 12px; margin-bottom: 10px; }
+.score-cards > .score-card { width: 300px; }
+@media (max-width: 640px) { .score-cards > .score-card { width: 100%; } }
 .score-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; justify-items: center; gap: 10px; }
 .score-name { font-weight: 600; justify-self: start; }
 .score-parts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: 100%; }
@@ -438,3 +441,21 @@ span.chip.rule-word { border: 1px solid var(--line); }
 .chat-input { display: flex; gap: 6px; align-items: flex-end; }
 .chat-input textarea { flex: 1; resize: none; }
 .chat-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* number tables: each number centered under its header; the first column (two with .two) stays text-aligned */
+.num-table th, .num-table td { text-align: center; }
+.num-table th:first-child, .num-table td:first-child,
+.num-table.two th:nth-child(2), .num-table.two td:nth-child(2) { text-align: start; }
+
+/* customer number + «نسخ»: fixed width so «نسخ» lines up in every row */
+.phone-num { display: inline-block; min-width: 11ch; text-align: right; }
+
+/* chat list: unread vs read */
+.chat-list li > button.unread { background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-inline-start: 4px solid var(--accent); padding-inline-start: 8px; }
+.chat-list li > button.unread:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.chat-list li > button.unread b, .chat-list li > button.unread .chat-snippet { font-weight: 700; color: var(--ink, inherit); }
+.chat-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.chat-read { color: var(--muted); }
+.chat-pill { background: var(--neutral-bg, var(--bg)); color: var(--muted); border-radius: 999px; padding: 0 8px; }
+.chat-filter { display: flex; gap: 6px; }

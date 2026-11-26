@@ -117,6 +117,7 @@ function ChatList({ staff, open, tick, onPick, onClose, onFail }:
   const [to, setTo] = useState(riyadhToday);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [arch, setArch] = useState<ShareList | null>(null);
+  const [onlyNew, setOnlyNew] = useState(false);     // open box: unread chats only
 
   useEffect(() => { if (staff) api.agents().then(setAgents).catch(onFail); }, [staff, onFail]);
   useEffect(() => {
@@ -127,7 +128,12 @@ function ChatList({ staff, open, tick, onPick, onClose, onFail }:
   }, [box, agent, from, to, tick, onFail]);
 
   const d = box === "open" ? open : arch;
-  const items = (d?.items ?? []).filter((i) => box === "archive" || !agent || i.to_ext === agent);
+  const mine = (d?.items ?? []).filter((i) => box === "archive" || !agent || i.to_ext === agent);
+  const newCount = mine.filter((i) => i.unread > 0).length;
+  // unread first (each group keeps the server order: newest first)
+  const items = box === "open"
+    ? [...mine.filter((i) => i.unread > 0), ...(onlyNew ? [] : mine.filter((i) => !i.unread))]
+    : mine;
   return (
     <>
       <header className="chat-head">
@@ -156,28 +162,40 @@ function ChatList({ staff, open, tick, onPick, onClose, onFail }:
           </form>
         </div>
       )}
+      {box === "open" && (
+        <div className="chat-filter chips">
+          {([[false, `الكل (${mine.length})`], [true, `غير المقروءة (${newCount})`]] as const).map(([k, t]) => (
+            <button key={t} type="button" aria-pressed={onlyNew === k} className={`chip${onlyNew === k ? " on" : ""}`}
+              onClick={() => setOnlyNew(k)}>{t}</button>
+          ))}
+        </div>
+      )}
       <ul className="chat-list">
         {items.map((i) => {
           const [label, tone] = STATE[i.reply_state];
           return (
             <li key={i.id}>
-              <button type="button" onClick={() => onPick(i.id)}>
+              <button type="button" className={i.unread > 0 ? "unread" : undefined} onClick={() => onPick(i.id)}>
                 <span className="line">
+                  {i.unread > 0 && <span className="chat-dot" aria-hidden />}
                   <b>{staff ? i.to : i.from}</b>
-                  {i.unread > 0 && <span className="chat-badge">{i.unread}</span>}
                   <span className="muted small">{formatDateTime(i.last_at)}</span>
                 </span>
                 <span className="chat-snippet">{i.last ? `${i.last.who}: ${i.last.text}` : ""}</span>
                 <span className="line small">
-                  <span className="muted">مكالمة {i.call_start ? formatDateTime(i.call_start) : "–"}</span>
+                  {i.unread > 0
+                    ? <span className="chat-badge">{i.unread} {i.unread === 1 ? "رسالة جديدة" : "رسائل جديدة"}</span>
+                    : <span className="chat-read">✓✓ مقروءة</span>}
+                  {staff && !i.seen_at && <span className="chat-pill">لم يفتحها الموظف</span>}
                   <span className={`state ${tone}`}>{label}</span>
                 </span>
+                <span className="muted small">مكالمة {i.call_start ? formatDateTime(i.call_start) : "–"}</span>
               </button>
             </li>
           );
         })}
         {d && items.length === 0 && (
-          <li className="muted center">{box === "open" ? "لا توجد محادثات مفتوحة" : "لا يوجد شيء في الأرشيف لهذه الفترة"}</li>
+          <li className="muted center">{box === "archive" ? "لا يوجد شيء في الأرشيف لهذه الفترة" : onlyNew ? "لا توجد رسائل غير مقروءة" : "لا توجد محادثات مفتوحة"}</li>
         )}
       </ul>
       {d?.truncated && <p className="muted small">تظهر أول 500 فقط: ضيّق الفترة.</p>}

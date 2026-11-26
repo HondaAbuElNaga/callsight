@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api, Unauthorized,
-  type Agent, type ArchivedReport, type ForwardKpi, type KpiFilters, type KpiReport, type KpiSummary, type Me, type Status,
+  type Agent, type ForwardKpi, type KpiFilters, type KpiReport, type KpiSummary, type Me, type Status,
 } from "./api";
 import { Chart, type ChartOption } from "./Chart";
 import { STATUS_LABEL, duration, formatDateTime, riyadhToday } from "./format";
@@ -118,7 +118,6 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
   const [f, setF] = useState<KpiFilters>(() => { const today = riyadhToday(); return { from: weekStart(today), to: today, team: "", agent: "" }; });
   const [data, setData] = useState<KpiReport | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [archive, setArchive] = useState<ArchivedReport[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -131,8 +130,6 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
 
   useEffect(() => {
     api.agents().then(setAgents).catch(fail);   // an agent gets only their own row (decides the outgoing-only view)
-    if (!staff) return;
-    api.reports().then(setArchive).catch(fail);
   }, [fail, staff]);
 
   const rangeError = !f.from || !f.to ? "اختر تاريخ البداية والنهاية"
@@ -296,7 +293,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
           <section className="panel">
             <h2>الموظفون</h2>
             <div className="table-wrap">
-              <table>
+              <table className="num-table two">
                 {outboundOnly ? <>
                 <thead>
                   <tr><th>الموظف</th><th>الفريق</th><th>الصادرة</th><th>تم الرد</th><th>متوسط مدة الصادرة</th>
@@ -355,7 +352,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
               <h2>الرد على ملاحظات المشرف (خلال {data.shares.hours} ساعة)</h2>
               {data.shares.summary.due === 0 ? <p className="muted">لا توجد ملاحظات مستحقة في هذه الفترة.</p> : (
               <div className="table-wrap">
-                <table>
+                <table className="num-table">
                   <thead><tr>
                     <th>الموظف</th><th>ملاحظات مستحقة</th><th>تم الرد في الوقت</th><th>تم الرد متأخراً</th><th>لم يتم الرد</th><th>نسبة الرد في الوقت</th>
                   </tr></thead>
@@ -382,7 +379,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
             <section className="panel">
               <h2>المتابعة {!data.followup.active && <span className="tag">للعرض فقط — لا تدخل في التقارير بعد</span>}</h2>
               <div className="table-wrap">
-                <table>
+                <table className="num-table">
                   <thead>
                     <tr>
                       <th>الموظف</th><th>نماذج مطلوبة</th><th>في وقتها</th><th>نسبة النماذج</th>
@@ -403,7 +400,7 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
               </div>
               <h3>مراحل المتابعة</h3>
               <div className="table-wrap">
-                <table>
+                <table className="num-table">
                   <thead>
                     <tr>
                       <th>الموظف</th><th>نماذج بها مشكلة</th><th>حُلّت من أول مكالمة</th><th>نسبة الحل من أول مكالمة</th>
@@ -438,40 +435,6 @@ export function KpiPage({ me, onCalls, onLogout, onExpired }: Props) {
           )}
 
           {staff && <ForwardPeople from={f.from} to={f.to} agent={f.agent} onExpired={onExpired} />}
-
-          <div className="panels">
-            <section className="panel">
-              <h2>أكثر الأرقام تكراراً</h2>
-              {data.top_repeaters.length === 0 ? <p className="muted">لا توجد مكالمات متكررة.</p> : (
-                <ul className="plain">
-                  {data.top_repeaters.map((r, i) => (
-                    <li key={i}><span dir="ltr" className="num">{r.number}</span> · {r.repeats}</li>
-                  ))}
-                </ul>
-              )}
-            </section>
-            {staff && <section className="panel wide">
-              <h2>التقارير المحفوظة</h2>
-              {archive.length === 0 ? <p className="muted">لا توجد تقارير محفوظة بعد (تُنشأ الأحد 7:00 وأول كل شهر 7:00).</p> : (
-                <ul className="plain">
-                  {archive.map((r) => (
-                    <li key={r.id}>
-                      <a href={api.archivedPdfUrl(r.id)} download>
-                        {r.period_type === "week" ? "أسبوعي" : "شهري"} · <span dir="ltr" className="num">{r.period_start} – {r.period_end}</span>
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>}
-          </div>
-
-          <ol className="notes muted small">
-            <li>متوسط مدة المعالجة = مدة الكلام فقط (سجل السنترال لا يحتوي على مدة التعليق)، والمكالمات المحوّلة تحسب أول من ردّ.</li>
-            <li>مكالمات الموظف = الواردة التي ردّ عليها، لذلك مجموع الموظفين لا يساوي إجمالي الفريق (مثل مكالمات ردّ عليها المشرف).</li>
-            <li>مدة الرنين قبل الرد: وقت رنين هاتف الموظف، وليست مدة الانتظار في الطابور. "لم يتم الرد" يشمل البريد الصوتي.</li>
-            <li>المكالمة المتكررة: واردة تم الرد عليها وسبقها اتصال من/إلى نفس الرقم مع نفس الفريق خلال 72 ساعة؛ تُنسب لموظف آخر مكالمة سابقة تم الرد عليها.</li>
-          </ol>
         </div>
       )}
       {!data && loading && <div className="center muted">جارٍ التحميل…</div>}
@@ -517,7 +480,7 @@ function ForwardPeople({ from, to, agent, onExpired }: { from: string; to: strin
         if (rows.length === 0) return null;
         return <div key={lvl}>
           <h3>{LEVEL_TITLE[lvl]}</h3>
-          <div className="table-wrap"><table>
+          <div className="table-wrap"><table className="num-table two">
             <thead><tr><th>الاسم</th><th>الفرع</th><th>استلم</th><th>حلّ</th><th>حلّ خلال 24 ساعة</th>
               <th>نسبة الحل خلال 24 ساعة</th><th>متوسط وقت الحل (من استلامه)</th><th>عنده الآن</th>
               <th>تأخر (أخطاء)</th>
@@ -548,7 +511,7 @@ function ForwardPeople({ from, to, agent, onExpired }: { from: string; to: strin
       })}
       {d.agents.length > 0 && <>
         <h3>ردود موظفي المكالمات على أسئلة التذكرة</h3>
-        <div className="table-wrap"><table>
+        <div className="table-wrap"><table className="num-table">
           <thead><tr><th>موظف المكالمة</th><th>أسئلة</th><th>رد في وقته</th><th>تأخر (أخطاء)</th><th>أسئلة تنتظر الرد</th></tr></thead>
           <tbody>{d.agents.map((a) => {
             const k = `a:${a.ext}`;
