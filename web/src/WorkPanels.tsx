@@ -1,5 +1,5 @@
 // Call-panel boxes of the agent-supervisor spec: follow-up form, agent summary, share with a note, delete content.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
   api, OPEN_CHAT, Refused, Unauthorized,
   type AgentSummary, type CallShares, type Forward, type ForwardOption, type FollowupIn, type FollowupView,
@@ -260,10 +260,35 @@ function History({ items }: { items: HistoryEntry[] }) {
 }
 
 /** The training look-up (spec "Part 4: the training lookup"): who the caller is in the training system. */
-function StudentBox({ d, picked }: { d: StudentLookup; picked: boolean }) {
-  if (d.error === "unavailable") return <p className="muted small">نظام التدريب لا يرد الآن: اختر المسؤول بنفسك.</p>;
-  if (d.error === "not_mobile") return <p className="muted small">الرقم ليس جوالًا: لم يُبحث عنه في نظام التدريب.</p>;
-  if (d.students.length === 0) return <p className="muted small">الرقم غير مسجل لطالب في نظام التدريب.</p>;
+function StudentBox({ d, picked, searched, onSearch }: {
+  d: StudentLookup; picked: boolean; searched: boolean; onSearch: (q: string) => Promise<void>;
+}) {
+  // the caller's number finds nobody (another phone, a landline): the agent asks the student for the ID and searches
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const search = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy || !q.trim()) return;
+    setBusy(true);
+    try { await onSearch(q.trim()); } finally { setBusy(false); }
+  };
+  const box = searched || (d.students.length === 0 && d.error !== "unavailable");
+  const searchBox = box && (
+    <form className="form student-search" onSubmit={search}>
+      <label>ابحث عن الطالب برقم الهوية أو جواله المسجل
+        <input value={q} onChange={(e) => setQ(e.target.value)} inputMode="numeric" maxLength={20}
+          placeholder="رقم الهوية / الإقامة أو 05xxxxxxxx" disabled={busy} />
+      </label>
+      <button type="submit" disabled={busy || !q.trim()}>{busy ? "جارٍ البحث…" : "بحث"}</button>
+    </form>
+  );
+  let msg = "";
+  if (d.error === "unavailable") msg = "نظام التدريب لا يرد الآن: اختر المسؤول بنفسك.";
+  else if (d.error === "bad_query") msg = "اكتب رقم الهوية أو الإقامة (10 أرقام) أو جوال الطالب (05xxxxxxxx).";
+  else if (d.error === "not_mobile") msg = "رقم المتصل ليس جوالًا: اسأل الطالب عن رقم هويته وابحث به.";
+  else if (d.students.length === 0) msg = searched ? "لا يوجد طالب بهذا الرقم في نظام التدريب."
+    : "رقم المتصل غير مسجل لطالب في نظام التدريب: اسأل الطالب عن رقم هويته وابحث به.";
+  if (d.students.length === 0) return <div className="student-box"><p className="muted small">{msg}</p>{searchBox}</div>;
   return (
     <div className="student-box">
       {d.students.map((st, i) => <div key={i}>
@@ -275,6 +300,7 @@ function StudentBox({ d, picked }: { d: StudentLookup; picked: boolean }) {
       </div>)}
       {picked && d.suggestion && <p className="small">المقترح للتحويل: <b>{d.suggestion.name}</b>
         {d.suggestion.kind === "trainer" ? " (المدرب)" : " (مشرف فرع الطالب)"}. يمكنك تغييره.</p>}
+      {searchBox}
     </div>
   );
 }
@@ -314,10 +340,15 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
   // the agent's own open first form (or one re-opened after a failed forward): staff never see the box
   const lookUp = !staff && !!view?.needed && !!view.training_enabled && view.can_edit
     && (!view.form || view.step === "forward_failed");
+  const [searched, setSearched] = useState(false);  // the box shows what the agent searched, not the caller's number
   useEffect(() => {     // the box only: an error here never blocks the form
-    setStudent(null);
+    setStudent(null); setSearched(false);
     if (lookUp) api.student(callId).then(setStudent).catch((e) => { if (e instanceof Unauthorized) onExpired(); });
     /* eslint-disable-next-line */ }, [callId, lookUp]);
+  const searchStudent = async (q: string) => {
+    try { setStudent(await api.studentSearch(callId, q)); setSearched(true); }
+    catch (e) { if (e instanceof Unauthorized) onExpired(); }
+  };
   // the call summary for «املأ من ملخص المكالمة»: only while the agent can fill the form; an error only hides the button
   const wantSummary = !staff && !!view?.needed && view.can_edit;
   useEffect(() => {
@@ -405,7 +436,7 @@ export function FollowupPanel({ callId, me, onExpired }: { callId: number; me: M
 
       <History items={view.history} />
 
-      {formOpen && student && <StudentBox d={student} picked={sugOk} />}
+      {formOpen && student && <StudentBox d={student} picked={sugOk} searched={searched} onSearch={searchStudent} />}
       {formOpen && <>
         {ro && view.lock_reason && <p className="muted small">لا يمكنك التعديل: {lockText(view.lock_reason)}</p>}
         <fieldset disabled={ro} className="form">

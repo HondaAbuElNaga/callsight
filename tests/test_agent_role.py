@@ -31,6 +31,7 @@ AGENT_ALLOWED = {
     ("POST", "/api/calls/{call_id}/followup/notes"), ("PUT", "/api/calls/{call_id}/my-note"),
     ("POST", "/api/calls/{call_id}/forward/messages"),    # D3: the call's agent answers the ticket's question
     ("GET", "/api/calls/{call_id}/student"),    # training look-up: the call's agent (own form only)
+    ("POST", "/api/calls/{call_id}/student"),   # the same look-up by the ID / phone the agent typed
     ("GET", "/api/calls/{call_id}/shares"),
     # spec 2026-11-25-share-chat: own open chats, read + write
     ("GET", "/api/chats"), ("GET", "/api/chats/{share_id}"), ("POST", "/api/chats/{share_id}/messages"),
