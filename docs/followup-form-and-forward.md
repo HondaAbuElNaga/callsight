@@ -62,8 +62,7 @@ If **لا** (not solved), more fields appear:
 
 | Field | Required? | Rule |
 |---|---|---|
-| من يجب أن يحلّها؟ | Yes | A user, العميل, قسم آخر, **or a person to forward to** (تحويل · <اسم الفرع>) |
-| بحث عن موظف للتحويل | — | Search the ~474 employees by name or branch |
+| من يجب أن يحلّها؟ | Yes | A user, العميل, قسم آخر, **or a person to forward to** (تحويل · <اسم الفرع>). One search box (2026-11-28): type a name or branch to filter the list (max 80 rows shown), ↑/↓ + Enter or click to pick |
 | ملاحظة للمسؤول | No | Only when forwarding, max 500 |
 **No times at all (2026-11-23, user decision):** the two fields «وقت الحل المتوقع» and «وقت معاودة الاتصال» are
 removed from the form and the notes, for every choice (not only «تحويل»). The server stores no expected / callback

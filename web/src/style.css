@@ -470,3 +470,18 @@ span.chip.rule-word { border: 1px solid var(--line); }
   padding: 6px 10px; display: grid; gap: 2px; }
 .answer-box.ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
 .chain-step.solved { font-weight: 600; color: var(--ok); }
+
+/* «من يجب أن يحلّها؟»: a select with its search built in (SearchPick) */
+.form .pick-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pick { position: relative; }
+.pick > input { width: 100%; }
+.pick-list {
+  position: absolute; z-index: 30; inset-inline: 0; top: calc(100% + 2px); margin: 0; padding: 4px 0; list-style: none;
+  max-height: 280px; overflow-y: auto; background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: 0 6px 18px rgba(29, 36, 51, .12);
+}
+.pick-group { padding: 6px 10px 2px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.pick-row { padding: 5px 12px; cursor: pointer; }
+.pick-row.hi { background: var(--bg); }
+.pick-row.on { color: var(--accent); font-weight: 600; }
+.pick-empty { padding: 6px 12px; }

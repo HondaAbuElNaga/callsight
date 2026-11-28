@@ -1,5 +1,5 @@
 // Call-panel boxes of the agent-supervisor spec: follow-up form, agent summary, share with a note, delete content.
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import {
   api, OPEN_CHAT, Refused, Unauthorized,
   type AgentSummary, type CallShares, type Forward, type ForwardOption, type FollowupIn, type FollowupView,
@@ -79,17 +79,58 @@ function FillFromSummary({ summary, what, onFill }:
   );
 }
 
+interface PickItem { value: string; label: string; group: string }
+const PICK_MAX = 80;       // rows drawn at once (the ~474 employees): type more to narrow
+
+/** A select with its search built in: type a name or a branch, then click (or Enter) a row. */
+function SearchPick({ value, onChange, items }:
+  { value: string; onChange: (v: string) => void; items: PickItem[] }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [hi, setHi] = useState(0);
+  const chosen = items.find((i) => i.value === value);
+  const t = q.trim();
+  const all = items.filter((i) => !t || i.label.includes(t) || i.group.includes(t));
+  const shown = all.slice(0, PICK_MAX);
+  const pick = (v: string) => { onChange(v); setOpen(false); setQ(""); };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setHi((h) => Math.min(h + 1, shown.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); if (open && shown[hi]) pick(shown[hi].value); }
+    else if (e.key === "Escape") { setOpen(false); setQ(""); }
+  };
+  let lastGroup = "";
+  return (
+    <div className="pick">
+      <input role="combobox" aria-expanded={open} placeholder="اختر… أو اكتب الاسم أو الفرع للبحث"
+        value={open ? q : chosen ? `${chosen.label}${chosen.group ? ` — ${chosen.group.replace("تحويل · ", "")}` : ""}` : ""}
+        maxLength={50} onFocus={() => { setOpen(true); setHi(0); }} onBlur={() => { setOpen(false); setQ(""); }}
+        onChange={(e) => { setQ(e.target.value); setHi(0); setOpen(true); }} onKeyDown={onKey} />
+      {open && <ul className="pick-list" role="listbox">
+        {shown.length === 0 && <li className="muted small pick-empty">لا يوجد أحد بهذا الاسم أو الفرع</li>}
+        {shown.map((i, n) => {
+          const head = i.group && i.group !== lastGroup ? i.group : "";
+          lastGroup = i.group;
+          return <li key={i.value} role="presentation">
+            {head && <div className="pick-group">{head}</div>}
+            <div role="option" aria-selected={i.value === value}
+              className={`pick-row${n === hi ? " hi" : ""}${i.value === value ? " on" : ""}`}
+              onMouseDown={(e) => { e.preventDefault(); pick(i.value); }} onMouseEnter={() => setHi(n)}>{i.label}</div>
+          </li>;
+        })}
+        {all.length > PICK_MAX && <li className="muted small pick-empty">
+          و{all.length - PICK_MAX} آخرون… اكتب للبحث</li>}
+      </ul>}
+    </div>
+  );
+}
+
 function ProblemFields({ p, set, options, label, afterText, forwardOptions = [], forwardedTo, summary }:
   { p: Problem; set: (p: Problem) => void; options: Person[]; label: string; afterText?: ReactNode;
     forwardOptions?: ForwardOption[];   // first form, link on: the branch supervisors
     forwardedTo?: Forward | null;       // a note on a forwarded problem: only the supervisor closes it
     summary?: AgentSummary["analysis"] }) {   // first form only: the «املأ من ملخص المكالمة» button
   const toSupervisor = p.resp.startsWith("forward:");
-  const [fq, setFq] = useState("");          // search in the ~474 employees of the other system
-  const q = fq.trim();
-  const shown = forwardOptions.filter((o) => !q || o.name.includes(q) || o.branch.includes(q)
-    || p.resp === `forward:${o.id}`);
-  const branches = [...new Set(shown.map((o) => o.branch))];
   return (
     <>
       <label>{label}
@@ -107,21 +148,15 @@ function ProblemFields({ p, set, options, label, afterText, forwardOptions = [],
       )}
       {p.solved === "no" && (
         <>
-          {!forwardedTo && forwardOptions.length > 0 && <label>بحث عن موظف للتحويل (الاسم أو الفرع)
-            <input value={fq} maxLength={50} onChange={(e) => setFq(e.target.value)} />
-          </label>}
-          {!forwardedTo && <label>من يجب أن يحلّها؟
-            <select value={p.resp} onChange={(e) => set({ ...p, resp: e.target.value })}>
-              <option value="">اختر…</option>
-              {options.map((o) => <option key={o.id} value={`user:${o.id}`}>{o.username}{o.ext ? ` · ${o.ext}` : ""}</option>)}
-              <option value="customer">العميل</option>
-              <option value="other_department">قسم آخر</option>
-              {branches.map((b) => <optgroup key={b} label={`تحويل · ${b}`}>
-                {shown.filter((o) => o.branch === b).map((o) => <option key={o.id} value={`forward:${o.id}`}>
-                  {o.name}{o.supervisor ? " (مشرف الفرع)" : ""}{o.manager ? " (الإدارة)" : ""}</option>)}
-              </optgroup>)}
-            </select>
-          </label>}
+          {!forwardedTo && <div className="pick-field">من يجب أن يحلّها؟
+            <SearchPick value={p.resp} onChange={(resp) => set({ ...p, resp })} items={[
+              ...options.map((o) => ({ value: `user:${o.id}`, label: `${o.username}${o.ext ? ` · ${o.ext}` : ""}`, group: "" })),
+              { value: "customer", label: "العميل", group: "" },
+              { value: "other_department", label: "قسم آخر", group: "" },
+              ...[...forwardOptions].sort((a, b) => a.branch.localeCompare(b.branch, "ar")).map((o) => ({ value: `forward:${o.id}`, group: `تحويل · ${o.branch}`,
+                label: `${o.name}${o.supervisor ? " (مشرف الفرع)" : ""}${o.manager ? " (الإدارة)" : ""}` })),
+            ]} />
+          </div>}
           {toSupervisor && (() => {
             const o = forwardOptions.find((x) => p.resp === `forward:${x.id}`);
             return <p className="muted small">{o?.manager ? "عنده 24 ساعة (الإدارة: آخر مستوى)."
