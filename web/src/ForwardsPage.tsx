@@ -196,10 +196,19 @@ function Tile({ label, v, tone }: { label: string; v: number | string; tone?: st
 
 function People({ title, rows, kind }: { title: string; rows: ForwardPersonStats[];
   kind: "employee" | "supervisor" | "manager" }) {
+  const [q, setQ] = useState("");
+  const [all, setAll] = useState(false);
   if (rows.length === 0) return null;
+  const words = q.trim().toLowerCase();
+  const found = words ? rows.filter((r) => `${r.name ?? ""} ${r.branch ?? ""}`.toLowerCase().includes(words)) : rows;
+  const shown = all ? found : found.slice(0, PEOPLE_SHOWN);
   return (
     <section className="panel">
-      <h2>{title}</h2>
+      <div className="line"><h2>{title} <span className="muted small">({rows.length})</span></h2>
+        {rows.length > PEOPLE_SHOWN && <input type="search" className="people-search" value={q}
+          placeholder="ابحث بالاسم أو الفرع" aria-label={`بحث في ${title}`} onChange={(e) => setQ(e.target.value)} />}
+      </div>
+      {found.length === 0 && <p className="muted small">لا أحد بهذا الاسم أو الفرع.</p>}
       <div className="table-wrap"><table className="num-table two">
         <thead><tr><th>الاسم</th><th>الفرع</th><th>استلم</th><th>حلّ</th>
           {kind === "employee" && <th>لم يحلّها خلال 24 ساعة</th>}
@@ -207,7 +216,7 @@ function People({ title, rows, kind }: { title: string; rows: ForwardPersonStats
           {kind === "supervisor" && <th title="أغلقها دون مكالمة جيدة للعميل (رد، أكثر من 60 ث، رضا أكثر من 7)">أغلقها دون مكالمة جيدة</th>}
           {kind === "manager" && <th>حلّها غيره</th>}
           <th>عنده الآن</th><th>متوسط وقت الحل</th></tr></thead>
-        <tbody>{rows.map((r) => <tr key={r.person_id}>
+        <tbody>{shown.map((r) => <tr key={r.person_id}>
           <td>{r.name ?? "–"}</td><td className="muted">{r.branch ?? "–"}</td>
           <td className="num">{r.received}</td><td className="num">{r.solved}</td>
           {kind !== "manager" && <td className={r.not_solved_24h ? "num bad" : "num"}>{r.not_solved_24h}</td>}
@@ -216,8 +225,31 @@ function People({ title, rows, kind }: { title: string; rows: ForwardPersonStats
           <td className="num">{r.open}</td><td className="num">{took(r.avg_seconds_to_solve)}</td>
         </tr>)}</tbody>
       </table></div>
+      {found.length > PEOPLE_SHOWN && <button type="button" className="link" onClick={() => setAll(!all)}>
+        {all ? `عرض أول ${PEOPLE_SHOWN} فقط` : `عرض الكل (${found.length})`}</button>}
     </section>
   );
+}
+
+const PEOPLE_SHOWN = 5;           // a long staff table starts short: the most received first, search or «عرض الكل»
+// lines our own system writes on the ticket (created, sent, the call summary, the 24 h move): the story already
+// shows the problem once at the top and who had it, so these only repeat it. "Us" = whoever created the ticket
+// there (as the server's our_actors); before that item is read, the PBX account's usual name.
+const SYSTEM_ACTOR = /callsight/i;
+type StoryItem = ForwardStory["hops"][number]["items"][number];
+function ourActors(st: ForwardStory): Set<string> {
+  const all = [...st.hops.flatMap((h) => h.items), ...(st.other_items ?? [])];
+  return new Set(all.filter((x) => x.type === "created" && x.actor).map((x) => x.actor as string));
+}
+function personItems(items: StoryItem[], us: Set<string>, solution?: string | null,
+  closedAt?: string | null): StoryItem[] {
+  const ours = (x: StoryItem) => (us.size ? !!x.actor && us.has(x.actor) : SYSTEM_ACTOR.test(x.actor ?? ""));
+  return items.filter((x) => !ours(x) && x.type !== "created"
+    && !(x.type === "escalated" && !x.actor)                // the ticket system's own deadline note
+    // his close and its answer are shown once, in the answer box (the kept answer is cut at 1000 letters)
+    && !(closedAt && x.type === "closed")
+    && !(closedAt && solution && x.type === "followup_close"
+      && (x.note ?? "").trim().slice(0, 1000) === solution.trim()));
 }
 
 function Line({ i, onOpen }: { i: ForwardLineItem; onOpen: () => void }) {
@@ -225,6 +257,7 @@ function Line({ i, onOpen }: { i: ForwardLineItem; onOpen: () => void }) {
   const sent = i.state !== "send_failed" && i.state !== "sending";     // no ticket yet: no story to open
   const left = timeLeft(i.due);
   const when = i.forwarded_at ?? i.saved_at;
+  const chain = i.chain ?? [];
   return (
     <tr className={sent ? "clickable" : undefined} onClick={sent ? onOpen : undefined}>
       <td>{when ? formatDateTime(when) : "–"}</td>
@@ -235,14 +268,22 @@ function Line({ i, onOpen }: { i: ForwardLineItem; onOpen: () => void }) {
       <td><PriorityTag p={i.priority as Priority | null} /></td>
       <td>{i.first.name ?? "–"} <span className="muted">{i.first.branch}</span></td>
       <td>{i.level ? HOP_LEVEL[i.level] : "–"}</td>
-      <td><span className={`state ${tone}`}>{label}</span>
-        {i.state === "open" && i.holders.length > 0 && <span className="muted small"> عند {i.holders.join("، ")}</span>}
+      <td className="chain-cell"><div className="chain-step"><span className={`state ${tone}`}>{label}</span></div>
+        {chain.map((c) => <div key={c.level} className={`chain-step${c.now ? " now" : c.result === "solved" ? " solved" : " past"}`}
+          title={HOP_RESULT[c.result] ?? c.result}>
+          {c.now ? "عند " : ""}{HOP_LEVEL[c.level]}: {c.names.join("، ") || "–"}{c.result === "solved" ? " ✓" : ""}</div>)}
         {i.send_error && <div className="small bad-text">{i.send_error}</div>}
         {i.needs.includes("erp_close") && <div className="small bad-text">تعذّر إغلاق التذكرة هناك</div>}
         {i.hop_error && <div className="small bad-text">{i.hop_error}</div>}
         {i.waiting_check && <div className="small muted">أغلقها، ننتظر فحص مكالمته للعميل (من جهتنا)</div>}
         {i.needs.includes("questions") && <div className="small">سؤال ينتظر رد موظف المكالمة</div>}</td>
-      <td>{left ? <span className={`state ${left[1]}`}>{left[0]}</span> : "–"}</td>
+      <td className="chain-cell">{chain.length === 0 ? (left ? <span className={`state ${left[1]}`}>{left[0]}</span> : "–")
+        : [<div key="top" className="chain-step" />, ...chain.map((c) => {
+          const l = c.now ? timeLeft(c.due) : null;
+          return <div key={c.level} className={`chain-step${c.now ? " now" : c.result === "solved" ? " solved" : " past"}`}>
+            {l ? <span className={`state ${l[1]}`}>{l[0]}</span>
+              : c.seconds !== null ? `${c.result === "solved" ? "حلّها بعد" : "بقيت عنده"} ${took(c.seconds)}` : "–"}</div>;
+        })]}</td>
       <td>{i.solved_by ? `${i.solved_by.name ?? "–"} (${HOP_LEVEL[i.solved_by.level]})` : "–"}</td>
       <td className="num">{took(i.seconds_to_solve)}</td>
     </tr>
@@ -300,6 +341,8 @@ export function Story({ id, onClose, onExpired, onChanged }:
     window.addEventListener("keydown", esc);
     return () => { live = false; window.removeEventListener("keydown", esc); };
   }, [id]);
+  const us = st ? ourActors(st) : new Set<string>();
+  const others = st ? personItems(st.other_items ?? [], us) : [];
   return (
     <aside className="side-panel story">
       <div className="line"><h2>قصة المشكلة · مكالمة {id}</h2><button className="link" onClick={onClose}>إغلاق</button></div>
@@ -314,15 +357,15 @@ export function Story({ id, onClose, onExpired, onChanged }:
           <p>{st.agent.what_happened}</p>
           {st.agent.note && <p className="small">ملاحظة للمسؤول: {st.agent.note}</p>}
         </li>
-        {st.hops.map((h, n) => (
+        {st.hops.map((h, n) => { const items = personItems(h.items, us, h.solution, h.closed_at); return (
           <li key={n}>
             <b>{HOP_LEVEL[h.level]}: {h.name ?? "–"}</b> <span className="muted small">{h.branch}</span>
             <div className="small muted">{h.sent_at ? `استلمها ${formatDateTime(h.sent_at)}` : "لم تُرسل بعد"}
               {h.ticket_number ? ` · تذكرة ${h.ticket_number}` : ""}</div>
-            {h.items.length > 0 ? <ul className="small">
-              {h.items.map((x, k) => <li key={k}>{x.at ? formatDateTime(x.at) : ""} · {ITEM_TYPE[x.type] ?? x.type}
+            {items.length > 0 ? <ul className="small">
+              {items.map((x, k) => <li key={k}>{x.at ? formatDateTime(x.at) : ""} · {ITEM_TYPE[x.type] ?? x.type}
                 {x.actor ? ` (${x.actor})` : ""}{x.note ? `: ${x.note}` : ""}</li>)}
-            </ul> : <p className="small muted">لم يكتب شيئًا على التذكرة.</p>}
+            </ul> : !h.closed_at && <p className="small muted">لم يكتب شيئًا على التذكرة.</p>}
             {h.items_cut && <p className="small muted">(أول 200 فقط)</p>}
             {h.calls && <div className="small">
               <b>مكالماته للعميل:</b>{h.calls.length === 0 ? " لا توجد" : <ul>
@@ -332,7 +375,9 @@ export function Story({ id, onClose, onExpired, onChanged }:
               {h.closed_at && h.proof && (h.proof.ok ? <span className="state ok">المكالمة مقبولة ✓</span>
                 : <span className="state warn">المكالمة غير مقبولة: {PROOF_REASON[h.proof.reason ?? ""] ?? "–"}</span>)}
             </div>}
-            {h.closed_at && <p className="small">أغلقها {formatDateTime(h.closed_at)}{h.solution ? ` · الحل: ${h.solution}` : ""}</p>}
+            {h.closed_at && <div className={`answer-box${h.result === "solved" ? " ok" : ""}`}>
+              <div className="small">أغلقها {formatDateTime(h.closed_at)}{h.solution ? " · ردّه:" : ""}</div>
+              {h.solution && <p>{h.solution}</p>}</div>}
             <span className={`state ${h.result === "solved" ? "ok" : h.result === "passed_on" || h.result === "failed" ? "bad" : "off"}`}>
               {HOP_RESULT[h.result] ?? h.result}</span>
             {h.result === "passed_on" && h.ended_at && <span className="muted small"> · انتقلت {formatDateTime(h.ended_at)}</span>}
@@ -357,10 +402,10 @@ export function Story({ id, onClose, onExpired, onChanged }:
                 إغلاق: حلّها هذا الشخص</button>}
             </div>}
           </li>
-        ))}
-        {st.other_items && st.other_items.length > 0 && <li>
+        ); })}
+        {others.length > 0 && <li>
           <b>رسائل أخرى على التذكرة</b>
-          <ul className="small">{st.other_items.map((x, k) => <li key={k}>{x.at ? formatDateTime(x.at) : ""} · {ITEM_TYPE[x.type] ?? x.type}
+          <ul className="small">{others.map((x, k) => <li key={k}>{x.at ? formatDateTime(x.at) : ""} · {ITEM_TYPE[x.type] ?? x.type}
             {x.actor ? ` (${x.actor})` : ""}{x.note ? `: ${x.note}` : ""}</li>)}</ul>
         </li>}
       </ol>}

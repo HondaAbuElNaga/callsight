@@ -1,5 +1,5 @@
 """Spec 2026-11-16-priority-no-followup, "Part 4: forwards page": the archive, one problem's story, the numbers."""
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from callsight import forward_report as fr
 from callsight.config import RIYADH
@@ -68,6 +68,11 @@ def test_story_and_numbers_through_all_three_levels(cs):  # noqa: F811
     line = out["items"][0]
     assert line["solved_by"] == {"name": "مدير ثالث", "level": 3} and line["level"] == 3
     assert line["seconds_to_solve"] > 48 * 3600
+    ch = line["chain"]
+    assert [(x["level"], x["result"], x["now"]) for x in ch] == [
+        (1, "passed_on", False), (2, "passed_on", False), (3, "solved", False)]
+    assert ch[0]["names"] == ["خالد أحمد"] and len(ch[2]["names"]) == 4
+    assert ch[0]["seconds"] == (24 * 60 + 5) * 60 and ch[2]["seconds"] == 3600 and ch[2]["due"] is None
     ins = out["insights"]
     assert ins["totals"]["forwarded"] == 1 and ins["totals"]["solved_3"] == 1 and ins["totals"]["open"] == 0
     emp = ins["employees"][0]
@@ -83,6 +88,21 @@ def test_story_and_numbers_through_all_three_levels(cs):  # noqa: F811
     assert fr.listing(s, day(), day(), level=1)["items"] == []
     assert len(fr.listing(s, day(), day(), person_id=p["G-SALEH"].id)["items"]) == 1
     assert fr.listing(s, day() + timedelta(days=1), day() + timedelta(days=2))["items"] == []   # by forward day
+
+
+def test_chain_shows_who_had_it_and_who_has_it_now(cs):  # noqa: F811
+    s, _, p = cs
+    fake = Talk()
+    c, f = form_to(s, p["G-STAFF"])
+    tick(s, fake, at(14))
+    t2 = at(11) + timedelta(hours=24, minutes=5)
+    tick(s, fake, t2)                                                      # -> branch supervisor
+    line = fr.listing(s, day(), day() + timedelta(days=1), now=t2 + timedelta(hours=3))["items"][0]
+    ch = line["chain"]
+    assert [(x["level"], x["result"], x["now"]) for x in ch] == [(1, "passed_on", False), (2, "open", True)]
+    assert ch[0]["seconds"] == (24 * 60 + 5) * 60 and ch[0]["due"] is None    # the employee's whole time, faded
+    assert ch[1]["names"] == ["صالح الغامدي"] and ch[1]["seconds"] is None
+    assert ch[1]["due"] == line["due"] and datetime.fromisoformat(ch[1]["due"]) == t2 + timedelta(hours=24)  # the supervisor's 24 h
 
 
 def test_employee_solves_in_time(cs):  # noqa: F811

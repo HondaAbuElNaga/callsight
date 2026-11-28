@@ -165,6 +165,29 @@ def hop_due(h: ForwardHop, now: datetime, waits: list[tuple[datetime, datetime]]
     return due
 
 
+def _chain(hs: list[ForwardHop], people: dict, now: datetime, open_state: bool,
+           waits: list[tuple[datetime, datetime]] | None = None) -> list[dict]:
+    """Who held it, one step per level in order (employee -> branch supervisor -> managers): the names, the step's
+    result, how long it stayed there (ended steps), and for the step holding it now its 24 h end."""
+    out = []
+    for level in sorted({h.level for h in hs}):
+        g = [h for h in hs if h.level == level]
+        rs = {h.result for h in g}
+        result = next((r for r in ("solved", "open", "pending", "passed_on") if r in rs), g[0].result)
+        sent = [h.sent_at for h in g if h.sent_at]
+        start = min(sent) if sent else None
+        now_here = open_state and result in ("open", "pending")
+        ends = [e for e in (hop_end(h, now) for h in g if h.result in ("solved", "passed_on", "closed_by_other")) if e]
+        end = None if now_here else (min(ends) if ends else None)
+        live = [h for h in g if h.result == "open" and h.sent_at]
+        due = min((hop_due(h, now, waits) for h in live), default=None) if now_here else None
+        out.append({"level": level, "names": [people[h.person_id].name for h in g if h.person_id in people
+                              and h.result not in ("failed", "pending")],    # copies never made: not with them
+                    "result": result, "now": now_here, "sent_at": _iso(start), "due": _iso(due),
+                    "seconds": (end - start).total_seconds() if start and end else None})
+    return out
+
+
 def _line(f: CallFollowup, c: Call, hs: list[ForwardHop], people: dict, names: dict, now: datetime | None = None,
           asking: set[int] | None = None, repeats: dict[int, int] | None = None,
           waits: dict[int, list] | None = None) -> dict:
@@ -206,7 +229,8 @@ def _line(f: CallFollowup, c: Call, hs: list[ForwardHop], people: dict, names: d
         "solved_by": ({"name": people[s_hop.person_id].name if s_hop.person_id in people else None,
                        "level": s_hop.level} if s_hop else None),
         "solved_at": _iso(end), "seconds_to_solve": took,
-        "due": _iso(due), "needs": needs, "repeat": (repeats or {}).get(c.id, 0),
+        "due": _iso(due), "chain": _chain(hs, people, now, state == "open", (waits or {}).get(c.id)),
+        "needs": needs, "repeat": (repeats or {}).get(c.id, 0),
         "waiting_check": any(h.level == 2 and closed(h) for h in holding),   # closed; our check of his call is due
         "hop_error": next((h.error for h in holding if h.error), None),
     }

@@ -608,9 +608,16 @@ export interface ForwardLineItem {
   solved_by: { name: string | null; level: number } | null; solved_at: string | null; seconds_to_solve: number | null;
   saved_at: string | null; send_error: string | null;
   due: string | null;          // the holders' 24 h ends (open only)
+  chain: ForwardChainStep[];   // who held it, one step per level in order
   needs: ForwardNeed[]; repeat: number;   // repeat = other forwards of this customer in the 30 days before
   waiting_check: boolean;      // a branch supervisor closed it; our check of his call to the customer is due
   hop_error: string | null;    // why the holder's step is stuck (e.g. nobody linked to pass it to)
+}
+export interface ForwardChainStep {
+  level: 1 | 2 | 3; names: string[]; result: string;
+  now: boolean;                // it is with this step now (open problem)
+  sent_at: string | null; due: string | null;   // due: this step's 24 h end (now only)
+  seconds: number | null;      // how long it stayed with this step (ended steps)
 }
 export interface ForwardPersonStats {
   person_id: number; name: string | null; branch: string | null; received: number; solved: number;
