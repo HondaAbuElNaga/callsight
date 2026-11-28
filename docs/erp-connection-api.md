@@ -115,7 +115,7 @@ POST /tickets/{guid}/forward
 ```
 
 Chain: employee → branch supervisor → management. 24 hours each. It starts at the level of the person picked.
-At management, each extra manager (up to 4 in all) gets a copy ticket through `POST /tickets`.
+At management, one manager gets the same ticket (since 2026-11-28; older problems gave each extra manager a copy ticket through `POST /tickets`).
 
 ### 6) Write on the ticket (the agent's answer or note)
 

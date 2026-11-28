@@ -29,7 +29,7 @@
         team views), solved check (closedAt + last call rules), forward_solved / unconfirmed. → 3-agent review.
   Review 2026-11-16: 3 agents, 15 findings; fixed (see spec Build decisions D2). Not fixed: "تحتاج حل" pre-filter still loads confirmed forward solves (done with the chain's per-hop result); counter = closed today.
 - [x] DC. Forward chain (spec "Part 4 change"): all employees in the drop-down, forward_hop table, 24 h → branch
-  supervisor → 4 managers (copy tickets, first close wins), per-hop polling/proof/watch. Waits for the user's approval
+  supervisor → 4 managers (copy tickets, first close wins; superseded 2026-11-28: one manager per problem), per-hop polling/proof/watch. Waits for the user's approval
   and the 4 managers' names.
   Review 2026-11-16: 3 agents, 29 findings (no high); fixed or recorded in spec Build decisions DC. 770 passed.
 - [x] DP. Forwards page (spec "Part 4: forwards page"): archive list + filters, story of one problem, numbers per

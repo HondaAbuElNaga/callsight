@@ -12,7 +12,7 @@
   2026-11-18 ("approve all": each open question = the recommendation). Build one at a time, 3-agent review, push to
   `main` only on the user's "ok push" (push = live deploy).
 - **Step 0 live 2026-11-18:** priority, "لا تحتاج متابعة", "تحتاج حل", the forward chain to the customer-service
-  system (any of 473 employees → branch supervisor → 3 managers), questions/answers, forwards KPI, training lookup.
+  system (any of 473 employees → branch supervisor → one of 3 managers), questions/answers, forwards KPI, training lookup.
   Keys on the server; the 7 supervisor exts linked. Left: one real test ticket from an agent (task D5).
 - **Step 1 (cleanup)** on branch `spec/2026-11-17-cleanup`.
 - **Running on AWS (Frankfurt):** https://calls.mohanadyehia.com (main server 63.184.90.120, accounts `admin`,

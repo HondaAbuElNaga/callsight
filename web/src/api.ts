@@ -272,7 +272,7 @@ export interface Forward {
   error: string | null;
   closed_at?: string | null; solution?: string | null; checked_at?: string | null;   // D2: read back from the ticket
   proof?: ForwardProof | null;
-  // the forward chain: employee (1) -> his branch supervisor (2) -> the managers (3), 24 h each
+  // the forward chain: employee (1) -> his branch supervisor (2) -> one manager (3), 24 h each
   hops?: ForwardHopView[]; level?: 1 | 2 | 3 | null; holders?: string[]; due_at?: string | null;
   // D3: questions from the person holding it (wait for the agent), what we wrote on the ticket, the tracker
   questions?: { id: number; from: string | null; text: string | null; at: string | null }[];
@@ -347,7 +347,7 @@ export interface Placement { branch: string; diploma: string; level: string; sec
 export interface StudentLookup {
   enabled: boolean; students: { student: string; placements: Placement[] }[];
   suggestion: { person_id: number; kind: "trainer" | "branch_supervisor"; name: string } | null;
-  error: "not_mobile" | "unavailable" | null;
+  error: "not_mobile" | "unavailable" | "bad_query" | null;
 }
 export interface FollowupList { settings: Settings; items: FollowupItem[]; truncated?: boolean; linked: boolean;
   counts: FollowupCounts; older_action: number;    // older_action: work left before من (62-day look-back)
@@ -532,6 +532,8 @@ export const api = {
   },
   followup: (id: number) => get<FollowupView>(`/api/calls/${id}/followup`),
   student: (id: number) => get<StudentLookup>(`/api/calls/${id}/student`),
+  // the agent's typed ID / phone goes in the body, never the URL (access logs keep URLs)
+  studentSearch: (id: number, q: string) => send<StudentLookup>("POST", `/api/calls/${id}/student`, { q }),
   saveFollowup: (id: number, body: FollowupIn) => send<FollowupView>("PUT", `/api/calls/${id}/followup`, body),
   myNote: (id: number, text: string) => send<{ call_id: number; text: string | null }>("PUT", `/api/calls/${id}/my-note`, { text }),
   addNote: (id: number, body: NoteIn) => send<FollowupView>("POST", `/api/calls/${id}/followup/notes`, body),

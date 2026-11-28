@@ -1,5 +1,5 @@
 """Spec 2026-11-16-priority-no-followup, "Part 4 change: the forward chain": any employee -> 24 h -> his branch
-supervisor -> 24 h -> the 4 managers (all of them: the same ticket + a copy each, first close wins). Only branch
+supervisor -> 24 h -> ONE manager (women's branches: the `side: women` manager; the others take turns). Only branch
 supervisors' calls are checked. The other system is faked: no real call."""
 from datetime import timedelta
 
@@ -8,7 +8,7 @@ from sqlalchemy import select, text
 
 from callsight import forward
 from callsight.cs_api import CsAuthError, CsUnavailable
-from callsight.db.models import CallFollowup, ForwardHop, ForwardPerson
+from callsight.db.models import AppUser, CallFollowup, ForwardHop, ForwardPerson
 from test_api import engine  # noqa: F401
 from test_followups import at, mk, rows, s, start_on, user  # noqa: F401
 from test_forward_d2 import sup_call
@@ -19,16 +19,19 @@ managers:
   - {name: "مدير أول"}
   - {name: "مدير ثاني"}
   - {name: "مدير ثالث"}
-  - {name: "مدير رابع"}
+  - {name: "مدير رابع", side: women}
 """
 TARGETS = {"groups": [{"key": "men", "branches": [
     {"name": "رجال الزهور", "employees": [
         {"guid": "G-SALEH", "name": "صالح محمد الغامدي", "isBranchSupervisor": True},
         {"guid": "G-STAFF", "name": "خالد أحمد", "isBranchSupervisor": False}]},
     {"name": "رجال بلا مشرف", "employees": [{"guid": "G-LONE", "name": "سعد علي", "isBranchSupervisor": False}]},
+    {"name": "رجال بلا مشرف 2", "employees": [{"guid": "G-LONE2", "name": "فهد علي", "isBranchSupervisor": False}]},
     {"name": "الإدارة", "employees": [
         {"guid": f"G-M{i}", "name": f"مدير {n}", "isBranchSupervisor": False}
-        for i, n in enumerate(("أول", "ثاني", "ثالث", "رابع"), 1)]}]}]}
+        for i, n in enumerate(("أول", "ثاني", "ثالث", "رابع"), 1)]}]},
+    {"key": "women", "branches": [
+        {"name": "الزهور", "employees": [{"guid": "G-SIS", "name": "نورة سعد", "isBranchSupervisor": False}]}]}]}
 
 
 class Fake:
@@ -84,18 +87,18 @@ def cs(s, tmp_path):  # noqa: F811
     return s, fake, {r.guid: r for r in s.scalars(select(ForwardPerson))}
 
 
-def form_to(s, person, when=None):
+def form_to(s, person, when=None, uid="a", ticket="T-1"):
     """The agent forwarded to `person`; the send job made ticket T-1 (the chain starts at his level)."""
-    u = user(s)
-    c = mk(s, "a", at(10), number="0501234567")
+    u = s.scalars(select(AppUser).where(AppUser.username == "ali")).first() or user(s)
+    c = mk(s, uid, at(10), number="0501234567")
     t = when or at(11)
     f = CallFollowup(call_id=c.id, owner_ext="119", what_happened="x", solved=False, priority="high",
                      responsible_kind="forward", forward_person_id=person.id, forward_status="sent",
-                     forward_ticket_guid="T-1", forward_ticket_number=1631, forwarded_at=t, expected_at=t,
+                     forward_ticket_guid=ticket, forward_ticket_number=1631, forwarded_at=t, expected_at=t,
                      filled_by=u.id, first_filled_at=t, updated_by=u.id, updated_at=t)
     s.add(f)
     s.flush()
-    s.add(ForwardHop(call_id=c.id, level=forward.level_of(person), person_id=person.id, ticket_guid="T-1",
+    s.add(ForwardHop(call_id=c.id, level=forward.level_of(person), person_id=person.id, ticket_guid=ticket,
                      ticket_number=1631, sent_at=t, result="open"))
     s.commit()
     return c, f
@@ -130,7 +133,7 @@ def test_employee_closes_in_time_is_solved_without_a_call_check(cs):
     assert d["step"] == "forward_solved" and d["forward"]["level"] is None and fake.done == []
 
 
-def test_24h_employee_to_his_branch_supervisor_then_to_all_managers(cs):
+def test_24h_employee_to_his_branch_supervisor_then_to_one_manager(cs):
     s, fake, p = cs
     c, f = form_to(s, p["G-STAFF"])
     tick(s, fake, at(11) + timedelta(hours=23))
@@ -143,34 +146,48 @@ def test_24h_employee_to_his_branch_supervisor_then_to_all_managers(cs):
     assert hops(s, c) == [(1, p["G-STAFF"].id, "passed_on", "T-1"), (2, p["G-SALEH"].id, "open", "T-1")]
     d = rows(s, t2)["a"]
     assert d["step"] == "forwarded" and d["forward"]["level"] == 2 and d["forward"]["holders"] == ["صالح الغامدي"]
-    # the supervisor closes WITHOUT a call: not solved, after his 24 h it goes to the managers
+    # the supervisor closes WITHOUT a call: not solved, after his 24 h it goes to ONE manager (no copies)
     fake.closed["T-1"] = (t2 + timedelta(hours=2)).isoformat()
     tick(s, fake, t2 + timedelta(hours=3))
     assert rows(s, t2 + timedelta(hours=3))["a"]["step"] == "forward_unconfirmed"
     fake.done.clear()
     t3 = t2 + timedelta(hours=24, minutes=5)
     tick(s, fake, t3)
+    tick(s, fake, t3 + timedelta(minutes=5))
     assert fake.done[0] == ("reopen", "T-1") and fake.done[1][:3] == ("forward", "T-1", "G-M1")
-    tick(s, fake, t3 + timedelta(minutes=5))                               # the copies for the 3 others
-    assert [x for x in fake.done if x[0] == "ticket"] == [("ticket", "G-M2"), ("ticket", "G-M3"), ("ticket", "G-M4")]
-    got = hops(s, c)
-    assert [h[0] for h in got] == [1, 2, 3, 3, 3, 3] and [h[2] for h in got[2:]] == ["open"] * 4
-    assert [h[3] for h in got[2:]] == ["T-1", "COPY-1", "COPY-2", "COPY-3"]
+    assert not [x for x in fake.done if x[0] == "ticket"]
+    assert hops(s, c)[2:] == [(3, p["G-M1"].id, "open", "T-1")]
     d = rows(s, t3 + timedelta(minutes=6))["a"]
-    assert d["forward"]["level"] == 3 and len(d["forward"]["holders"]) == 4
-    # manager 3 closes his copy: solved; the 3 other managers' tickets are closed there (manager 1 holds T-1)
+    assert d["forward"]["level"] == 3 and d["forward"]["holders"] == ["مدير أول"]
     fake.done.clear()
-    fake.closed["COPY-2"] = (t3 + timedelta(hours=1)).isoformat()
+    fake.closed["T-1"] = (t3 + timedelta(hours=1)).isoformat()
     tick(s, fake, t3 + timedelta(hours=2))
-    got = hops(s, c)
-    assert [h[2] for h in got[2:]] == ["closed_by_other", "closed_by_other", "solved", "closed_by_other"]
-    assert sorted(x[1] for x in fake.done if x[0] == "followup") == ["COPY-1", "COPY-3", "T-1"]
-    assert all(x[2] is True for x in fake.done if x[0] == "followup")
-    assert rows(s, t3 + timedelta(hours=2))["a"]["step"] == "forward_solved"
+    assert hops(s, c)[-1][2] == "solved" and rows(s, t3 + timedelta(hours=2))["a"]["step"] == "forward_solved"
     # no further level: nothing happens later
     fake.done.clear()
     tick(s, fake, t3 + timedelta(days=3))
     assert fake.done == []
+
+
+def test_men_managers_take_turns_women_branch_goes_to_her_manager(cs):
+    s, fake, p = cs
+    late = at(11) + timedelta(hours=25)
+    got = []
+    for i, who in enumerate(("G-LONE", "G-LONE2", "G-SIS", "G-LONE", "G-LONE2", "G-LONE", "G-SIS")):
+        c, f = form_to(s, p[who], uid=f"c{i}", ticket=f"T-{i}")
+        tick(s, fake, late + timedelta(minutes=10 * i))
+        got.append([x[2] for x in fake.done if x[0] == "forward" and x[1] == f"T-{i}"][0])
+    # men: the 3 men's managers in turn (M4 is side: women and never gets a men's problem); women: only M4
+    assert got == ["G-M1", "G-M2", "G-M4", "G-M3", "G-M1", "G-M2", "G-M4"]
+
+
+def test_women_branch_without_a_women_manager_still_goes_to_a_manager(cs):
+    s, fake, p = cs
+    p["G-M4"].side = None
+    s.commit()
+    c, f = form_to(s, p["G-SIS"])
+    tick(s, fake, at(11) + timedelta(hours=25))
+    assert fake.done[0][:3] == ("forward", "T-1", "G-M1") and [h[0] for h in hops(s, c)] == [1, 3]
 
 
 def test_supervisor_with_a_good_call_is_solved(cs):
@@ -191,12 +208,12 @@ def test_waiting_for_the_score_does_not_pass_it_on(cs):
     assert hops(s, c)[-1][2] == "open" and fake.done == []
 
 
-def test_no_supervisor_in_the_branch_goes_straight_to_the_managers(cs):
+def test_no_supervisor_in_the_branch_goes_straight_to_a_manager(cs):
     s, fake, p = cs
     c, f = form_to(s, p["G-LONE"])
     tick(s, fake, at(11) + timedelta(hours=25))
     assert fake.done[0][:3] == ("forward", "T-1", "G-M1")
-    assert [h[0] for h in hops(s, c)] == [1, 3, 3, 3, 3]
+    assert [h[0] for h in hops(s, c)] == [1, 3]
 
 
 def test_a_close_from_before_he_got_it_does_not_count(cs):
@@ -298,5 +315,5 @@ def test_sync_never_wipes_people_on_an_empty_answer(cs, tmp_path):
     y.write_text(YAML, encoding="utf-8")
     before = len(forward.options(s))
     lines = forward.sync_people(s, Empty(), y)
-    assert lines[0].startswith("SKIPPED") and len(forward.options(s)) == before == 7
+    assert lines[0].startswith("SKIPPED") and len(forward.options(s)) == before == 9
     assert s.scalars(select(ForwardPerson).where(ForwardPerson.guid == "G-SALEH")).one().ext == "101"

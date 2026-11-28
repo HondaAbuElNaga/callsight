@@ -69,6 +69,21 @@ def local_mobile(number: str | None) -> str | None:
     return d if len(d) == 10 and d.startswith("05") else None
 
 
+_AR_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+
+
+def search_key(typed: str | None) -> str | None:
+    """What the agent typed when the caller's number finds no student: a national ID / iqama (10 digits starting
+    1 or 2) or the student's registered mobile. Arabic digits, spaces and dashes are fine. Anything else = None."""
+    raw = (typed or "").translate(_AR_DIGITS).strip()
+    if len(raw) > 20 or any(not (ch.isascii() and ch.isdigit()) and ch not in " -+" for ch in raw):
+        return None
+    d = "".join(ch for ch in raw if ch.isdigit())
+    if len(d) == 10 and d[0] in "12":
+        return d
+    return local_mobile(d)
+
+
 def _text(v, n: int = 200) -> str:
     return str(v).strip()[:n] if isinstance(v, (str, int)) and str(v).strip() else ""
 

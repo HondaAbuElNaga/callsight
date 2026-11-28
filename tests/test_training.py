@@ -12,7 +12,8 @@ from datetime import datetime, timedelta, timezone
 
 from callsight import training_api
 from callsight.db.models import CallFollowup
-from callsight.training_api import (TrainingClient, TrainingConfig, TrainingUnavailable, local_mobile, parse)
+from callsight.training_api import (TrainingClient, TrainingConfig, TrainingUnavailable, local_mobile, parse,
+                                   search_key)
 from test_agent_supervisor_api import env, login, switch_on  # noqa: F401
 from test_api import SECRET, TEAM, engine  # noqa: F401
 from test_followups import s  # noqa: F401
@@ -282,6 +283,30 @@ def test_api_other_agent_and_outage_and_landline(tenv):
         s.commit()
     assert client.get(f"/api/calls/{ids['own']}/student").json()["error"] == "not_mobile"
     assert len(asked) == 1                                         # a landline is never sent
+
+
+@pytest.mark.parametrize("typed,want", [
+    ("1023456789", "1023456789"), ("2123456789", "2123456789"), ("١٠٢٣٤٥٦٧٨٩", "1023456789"),
+    (" 102 345 6789 ", "1023456789"), ("0551234567", "0551234567"), ("+966 55 123 4567", "0551234567"),
+    ("3023456789", None), ("12345", None), ("abc1023456789", None), ("", None), (None, None), ("1" * 30, None)])
+def test_search_key(typed, want):
+    assert search_key(typed) == want
+
+
+def test_api_agent_searches_by_national_id_when_the_number_finds_nobody(tenv):
+    client, Session, ids, asked, state = tenv
+    switch_on(client)
+    login(client, "ali")
+    state["answer"] = {"data": []}
+    assert client.get(f"/api/calls/{ids['own']}/student").json()["students"] == []
+    state["answer"] = answer()
+    got = client.post(f"/api/calls/{ids['own']}/student", json={"q": "١٠٢٣٤٥٦٧٨٩"}).json()
+    assert asked == ["0501234567", "1023456789"]
+    assert got["students"][0]["student"] == "طالب تجربة" and got["suggestion"]["kind"] == "branch_supervisor"
+    got = client.post(f"/api/calls/{ids['own']}/student", json={"q": "hello"}).json()
+    assert got["error"] == "bad_query" and len(asked) == 2              # a bad entry is never sent
+    login(client, "sara")                                                # still only the call's own agent
+    assert client.post(f"/api/calls/{ids['own']}/student", json={"q": "1023456789"}).status_code == 404
 
 
 def test_api_no_form_404_and_closed_form_403(tenv):

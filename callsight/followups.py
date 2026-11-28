@@ -261,7 +261,7 @@ class Row:
         return got[-1] if got else None
 
     def current_hops(self) -> list[ForwardHop]:
-        """Who holds it now: the open hops of the highest level (several managers at level 3)."""
+        """Who holds it now: the open hops of the highest level (old problems: several managers at level 3)."""
         open_ = [h for h in self.hops if h.result in ("open", "pending")]
         top = max((h.level for h in open_), default=0)
         return [h for h in open_ if h.level == top]

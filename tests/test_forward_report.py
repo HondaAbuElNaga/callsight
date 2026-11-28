@@ -45,33 +45,33 @@ def test_story_and_numbers_through_all_three_levels(cs):  # noqa: F811
     tick(s, fake, t2 + timedelta(hours=3))                                 # closed, call too short: not solved
     t3 = t2 + timedelta(hours=24, minutes=5)
     tick(s, fake, t3)
-    tick(s, fake, t3 + timedelta(minutes=5))                               # managers + copies
-    say(fake, "COPY-2", t3 + timedelta(hours=1), "أرسلنا الشهادة للعميل", "مدير ثالث", "followup_close")
-    fake.closed["COPY-2"] = (t3 + timedelta(hours=1)).isoformat()
+    tick(s, fake, t3 + timedelta(minutes=5))                               # one manager (no copies)
+    say(fake, "T-1", t3 + timedelta(hours=1), "أرسلنا الشهادة للعميل", "مدير أول", "followup_close")
+    fake.closed["T-1"] = (t3 + timedelta(hours=1)).isoformat()
     tick(s, fake, t3 + timedelta(hours=2))
 
     st = fr.story(s, c.id)
     assert st["state"] == "solved" and st["agent"]["what_happened"] == "x"
     lv = [(h["level"], h["name"], h["result"]) for h in st["hops"]]
     assert lv[:2] == [(1, "خالد أحمد", "passed_on"), (2, "صالح الغامدي", "passed_on")]
-    assert [x[2] for x in lv[2:]] == ["closed_by_other", "closed_by_other", "solved", "closed_by_other"]
+    assert lv[2:] == [(3, "مدير أول", "solved")]
     assert [i["note"] for i in st["hops"][0]["items"]] == ["سأتواصل مع العميل غدًا"]       # what the employee wrote
     sup = st["hops"][1]
     assert [i["note"] for i in sup["items"]] == ["تم الاتصال"] and sup["closed_at"]
     assert sup["proof"]["reason"] == "short" and len(sup["calls"]) == 1                  # his call, why not
-    m3 = st["hops"][4]
-    assert m3["name"] == "مدير ثالث" and m3["solution"] == "أرسلنا الشهادة للعميل"
+    m3 = st["hops"][2]
+    assert m3["name"] == "مدير أول" and m3["solution"] == "أرسلنا الشهادة للعميل"
     assert [i["note"] for i in m3["items"]] == ["أرسلنا الشهادة للعميل"]
 
     out = fr.listing(s, day(), day() + timedelta(days=3))
     assert [i["call_id"] for i in out["items"]] == [c.id]
     line = out["items"][0]
-    assert line["solved_by"] == {"name": "مدير ثالث", "level": 3} and line["level"] == 3
+    assert line["solved_by"] == {"name": "مدير أول", "level": 3} and line["level"] == 3
     assert line["seconds_to_solve"] > 48 * 3600
     ch = line["chain"]
     assert [(x["level"], x["result"], x["now"]) for x in ch] == [
         (1, "passed_on", False), (2, "passed_on", False), (3, "solved", False)]
-    assert ch[0]["names"] == ["خالد أحمد"] and len(ch[2]["names"]) == 4
+    assert ch[0]["names"] == ["خالد أحمد"] and ch[2]["names"] == ["مدير أول"]
     assert ch[0]["seconds"] == (24 * 60 + 5) * 60 and ch[2]["seconds"] == 3600 and ch[2]["due"] is None
     ins = out["insights"]
     assert ins["totals"]["forwarded"] == 1 and ins["totals"]["solved_3"] == 1 and ins["totals"]["open"] == 0
@@ -80,7 +80,7 @@ def test_story_and_numbers_through_all_three_levels(cs):  # noqa: F811
     sv = ins["supervisors"][0]
     assert (sv["received"], sv["not_solved_24h"], sv["closed_no_good_call"]) == (1, 1, 1)
     mg = {d["name"]: d for d in ins["managers"]}
-    assert mg["مدير ثالث"]["solved"] == 1 and mg["مدير أول"]["closed_by_other"] == 1
+    assert mg["مدير أول"]["solved"] == 1 and set(mg) == {"مدير أول"}
     assert ins["branches"][0] == {"branch": "رجال الزهور", "received": 1, "solved_in_branch": 0, "went_to_managers": 1}
     # filters
     assert fr.listing(s, day(), day(), state="open")["items"] == []

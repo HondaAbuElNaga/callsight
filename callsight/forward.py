@@ -1,7 +1,7 @@
 """Forward a not-solved problem to an employee of the customer-service system (spec
 2026-11-16-priority-no-followup, part 4): the people (every employee there + config/forward_people.yaml for the
 supervisors' ext and the managers), the send job (customer by phone -> ticket), the read-back, and the forward chain
-(employee -> 24 h -> his branch supervisor -> 24 h -> the managers). The form side (validation, steps) is in
+(employee -> 24 h -> his branch supervisor -> 24 h -> one manager). The form side (validation, steps) is in
 followups.py.
 """
 from __future__ import annotations
@@ -63,7 +63,10 @@ def load_people_yaml(path: Path) -> list[dict]:
                 raise ValueError(f"{path}: bad guid for {name}")
             if manager and ext is not None:
                 raise ValueError(f"{path}: managers have no ext (their calls are not checked)")
-            out.append({"branch": branch, "name": name, "ext": ext, "guid": guid, "manager": manager})
+            side = str(p.get("side") or "").strip() or None
+            if side is not None and (not manager or side not in ("women", "men")):
+                raise ValueError(f"{path}: side is women or men, managers only ({name})")
+            out.append({"branch": branch, "name": name, "ext": ext, "guid": guid, "manager": manager, "side": side})
     return out
 
 
@@ -129,12 +132,13 @@ def sync_people(s: Session, client: CsClient | None, path: Path | None = None,
                 s.add(r)
                 by_key[key] = r
             r.ext, r.is_manager, r.is_supervisor = p["ext"], p["manager"], not p["manager"]
+            r.side = p["side"]
             if p["guid"]:
                 r.guid = p["guid"]
             r.active = True
         for key, r in by_key.items():
             if key not in keep and r.active and (r.ext or r.is_manager):
-                r.active, r.ext, r.is_manager = False, None, False
+                r.active, r.ext, r.is_manager, r.side = False, None, False, None
                 report.append(f"removed {r.branch} / {r.name}")
         s.commit()
         return report
@@ -181,6 +185,7 @@ def sync_people(s: Session, client: CsClient | None, path: Path | None = None,
         r.name = (p["name"] if p else e["name"])[:100]
         r.ext = p["ext"] if p else None
         r.is_manager = bool(p and p["manager"])
+        r.side = p["side"] if p else None
         s.flush()
         seen_rows.add(r.id)
     # 3. everyone else: gone there, or a yaml line that is not linked -> inactive
@@ -190,7 +195,7 @@ def sync_people(s: Session, client: CsClient | None, path: Path | None = None,
             if r.guid:
                 report.append(f"removed {r.branch} / {r.name}")
         if r.id not in seen_rows:
-            r.ext, r.is_manager = None, False
+            r.ext, r.is_manager, r.side = None, False, None
     s.commit()
     n_sup = sum(e["is_supervisor"] for e in emps)
     n_man = sum(1 for p in links.values() if p["manager"])
@@ -500,7 +505,7 @@ def advance(s: Session, client: CsClient, now: datetime | None = None) -> dict:
     """For every problem with an open hop (row lock on its form, SKIP LOCKED: two runs never move one twice):
     make waiting copy tickets, mark a close as solved (a branch supervisor with a known ext also needs the good
     last call), close the other managers' copies, and after 24 h pass the ticket on: employee -> his branch's
-    supervisor -> the managers (all of them: the first on the same ticket, a copy ticket for each other one)."""
+    supervisor -> one manager (manager_for; old problems may still hold copy tickets of the other managers)."""
     now = now or datetime.now(timezone.utc)
     done = {"solved": 0, "passed_on": 0, "copies": 0, "errors": 0}
     ids = list(s.scalars(select(ForwardHop.call_id).join(Call, Call.id == ForwardHop.call_id).where(
@@ -577,8 +582,8 @@ def _advance_one(s, client, f, call, hops, now, done) -> None:
 
 
 def next_people(s: Session, h: ForwardHop, person: ForwardPerson) -> tuple[int, list[ForwardPerson]]:
-    """Level 1 -> the supervisor of his branch (or the managers when there is none / he is the supervisor);
-    level 2 -> the managers (at most 4)."""
+    """Level 1 -> the supervisor of his branch (or a manager when there is none / he is the supervisor);
+    level 2 -> one manager (manager_for)."""
     usable = (ForwardPerson.active.is_(True), ForwardPerson.guid.is_not(None), ForwardPerson.id != person.id)
     if h.level == 1:
         sup = s.scalars(select(ForwardPerson).where(*usable, ForwardPerson.is_supervisor.is_(True),
@@ -588,8 +593,24 @@ def next_people(s: Session, h: ForwardHop, person: ForwardPerson) -> tuple[int, 
                         .order_by(ForwardPerson.ext.is_(None), ForwardPerson.id).limit(1)).first()
         if sup is not None:
             return 2, [sup]
-    return 3, list(s.scalars(select(ForwardPerson).where(*usable, ForwardPerson.is_manager.is_(True))
-                             .order_by(ForwardPerson.id).limit(4)))
+    m = manager_for(s, person, usable)
+    return 3, [m] if m is not None else []
+
+
+def manager_for(s: Session, person: ForwardPerson, usable=()) -> ForwardPerson | None:
+    """One manager per problem (user 2026-11-28): a women's branch -> the managers with `side: women` in the yaml;
+    any other branch -> the others, in turn (the one whose last problem is oldest; 10 problems = 5 + 5). No manager
+    on that side -> any manager (a problem never waits for a missing yaml line)."""
+    allm = list(s.scalars(select(ForwardPerson).where(*usable, ForwardPerson.is_manager.is_(True))
+                          .order_by(ForwardPerson.id)))
+    women = _gender(person.branch, person.grp) == "f"
+    pool = [m for m in allm if (m.side == "women") == women] or allm
+    if not pool:
+        return None
+    last = dict(s.execute(select(ForwardHop.person_id, func.max(ForwardHop.id)).where(
+        ForwardHop.level == 3, ForwardHop.person_id.in_([m.id for m in pool]))
+        .group_by(ForwardHop.person_id)).all())
+    return min(pool, key=lambda m: (last.get(m.id, 0), m.id))
 
 
 def _pass_on(s, client, h, person, level, nxt, now, done) -> None:
@@ -619,7 +640,7 @@ def _pass_on(s, client, h, person, level, nxt, now, done) -> None:
         h.closed_at, h.solution = his
     s.add(ForwardHop(call_id=h.call_id, level=level, person_id=nxt[0].id, ticket_guid=h.ticket_guid,
                      ticket_number=h.ticket_number, sent_at=now, result="open"))
-    for p in nxt[1:]:                               # the other managers: a copy ticket each (made next)
+    for p in nxt[1:]:                               # (none now: one manager per problem; kept for a list of several)
         s.add(ForwardHop(call_id=h.call_id, level=level, person_id=p.id, result="pending"))
     done["passed_on"] += 1
     s.flush()

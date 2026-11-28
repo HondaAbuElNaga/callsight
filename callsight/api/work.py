@@ -70,6 +70,11 @@ class MyNoteIn(BaseModel):
     text: str = Field(max_length=300)
 
 
+class StudentSearchIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    q: str = Field(max_length=40)        # the student's national ID or registered phone
+
+
 class MessageIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str = Field(min_length=1, max_length=1000)
@@ -147,9 +152,19 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
 
     @app.get("/api/calls/{call_id}/student")
     def get_student(call_id: int, user: User, s: DB) -> dict:
+        return _student(call_id, user, s, None)
+
+    @app.post("/api/calls/{call_id}/student")
+    def search_student(call_id: int, body: StudentSearchIn, user: User, s: DB) -> dict:
+        """The same look-up with what the agent typed (in the body, never the URL: access logs keep URLs)."""
+        return _student(call_id, user, s, body.q)
+
+    def _student(call_id: int, user, s, q: str | None) -> dict:
         """The training look-up of the caller (spec "Part 4: the training lookup"): the student(s) with this phone
         and the suggested person for the forward form. Only for the call's agent or staff, only on a call that needs
-        the follow-up form. Never stored; an outage only hides the box."""
+        the follow-up form. Never stored; an outage only hides the box.
+        q: the student's national ID or registered phone, typed by the agent when the caller's number finds nobody
+        (the student called from another phone)."""
         c = owned_call(s, call_id, user)
         if cfg.training_lookup is None:
             return {"enabled": False, "students": [], "suggestion": None, "error": None}
@@ -160,9 +175,14 @@ def register(app: FastAPI, *, DB, User, Manager, cfg, audit_analysis) -> None:
         if may_edit(row.form, c, user, _now()) is not None:     # shown on an open form only (review)
             raise HTTPException(403, "the form is closed")
         from .. import training_api
-        phone = training_api.local_mobile(c.customer_number)
-        if phone is None:
-            return {"enabled": True, "students": [], "suggestion": None, "error": "not_mobile"}
+        if q is not None:
+            phone = training_api.search_key(q)
+            if phone is None:
+                return {"enabled": True, "students": [], "suggestion": None, "error": "bad_query"}
+        else:
+            phone = training_api.local_mobile(c.customer_number)
+            if phone is None:
+                return {"enabled": True, "students": [], "suggestion": None, "error": "not_mobile"}
         try:
             students = cfg.training_lookup(phone)
         except training_api.TrainingUnavailable:

@@ -252,7 +252,7 @@ Employee (24 h) ──not solved──► Branch supervisor (24 h) ──not sol
 
 - Each person has **24 clock hours**.
 - The chain starts at the level of the person the agent picked (picking a branch supervisor starts at level 2).
-- At management, the first manager gets the same ticket; each other manager (up to 4 in all) gets a **copy ticket** (a new `POST /tickets`).
+- At management, ONE manager gets the same ticket (2026-11-28): a women's branch -> the `side: women` manager in the yaml; any other branch -> the other managers in turn. (Older problems: each other manager got a **copy ticket**, a new `POST /tickets`.)
 - When the branch supervisor closes it, we check there is a **real call to the customer**: answered,
   more than 60 seconds, satisfaction more than 7 → «مؤكد ✓», otherwise «غير مؤكد».
 - If the person asks a question on the ticket, the agent sees «سؤال ينتظر ردك» and can answer;

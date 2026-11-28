@@ -615,12 +615,13 @@ class ForwardPerson(Base):
     is_supervisor: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     is_manager: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     grp: Mapped[str | None] = mapped_column(String(20))   # the other system's group (men / women): branch names repeat
+    side: Mapped[str | None] = mapped_column(String(10))  # managers: `side: women` in the yaml -> women's branches only
 
 
 class ForwardHop(Base):
     """One person who held a forwarded problem (spec "Part 4 change: the forward chain"): level 1 the chosen
-    employee, 2 his branch supervisor, 3 a manager (all the managers get it: the first on the same ticket, the others a
-    copy ticket each). result: pending (copy ticket not made yet) / open / solved / passed_on (24 h ran out) /
+    employee, 2 his branch supervisor, 3 a manager (one per problem since 2026-11-28, same ticket; older problems:
+    all the managers, the others a copy ticket each). result: pending (copy ticket not made yet) / open / solved / passed_on (24 h ran out) /
     closed_by_other (another manager solved it) / failed. Levels 1 and 2 share the first ticket. The solution text
     is personal data: erased with the call's content."""
     __tablename__ = "forward_hop"

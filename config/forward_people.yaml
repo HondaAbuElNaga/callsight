@@ -13,12 +13,13 @@ people:
   - {branch: "خميس مشيط الظرفة",       name: "عبدالعظيم",           ext: "601", guid: "bb5ac3bd-7898-48bf-865b-7bf3dcf55830"}
   - {branch: "الرياض ظهرة لبن",        name: "عماد حلمي",           ext: "901", guid: "b7f71c74-bcd6-42ff-8e13-4e2b6b26ce0e"}
 
-# The forward chain's last level (user 2026-11-16): the 3 managers. ALL of them get a problem that neither the
-# employee nor his branch supervisor solved in 24 h each (the first on the same ticket, the others a copy ticket).
+# The forward chain's last level (user 2026-11-16): the 3 managers. A problem that neither the employee nor his
+# branch supervisor solved in 24 h each goes to ONE manager on the same ticket (user 2026-11-28): a women's branch ->
+# the `side: women` manager; any other branch -> the others in turn (10 problems = 5 + 5).
 # name = as written in the customer-service system (matched by name words; add branch or guid if two people match).
 # Their calls are not checked: their close counts as solved.
 managers:
   - {name: "حسام تغيان"}
   - {name: "عماد النمر"}
-  - {name: "احمد حطب"}
+  - {name: "احمد حطب", side: women}   # women's branches only; the others take turns
 # مروان حسني sees every forward on the forwards page (a supervisor login), gets no tickets (user 2026-11-16).

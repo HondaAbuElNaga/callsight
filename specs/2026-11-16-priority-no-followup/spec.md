@@ -331,6 +331,7 @@ the call check (proof) is for the **branch supervisors only**; an employee's or 
   good last call to the customer (answered, > 60 s, score > 7), as in D2; closed without it = not solved, so after
   the 24 h it moves on to level 3. When the employee is himself the
   supervisor, or the branch has no supervisor, it goes straight to level 3.
+- (Superseded 2026-11-28: ONE manager per problem; a women's branch -> the `side: women` manager, the others in turn.)
 - **Level 3 – the 4 managers:** not solved after 24 h → the ticket goes to the first manager and a copy ticket is
   made for each of the other 3 (their API forwards to one person only). The first close wins; the other copies are
   closed there with "حُلّت عند «name»" (close = solved, no call check). No further level; after 24 h the line shows "متأخر" in red.
